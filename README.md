@@ -16,8 +16,9 @@ ifsul/weather/
 ├── .env.example                      # Environment variables template
 ├── .env                              # Active environment configuration
 ├── docs/
-│   ├── INMET_API_DOCUMENTATION.md    # Detailed API reference for INMET endpoints
-│   └── METEOROLOGICAL_RISKS_GUIDE.md  # Guide on severe weather alert levels and filtering logic
+│   ├── INMET_API_DOCUMENTATION.md          # Detailed API reference for INMET endpoints
+│   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # Detailed GraphQL & WebSocket API reference for Defesa Civil RS
+│   └── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
@@ -69,22 +70,27 @@ docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 
 ## 🌐 Quick API Reference
 
-### 1. Forecast for Charqueadas - RS
+### 1. Forecast for Charqueadas - RS (INMET)
 ```http
 GET https://apiprevmet3.inmet.gov.br/previsao/4305355
 ```
 
-### 2. Microregion Municipalities Endpoint (IBGE)
+### 2. Defesa Civil RS Real-time Telemetry (Charqueadas Station `DCRS-00032`)
+```http
+POST https://redehidrometeorologica.defesacivil.rs.gov.br/graphql
+```
+
+### 3. Microregion Municipalities Endpoint (IBGE)
 ```http
 GET https://servicodados.ibge.gov.br/api/v1/localidades/microrregioes/43025/municipios
 ```
 
-### 3. Active Severe Risk Alerts (Brazil & Regional Filter)
+### 4. Active Severe Risk Alerts (Brazil & Regional Filter - INMET)
 ```http
 GET https://apiprevmet3.inmet.gov.br/avisos/ativos
 ```
 
-### 4. Automatic Weather Stations List
+### 5. Automatic Weather Stations List (INMET)
 ```http
 GET https://apitempo.inmet.gov.br/estacoes/T
 ```
@@ -93,4 +99,6 @@ GET https://apitempo.inmet.gov.br/estacoes/T
 
 ## 📚 Documentation Links
 * [INMET API Technical Documentation](docs/INMET_API_DOCUMENTATION.md)
+* [Defesa Civil RS Hydrometeorological Network API Documentation](docs/DEFESA_CIVIL_RS_API_DOCUMENTATION.md)
 * [Meteorological Risk Situations Guide](docs/METEOROLOGICAL_RISKS_GUIDE.md)
+

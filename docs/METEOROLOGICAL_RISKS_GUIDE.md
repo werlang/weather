@@ -36,6 +36,20 @@ The API endpoint `GET https://apiprevmet3.inmet.gov.br/avisos/ativos` returns ac
 
 ---
 
+## 4. Secondary Risk Information Source: Defesa Civil RS API
+
+In addition to official INMET weather alerts, **Defesa Civil RS (Rede Hidrometeorológica)** serves as a vital **secondary source of risk information**.
+
+While INMET provides broader regional forecasts and severe weather warnings, the Defesa Civil RS API provides **hyper-local real-time hydrometeorological telemetry**:
+
+* **Hydrometric River Level Monitoring (`rio_nivel`):** Monitored in real-time at station `DCRS-00032` in Charqueadas (Rio Baixo Jacuí). Critical for flash flood and river overflow risk assessments.
+* **Rapid Rain Accumulation (`chuva.acumulado`):** Tracks short-term high-intensity rainfall spikes in 15-minute (`min015`), 1-hour (`h001`), and 3-hour (`h003`) intervals to detect sudden deluge conditions.
+* **Real-time Wind Gusts (`vento.velocidade_maxima`):** Provides instant wind vector data from regional stations.
+
+For full technical specifications, query schemas, and station mappings, see the [Defesa Civil RS API Documentation](DEFESA_CIVIL_RS_API_DOCUMENTATION.md).
+
+---
+
 ## 5. Regional Risk Monitoring (Charqueadas & Surrounding Municipalities)
 
 To monitor weather risks for the broader region surrounding Charqueadas (Região Carbonífera / Baixo Jacuí / São Jerônimo Microregion):
@@ -58,4 +72,5 @@ docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app n
 ```
 
 The script evaluates official active INMET warnings and day-by-day 5-day forecasts across all surrounding cities, flagging potential risks such as heavy rain, thunderstorms, severe frost, heatwaves, strong winds, and low humidity.
+
 
