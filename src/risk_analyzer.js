@@ -157,6 +157,7 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
             (severidade.includes('perigo') && !severidade.includes('potencial'));
 
         if (isHighSeverity) {
+            const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
             highRiskEvents.push({
                 source: 'INMET_OFFICIAL_WARNING',
                 type: warning.descricao || warning.tipo || 'Aviso de Evento Meteorológico Severo',
@@ -164,7 +165,8 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
                 emoji: getAlertEmoji(warning),
                 affectedCities: warning.affectedRegionalCities || [],
                 timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
-                details: Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || 'Risco de severidade elevada emitido pelo INMET')
+                details: risksText || 'Aviso oficial do INMET emitido com severidade elevada.',
+                triggerReason: `Alerta oficial do INMET (Severidade: ${warning.severidade || 'Perigo/Grande Perigo'}) ativo na região.`
             });
         }
     }
@@ -195,7 +197,8 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
                         emoji: '⚠️',
                         affectedCities: [cityName],
                         timeframe: `Janela de 24h (${dateStr})`,
-                        details: `${r.detail} em ${cityName}`
+                        details: `${r.detail} em ${cityName}`,
+                        triggerReason: `Métrica da previsão meteorológica para ${cityName} atingiu o limiar de alto risco (${r.detail}).`
                     });
                 }
             }

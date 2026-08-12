@@ -115,6 +115,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     assert.strictEqual(highRisks[0].source, 'INMET_OFFICIAL_WARNING');
     assert.strictEqual(highRisks[0].type, 'Tempestade Severa com Ventos Extremos');
     assert.strictEqual(highRisks[0].severity, 'Grande Perigo');
+    assert.ok(highRisks[0].triggerReason.includes('INMET'));
     assert.deepStrictEqual(highRisks[0].affectedCities, ['Charqueadas', 'São Jerônimo']);
   });
 

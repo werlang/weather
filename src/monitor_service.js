@@ -71,12 +71,14 @@ export function onHighRiskEventDetected(highRiskEvents) {
     console.log('-'.repeat(80));
 
     highRiskEvents.forEach((event, idx) => {
-        console.log(` [#${idx + 1}] ${event.emoji} ${event.type.toUpperCase()}`);
-        console.log(`      Origem:             ${event.source}`);
-        console.log(`      Severidade:         ${event.severity}`);
-        console.log(`      Janela de Tempo:    ${event.timeframe}`);
-        console.log(`      Municípios:         ${(event.affectedCities || []).join(', ')}`);
-        console.log(`      Detalhes do Risco:  ${event.details}`);
+        console.log(` [#${idx + 1}] ${event.emoji} TIPO DE PERIGO:      ${event.type.toUpperCase()}`);
+        console.log(`      📍 Municípios Impactados: ${(event.affectedCities || []).join(', ') || 'N/A'}`);
+        console.log(`      💡 Motivo do Disparo:     ${event.triggerReason || event.details}`);
+        console.log(`      📊 Origem & Severidade:   ${event.source} (${event.severity})`);
+        console.log(`      🕒 Janela de Tempo:      ${event.timeframe}`);
+        if (event.details && event.details !== event.triggerReason && event.details !== `${event.triggerReason} em ${event.affectedCities?.[0]}`) {
+            console.log(`      📝 Detalhes Adicionais:   ${event.details}`);
+        }
         console.log('-'.repeat(80));
     });
 
