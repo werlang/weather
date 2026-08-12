@@ -1,0 +1,23 @@
+{
+  "name": "weather-charqueadas",
+  "version": "1.0.0",
+  "description": "Meteorological risk and weather forecast monitor for Charqueadas - RS using Node.js 26 and Docker Compose",
+  "type": "module",
+  "main": "src/monitor_charqueadas.js",
+  "scripts": {
+    "start": "node src/monitor_charqueadas.js",
+    "monitor:regional": "node src/monitor_regional_risks.js",
+    "test": "node --test tests/*.test.js",
+    "compose:dev": "docker compose -f compose.dev.yaml up --build",
+    "compose:prod": "docker compose -f compose.yaml up --build"
+  },
+  "keywords": [
+    "weather",
+    "inmet",
+    "charqueadas",
+    "node26",
+    "docker-compose"
+  ],
+  "author": "",
+  "license": "ISC"
+}

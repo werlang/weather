@@ -1,0 +1,21 @@
+services:
+    app:
+        build:
+            context: .
+            target: development
+        restart: unless-stopped
+        env_file:
+            - .env
+        volumes:
+            - .:/app
+            - node_modules_app:/app/node_modules
+        command: sleep infinity
+        networks:
+            - weather
+
+volumes:
+    node_modules_app:
+
+networks:
+    weather:
+        name: weather
