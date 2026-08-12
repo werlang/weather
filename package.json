@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "description": "Meteorological risk and weather forecast monitor for Charqueadas - RS using Node.js 26 and Docker Compose",
   "type": "module",
-  "main": "src/monitor_charqueadas.js",
+  "main": "src/monitor_service.js",
   "scripts": {
-    "start": "node src/monitor_charqueadas.js",
+    "start": "node src/monitor_service.js",
     "monitor:regional": "node src/monitor_regional_risks.js",
     "test": "node --test tests/*.test.js",
     "compose:dev": "docker compose -f compose.dev.yaml up --build",

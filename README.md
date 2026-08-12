@@ -20,45 +20,49 @@ ifsul/weather/
 │   └── METEOROLOGICAL_RISKS_GUIDE.md  # Guide on severe weather alert levels and filtering logic
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
-│   ├── monitor_charqueadas.js        # Single city monitoring script for Charqueadas - RS
-│   └── monitor_regional_risks.js     # Regional risk monitoring script for Charqueadas & surrounding cities
+│   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
+│   ├── monitor_service.js            # Long-running service triggered by npm start for 24h risk monitoring
+│   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
-    └── inmet_client.test.js          # Unit tests using Node built-in test runner
+    ├── inmet_client.test.js          # Unit tests for INMET client
+    └── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
 ```
 
 ---
 
 ## 🚀 Quick Start (Running via Docker Compose & Node 26)
 
-### 1. Run Development Stack
+### 1. Run Continuous Regional Monitoring Service (`npm start`)
+```bash
+# Starts long-running service with continuous regional risk monitoring
+npm start
+# or via Docker Compose
+docker compose up --build
+```
+
+Configurable via `.env`:
+- `MONITOR_INTERVAL_MINUTES`: Interval between checks (default: `15` minutes)
+- `RADIUS_KM`: Regional monitoring radius in kilometers (default: `50` km)
+
+When a high-risk meteorological event is detected in the next 24h window, it executes the placeholder function `onHighRiskEventDetected(highRiskEvents)` in `src/monitor_service.js`.
+
+### 2. Run Development Stack
 ```bash
 docker compose -f compose.dev.yaml up --build
 ```
 
-### 2. Run Production Stack
-```bash
-docker compose -f compose.yaml up --build
-```
-
-### 3. Run Standalone Single City Monitor (Charqueadas)
-```bash
-docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app node:26-alpine node /app/src/monitor_charqueadas.js
-```
-
-### 4. Run Standalone Regional Risk Monitor (Default 50km or Custom Distance)
+### 3. Run Standalone Regional Risk CLI Report (Default 50km or Custom Distance)
 ```bash
 # Default (50 km radius):
-docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app node:26-alpine node /app/src/monitor_regional_risks.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js
 
 # Custom Distance (e.g. 100 km radius):
-docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app node:26-alpine node /app/src/monitor_regional_risks.js 100
-# or
-docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app node:26-alpine node /app/src/monitor_regional_risks.js --radius=100
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
 ```
 
-### 5. Running Unit Tests
+### 4. Running Unit Tests
 ```bash
-docker run --rm -v /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app node:26-alpine node --test /app/tests/inmet_client.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 ```
 
 ---

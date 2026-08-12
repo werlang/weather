@@ -2,6 +2,8 @@
 /**
  * Ferramenta CLI para monitoramento de riscos meteorológicos e alertas do INMET
  * para Charqueadas - RS e municípios vizinhos em um raio configurável (padrão: 50km).
+ * Relatório sob demanda gerado via linha de comando.
+ * 
  * Desenvolvido para Node.js 26.
  */
 
@@ -12,114 +14,10 @@ import {
   getAlertEmoji
 } from './inmet_client.js';
 
-/**
- * Processa os argumentos da linha de comando e variáveis de ambiente para extrair o raio alvo (padrão: 50km).
- * Exemplos de uso:
- *   node src/monitor_regional_risks.js              -> Raio de 50 km (padrão)
- *   node src/monitor_regional_risks.js 100          -> Raio de 100 km
- *   node src/monitor_regional_risks.js --radius=75  -> Raio de 75 km
- * 
- * @returns {number} Raio em km.
- */
-function parseRadiusArg() {
-  if (process.env.RADIUS_KM || process.env.RADIUS) {
-    const envVal = parseInt(process.env.RADIUS_KM || process.env.RADIUS, 10);
-    if (!isNaN(envVal) && envVal > 0) return envVal;
-  }
-
-  const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--radius=') || arg.startsWith('--dist=') || arg.startsWith('--distance=')) {
-      const val = parseInt(arg.split('=')[1], 10);
-      if (!isNaN(val) && val > 0) return val;
-    } else if (arg === '-r' || arg === '--radius' || arg === '-d' || arg === '--distance') {
-      const val = parseInt(args[i + 1], 10);
-      if (!isNaN(val) && val > 0) return val;
-    } else if (!arg.startsWith('-')) {
-      const val = parseInt(arg, 10);
-      if (!isNaN(val) && val > 0) return val;
-    }
-  }
-
-  return 50; // Raio padrão: 50 km
-}
-
-/**
- * Analisa os parâmetros da previsão do tempo e retorna uma lista de indicadores de risco em Português.
- * 
- * @param {Record<string, any>} forecastDay - Objeto de previsão para um dia ou período específico.
- * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string }>}
- */
-function analyzeForecastRisks(forecastDay) {
-  const risks = [];
-  if (!forecastDay) return risks;
-
-  const summary = (forecastDay.resumo || '').toLowerCase();
-  const tempMin = forecastDay.temp_min;
-  const tempMax = forecastDay.temp_max;
-  const humidityMin = forecastDay.umidade_min;
-  const windInt = (forecastDay.int_vento || '').toLowerCase();
-
-  // Risco de Tempestade / Chuva Intensa
-  if (summary.includes('tempestade') || summary.includes('trovoadas com pancadas')) {
-    risks.push({
-      type: 'Risco de Tempestade / Trovoadas',
-      severity: 'HIGH',
-      detail: `Condição prevista: "${forecastDay.resumo}"`
-    });
-  } else if (summary.includes('chuva') || summary.includes('pancadas') || summary.includes('chuvoso')) {
-    risks.push({
-      type: 'Chuva / Pancadas de Chuva',
-      severity: 'MODERATE',
-      detail: `Condição prevista: "${forecastDay.resumo}"`
-    });
-  }
-
-  // Risco de Geada / Frio Severo
-  if (summary.includes('geada') || (tempMin !== undefined && tempMin <= 4)) {
-    risks.push({
-      type: 'Alerta de Geada / Frio Severo',
-      severity: tempMin <= 3 ? 'HIGH' : 'MODERATE',
-      detail: `Temp. Mínima: ${tempMin}°C (${forecastDay.resumo || 'Temperatura baixa'})`
-    });
-  } else if (tempMin !== undefined && tempMin <= 8) {
-    risks.push({
-      type: 'Aviso de Baixa Temperatura',
-      severity: 'LOW',
-      detail: `Temp. Mínima: ${tempMin}°C`
-    });
-  }
-
-  // Risco de Onda de Calor
-  if (tempMax !== undefined && tempMax >= 33) {
-    risks.push({
-      type: 'Risco de Onda de Calor / Calor Extremo',
-      severity: tempMax >= 36 ? 'HIGH' : 'MODERATE',
-      detail: `Temp. Máxima: ${tempMax}°C`
-    });
-  }
-
-  // Risco de Baixa Umidade Relativa do Ar
-  if (humidityMin !== undefined && humidityMin <= 30) {
-    risks.push({
-      type: 'Risco de Baixa Umidade Relativa do Ar',
-      severity: humidityMin <= 20 ? 'HIGH' : 'MODERATE',
-      detail: `Umidade Mínima: ${humidityMin}%`
-    });
-  }
-
-  // Risco de Ventos Fortes / Rajadas
-  if (windInt.includes('forte') || windInt.includes('rajadas')) {
-    risks.push({
-      type: 'Ventos Fortes / Rajadas de Vento',
-      severity: 'MODERATE',
-      detail: `Intensidade do vento: ${forecastDay.int_vento}`
-    });
-  }
-
-  return risks;
-}
+import {
+  parseRadiusArg,
+  analyzeForecastRisks
+} from './risk_analyzer.js';
 
 async function main() {
   const radiusKm = parseRadiusArg();
