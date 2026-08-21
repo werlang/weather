@@ -105,20 +105,23 @@ export const BOT_COMMANDS = [
 ];
 
 /**
- * Maps a severity string to a high-contrast visual badge.
+ * Maps a severity string or canonical tier to a high-contrast visual badge.
+ * Understands Portuguese severity names, canonical tiers (RED/ORANGE/YELLOW),
+ * and the analyzer's English gradings (HIGH/MODERATE/LOW).
  *
  * @param {string} severity
  * @returns {string}
  */
 export function renderSeverityBadge(severity = '') {
     const lower = String(severity).toLowerCase();
-    if (lower.includes('grande perigo') || lower.includes('máximo') || lower.includes('extremo') || lower.includes('red')) {
+    const upper = String(severity).toUpperCase();
+    if (upper === 'RED' || lower.includes('grande perigo') || lower.includes('máximo') || lower.includes('extremo') || lower.includes('red') || lower.includes('high')) {
         return '🔴 GRANDE PERIGO (CRÍTICO)';
     }
-    if (lower.includes('potencial') || lower.includes('amarelo') || lower.includes('yellow') || lower.includes('atenção')) {
+    if (upper === 'YELLOW' || lower.includes('potencial') || lower.includes('amarelo') || lower.includes('yellow') || lower.includes('atenção') || lower.includes('low')) {
         return '🟡 PERIGO POTENCIAL (MODERADO)';
     }
-    if (lower.includes('perigo') || lower.includes('laranja') || lower.includes('orange') || lower.includes('alerta')) {
+    if (upper === 'ORANGE' || lower.includes('perigo') || lower.includes('laranja') || lower.includes('orange') || lower.includes('alerta') || lower.includes('moderate')) {
         return '🟠 PERIGO (SEVERO)';
     }
     return '🟢 NORMAL / MONITORAMENTO';
@@ -666,7 +669,7 @@ export class WeatherTelegramBot {
         ];
 
         aggregated.forEach((event, index) => {
-            const badge = renderSeverityBadge(event.severity);
+            const badge = renderSeverityBadge(getEventAlertTier(event));
             lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico severo'}`);
             lines.push(`   Severidade: ${badge}`);
             lines.push(`   Origem: ${event.source || 'Não informada'}`);

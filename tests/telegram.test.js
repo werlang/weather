@@ -213,6 +213,22 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.doesNotMatch(text, /Eventos Críticos Detectados/);
     });
 
+    it('labels orange-tier forecast events as severe, never green', () => {
+        const text = WeatherTelegramBot.formatHighRiskAlert([{
+            type: 'Ventos Fortes / Rajadas de Vento',
+            severity: 'MODERATE',
+            colorTier: 'ORANGE',
+            emoji: '🟠',
+            source: 'FORECAST_ANALYSIS',
+            affectedCities: ['Porto Alegre'],
+            timeframe: 'Janela de 24h (21/08/2026, manhã)',
+            triggerReason: 'Métrica da previsão meteorológica para Porto Alegre'
+        }]);
+
+        assert.match(text, /Severidade: 🟠 PERIGO \(SEVERO\)/);
+        assert.doesNotMatch(text, /🟢 NORMAL/);
+    });
+
     it('builds alert action tray and renders UI visual components properly', async () => {
         const { renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
 
@@ -221,6 +237,13 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(renderSeverityBadge('Perigo'), /🟠 PERIGO/);
         assert.match(renderSeverityBadge('Perigo Potencial'), /🟡 PERIGO POTENCIAL/);
         assert.match(renderSeverityBadge('Normal'), /🟢 NORMAL/);
+        // Analyzer gradings and canonical tiers must not fall through to green
+        assert.match(renderSeverityBadge('MODERATE'), /🟠 PERIGO/);
+        assert.match(renderSeverityBadge('HIGH (Red Equivalent)'), /🔴 GRANDE PERIGO/);
+        assert.match(renderSeverityBadge('LOW'), /🟡 PERIGO POTENCIAL/);
+        assert.match(renderSeverityBadge('ORANGE'), /🟠 PERIGO/);
+        assert.match(renderSeverityBadge('RED'), /🔴 GRANDE PERIGO/);
+        assert.match(renderSeverityBadge('YELLOW'), /🟡 PERIGO POTENCIAL/);
 
         // Alert action keyboard
         const alertKb = WeatherTelegramBot.buildAlertActionKeyboard();
