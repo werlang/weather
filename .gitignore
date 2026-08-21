@@ -7,3 +7,8 @@ TODO.md
 *.db-journal
 *.db-wal
 *.db-shm
+database/*.db
+database/*.db-journal
+database/*.db-wal
+database/*.db-shm
+!database/.gitkeep

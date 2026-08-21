@@ -4,11 +4,12 @@
  * 
  * Provides a structured, query-builder and CRUD-oriented database access layer.
  * 
- * @module database/driver
+ * @module databaseDriver
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
 
 /**
  * Custom Error class for database operations.
@@ -39,7 +40,7 @@ export class Sqlite {
 
     static get config() {
         return {
-            path: process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'weather_logs.db'
+            path: process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db'
         };
     }
 
@@ -59,6 +60,7 @@ export class Sqlite {
             Sqlite.connection = new DatabaseSync(':memory:');
         } else {
             const resolved = resolve(dbPath);
+            mkdirSync(dirname(resolved), { recursive: true });
             Sqlite.connection = new DatabaseSync(resolved);
             try {
                 Sqlite.connection.exec('PRAGMA journal_mode = WAL;');

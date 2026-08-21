@@ -9,9 +9,10 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
 
-export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'weather_logs.db';
+export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db';
 
 let defaultDbInstance = null;
 
@@ -56,6 +57,7 @@ export function getDatabase(dbPath = DEFAULT_DB_PATH) {
     }
 
     const resolvedPath = resolve(dbPath);
+    mkdirSync(dirname(resolvedPath), { recursive: true });
     const db = new DatabaseSync(resolvedPath);
     
     // Performance and reliability pragmas

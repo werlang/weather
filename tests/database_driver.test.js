@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { Sqlite, DatabaseError } from '../database/driver.js';
+import { Sqlite, DatabaseError } from '../src/database_driver.js';
 
 describe('Sqlite Database Driver (Adapted from node-aec)', () => {
     beforeEach(() => {
