@@ -80,11 +80,16 @@ describe('Telegram configuration and wrapper', () => {
 
     it('splits outbound messages at Telegram’s maximum length', () => {
         const chunks = splitTelegramMessage('x'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH * 2 + 8));
-        assert.deepEqual(chunks.map(chunk => chunk.length), [4096, 4096, 8]);
+        assert.ok(chunks.length >= 2);
+        assert.ok(chunks.every(chunk => Array.from(chunk).length <= TELEGRAM_MAX_MESSAGE_LENGTH));
+        assert.match(chunks[0], /^\[Parte 1\/\d+\]\n/);
 
         const emojiChunks = splitTelegramMessage('😀'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 1));
-        assert.strictEqual(emojiChunks[0], '😀'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH));
-        assert.strictEqual(emojiChunks[1], '😀');
+        const emojiContent = emojiChunks
+            .map(chunk => chunk.replace(/^\[Parte \d+\/\d+\]\n/, ''))
+            .join('');
+        assert.strictEqual(emojiContent, '😀'.repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 1));
+        assert.ok(emojiChunks.every(chunk => Array.from(chunk).length <= TELEGRAM_MAX_MESSAGE_LENGTH));
     });
 
     it('delivers every chunk to every configured administrator', async () => {
@@ -162,6 +167,23 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(text, /Charqueadas/);
         assert.match(text, /Alagamentos/);
         assert.match(text, /Grande Perigo/i);
+    });
+
+    it('uses severity-aware wording for informative yellow alerts', () => {
+        const text = WeatherTelegramBot.formatHighRiskAlert([{
+            type: 'Chuva moderada',
+            severity: 'Perigo Potencial',
+            colorTier: 'YELLOW',
+            source: 'INMET_OFFICIAL_WARNING',
+            affectedCities: ['Charqueadas'],
+            timeframe: '21/08/2026 10:00 -> 18:00',
+            triggerReason: 'Limiar informativo amarelo'
+        }]);
+
+        assert.match(text, /AVISO METEOROLÓGICO — RISCO POTENCIAL/);
+        assert.match(text, /ACOMPANHAMENTO E PREPARAÇÃO/);
+        assert.doesNotMatch(text, /SUSPENSÃO DE AULAS/);
+        assert.doesNotMatch(text, /Eventos Críticos Detectados/);
     });
 
     it('builds alert action tray and renders UI visual components properly', async () => {

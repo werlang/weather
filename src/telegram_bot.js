@@ -126,6 +126,69 @@ export function renderSeverityBadge(severity = '') {
 }
 
 /**
+ * Resolves an event's canonical alert tier for the message-level presentation.
+ *
+ * @param {object} event - Normalized risk event.
+ * @returns {'OFF'|'YELLOW'|'ORANGE'|'RED'} Canonical tier.
+ */
+function getEventAlertTier(event = {}) {
+    const normalizedTier = normalizeSeverityTier(event.colorTier);
+    if (normalizedTier !== 'OFF') return normalizedTier;
+
+    const severity = String(event.severity || '').toLowerCase();
+    if (severity.includes('high') || severity.includes('red') || severity.includes('grande perigo') || severity.includes('extremo')) {
+        return 'RED';
+    }
+    if (severity.includes('orange') || severity.includes('laranja') || severity.includes('perigo') || severity.includes('alerta')) {
+        return severity.includes('potencial') ? 'YELLOW' : 'ORANGE';
+    }
+    if (severity.includes('yellow') || severity.includes('amarelo') || severity.includes('moderate') || severity.includes('moderado')) {
+        return 'YELLOW';
+    }
+    return 'OFF';
+}
+
+/**
+ * Selects wording that matches the highest severity in an alert batch.
+ *
+ * @param {Array<object>} events - Normalized risk events.
+ * @returns {{ header: string, criteria: string, footer: string }} Alert copy.
+ */
+function getAlertPresentation(events) {
+    const rank = { OFF: 0, YELLOW: 1, ORANGE: 2, RED: 3 };
+    const highestTier = (Array.isArray(events) ? events : [])
+        .map(getEventAlertTier)
+        .sort((left, right) => rank[right] - rank[left])[0] || 'OFF';
+
+    if (highestTier === 'RED') {
+        return {
+            header: '🚨 ALERTA METEOROLÓGICO SEVERO',
+            criteria: '🏫 CRITÉRIO: AVALIAÇÃO DE SUSPENSÃO DE AULAS / ATIVIDADES',
+            footer: '⚠️ Recomenda-se acionar o plano de contingência e avaliar a segurança no transporte escolar.'
+        };
+    }
+    if (highestTier === 'ORANGE') {
+        return {
+            header: '⚠️ ALERTA METEOROLÓGICO — RISCO SEVERO',
+            criteria: '🚧 CRITÉRIO: AVALIAÇÃO DE SEGURANÇA E CONTINGÊNCIA',
+            footer: '⚠️ Recomenda-se avaliar as condições de transporte e acompanhar as orientações oficiais.'
+        };
+    }
+    if (highestTier === 'YELLOW') {
+        return {
+            header: 'ℹ️ AVISO METEOROLÓGICO — RISCO POTENCIAL',
+            criteria: '👁️ CRITÉRIO: ACOMPANHAMENTO E PREPARAÇÃO',
+            footer: 'ℹ️ Recomenda-se acompanhar as atualizações oficiais e as condições locais.'
+        };
+    }
+    return {
+        header: 'ℹ️ AVISO METEOROLÓGICO',
+        criteria: '👁️ CRITÉRIO: ACOMPANHAMENTO',
+        footer: 'ℹ️ Consulte as atualizações oficiais para orientar as próximas decisões.'
+    };
+}
+
+/**
  * Encapsulates the Weather Telegram bot UI, lifecycle, and callback routing.
  */
 export class WeatherTelegramBot {
@@ -550,12 +613,13 @@ export class WeatherTelegramBot {
      * @returns {string} Formatted alert message.
      */
     static formatHighRiskAlert(events, sentAt = new Date()) {
+        const presentation = getAlertPresentation(events);
         const lines = [
-            '🚨 ALERTA METEOROLÓGICO SEVERO',
-            '🏫 CRITÉRIO: AVALIAÇÃO DE SUSPENSÃO DE AULAS / ATIVIDADES',
+            presentation.header,
+            presentation.criteria,
             CARD_HEADER,
             `🕒 Detectado em: ${sentAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-            `📊 Eventos Críticos Detectados: ${events.length}`,
+            `📊 Eventos Detectados: ${events.length}`,
             ''
         ];
 
@@ -575,7 +639,7 @@ export class WeatherTelegramBot {
         });
 
         lines.push('', CARD_HEADER);
-        lines.push('⚠️ Recomenda-se acionar o plano de contingência e avaliar a segurança no transporte escolar.');
+        lines.push(presentation.footer);
 
         return lines.join('\n');
     }
@@ -910,4 +974,3 @@ export class WeatherTelegramBot {
         });
     }
 }
-

@@ -57,21 +57,77 @@ export function parseTelegramConfig({ env = process.env, requireConfigured = tru
 }
 
 /**
- * Splits a message into chunks accepted by Telegram while preserving order.
+ * Splits text on paragraph boundaries where possible and hard-splits only an
+ * individual paragraph that exceeds the available Telegram message size.
+ *
+ * @param {string} message - Message text to split.
+ * @param {number} maxLength - Maximum chunk size in Unicode code points.
+ * @returns {string[]} Ordered content chunks.
+ */
+function splitTextByParagraphs(message, maxLength) {
+    const paragraphs = String(message ?? '').split('\n\n');
+    const chunks = [];
+    let current = '';
+
+    for (const paragraph of paragraphs) {
+        const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+        if (Array.from(candidate).length <= maxLength) {
+            current = candidate;
+            continue;
+        }
+
+        if (current) {
+            chunks.push(current);
+            current = '';
+        }
+
+        const characters = Array.from(paragraph);
+        if (characters.length <= maxLength) {
+            current = paragraph;
+            continue;
+        }
+
+        for (let offset = 0; offset < characters.length; offset += maxLength) {
+            chunks.push(characters.slice(offset, offset + maxLength).join(''));
+        }
+    }
+
+    if (current || chunks.length === 0) chunks.push(current);
+    return chunks;
+}
+
+/**
+ * Splits a message into chunks accepted by Telegram while preserving event
+ * paragraphs and adding pagination context to multi-part deliveries.
  *
  * @param {string} message - Message text to split.
  * @param {number} [maxLength=TELEGRAM_MAX_MESSAGE_LENGTH] - Maximum chunk size.
  * @returns {string[]} Ordered message chunks.
+ * @throws {TypeError} If maxLength is not a positive integer.
  */
 export function splitTelegramMessage(message, maxLength = TELEGRAM_MAX_MESSAGE_LENGTH) {
-    const characters = Array.from(String(message ?? ''));
-    if (characters.length <= maxLength) return [characters.join('')];
-
-    const chunks = [];
-    for (let offset = 0; offset < characters.length; offset += maxLength) {
-        chunks.push(characters.slice(offset, offset + maxLength).join(''));
+    if (!Number.isInteger(maxLength) || maxLength < 1) {
+        throw new TypeError('Telegram message maxLength must be a positive integer.');
     }
-    return chunks;
+
+    const text = String(message ?? '');
+    if (Array.from(text).length <= maxLength) return [text];
+
+    let contentMaxLength = maxLength;
+    let chunks = [];
+
+    // Header length depends on the final number of chunks; iterate until the
+    // reserved space and chunk count stabilize.
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+        chunks = splitTextByParagraphs(text, contentMaxLength);
+        const header = `[Parte ${chunks.length}/${chunks.length}]\n`;
+        const nextContentMaxLength = maxLength - Array.from(header).length;
+        if (nextContentMaxLength === contentMaxLength) break;
+        contentMaxLength = Math.max(1, nextContentMaxLength);
+    }
+
+    chunks = splitTextByParagraphs(text, contentMaxLength);
+    return chunks.map((chunk, index) => `[Parte ${index + 1}/${chunks.length}]\n${chunk}`);
 }
 
 /**
@@ -236,4 +292,3 @@ export class TelegramBotClient {
         this.bot.stop(reason);
     }
 }
-
