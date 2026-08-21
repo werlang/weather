@@ -114,6 +114,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.ok(mainKb);
         assert.ok(Array.isArray(mainKb.inline_keyboard));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:status')));
+        assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:active_alerts')));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:settings')));
         // Telemetry and chat id actions were removed from the main menu.
         assert.ok(!mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:defesa_civil')));
@@ -197,15 +198,63 @@ describe('Weather Telegram bot presentation & keyboards', () => {
 
         // Alert action keyboard
         const alertKb = WeatherTelegramBot.buildAlertActionKeyboard();
-        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:inmet_warnings')));
+        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:active_alerts')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:main')));
 
-        // Command definitions (telemetry and chat id commands were removed)
+        // Command definitions (telemetry and chat id commands were removed; inmet replaced by alertas)
         assert.ok(Array.isArray(BOT_COMMANDS));
         assert.ok(BOT_COMMANDS.some(c => c.command === 'start'));
-        assert.ok(BOT_COMMANDS.some(c => c.command === 'inmet'));
+        assert.ok(BOT_COMMANDS.some(c => c.command === 'alertas'));
         assert.ok(!BOT_COMMANDS.some(c => c.command === 'jacui'));
         assert.ok(!BOT_COMMANDS.some(c => c.command === 'chatid'));
+    });
+
+    it('renders active alerts report from both sources and supports legacy inmet callback', async () => {
+        const { client, fakeBot } = createClient();
+        const bot = new WeatherTelegramBot({
+            telegram: client,
+            monitorService: {
+                getConfig: () => ({
+                    radiusKm: 25,
+                    intervalMinutes: 15,
+                    intervalMs: 900000,
+                    inmetMinSeverity: 'RED',
+                    defesaCivilMinSeverity: 'ORANGE'
+                })
+            }
+        });
+        const origFetch = globalThis.fetch;
+        globalThis.fetch = async (url) => {
+            const u = String(url);
+            if (u.includes('avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
+            if (u.includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
+            if (u.toLowerCase().includes('graphql') || u.toLowerCase().includes('defesacivil')) {
+                return { ok: true, status: 200, json: async () => ({ data: { tags_data: { qualle_meteorologia: [] } } }) };
+            }
+            return { ok: true, status: 200, json: async () => [] };
+        };
+        try {
+            const report = await bot.renderActiveAlertsReport();
+            assert.match(report, /NENHUM ALERTA ATIVO/);
+            assert.match(report, /INMET/i);
+            assert.match(report, /Defesa Civil/i);
+            const legacy = await bot.renderInmetWarningsReport();
+            assert.strictEqual(typeof legacy, 'string');
+
+            let editedLegacy = null;
+            const handler = fakeBot.eventHandlers.get('callback_query:data');
+            assert.ok(handler);
+            await handler({
+                chat: { id: 123 },
+                callbackQuery: { data: 'action:inmet_warnings' },
+                answerCallbackQuery: async () => {},
+                editMessageText: async (msg) => { editedLegacy = msg; }
+            });
+            // legacy callback should still render the new combined report
+            assert.ok(editedLegacy);
+        } finally {
+            globalThis.fetch = origFetch;
+        }
     });
 
     it('registers bot commands with Telegram API menu autocomplete', async () => {

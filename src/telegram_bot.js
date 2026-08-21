@@ -9,8 +9,7 @@
  */
 
 import { InlineKeyboard } from './telegram.js';
-import { onHighRiskEventDetected, parseMonitorConfig } from './monitor_service.js';
-import { getSurroundingCities, getRegionalRiskWarnings, getAlertEmoji } from './inmet_client.js';
+import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring } from './monitor_service.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
 import { normalizeSeverityTier } from './risk_analyzer.js';
 
@@ -100,7 +99,7 @@ export const BOT_COMMANDS = [
     { command: 'start', description: '🌤️ Painel meteorológico e menu interativo' },
     { command: 'menu', description: '🌤️ Abrir painel principal' },
     { command: 'status', description: '📊 Status do monitor e do banco de dados' },
-    { command: 'inmet', description: '⚡ Avisos meteorológicos oficiais' },
+    { command: 'alertas', description: '🚨 Avisos e alertas ativos (INMET + Defesa Civil RS)' },
     { command: 'config', description: '⚙️ Ajustes de intervalo, raio e alertas' },
     { command: 'help', description: '📖 Ajuda e guia operacional' }
 ];
@@ -334,7 +333,7 @@ export class WeatherTelegramBot {
     static buildMainMenuKeyboard() {
         return new InlineKeyboard()
             .text('🔍 Status & Varredura', 'action:status')
-            .text('⚡ Avisos Ativos INMET', 'action:inmet_warnings')
+            .text('🚨 Alertas Ativos', 'action:active_alerts')
             .row()
             .text('⚙️ Configurações', 'menu:settings')
             .text('❓ Ajuda & Comandos', 'action:help');
@@ -469,7 +468,7 @@ export class WeatherTelegramBot {
      */
     static buildAlertActionKeyboard() {
         return new InlineKeyboard()
-            .text('⚡ Avisos INMET', 'action:inmet_warnings')
+            .text('🚨 Alertas Ativos', 'action:active_alerts')
             .row()
             .text('🏠 Abrir Painel Principal', 'menu:main');
     }
@@ -555,54 +554,58 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Renders active INMET warnings in the monitored regional area.
-     * 
+     * Runs an on-demand multi-source risk scan (INMET avisos + forecasts and
+     * Defesa Civil RS telemetry) and renders a combined alert report.
+     * Uses the shared monitoring coordinator so thresholds, radius, and
+     * quality handling stay identical to the background service.
+     *
+     * @returns {Promise<string>}
+     */
+    async renderActiveAlertsReport() {
+        try {
+            const config = this.getConfig();
+            const result = await performRegionalRiskMonitoring({
+                radiusKm: config.radiusKm,
+                inmetMinSeverity: config.inmetMinSeverity,
+                defesaCivilMinSeverity: config.defesaCivilMinSeverity,
+                alertCallback: null
+            });
+
+            if (result.events.length === 0) {
+                const lines = [
+                    '🟢 NENHUM ALERTA ATIVO NO MOMENTO',
+                    CARD_HEADER,
+                    `Raio monitorado: ${result.citiesCount} municípios (${config.radiusKm} km)`,
+                    `Atualizado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+                    ''
+                ];
+                if (!result.dataQuality.complete) {
+                    lines.push(`⚠️ Dados parcialmente indisponíveis: ${result.dataQuality.errors.join('; ')}`);
+                    lines.push('');
+                }
+                lines.push(CARD_DIVIDER);
+                lines.push('💡 O monitoramento continua 24/7 a cada ciclo agendado.');
+                lines.push('⚠️ Fontes: avisos oficiais do INMET e telemetria da Defesa Civil RS.');
+                return lines.join('\n');
+            }
+
+            let text = WeatherTelegramBot.formatHighRiskAlert(result.events);
+            if (!result.dataQuality.complete) {
+                text += `\n\n${CARD_DIVIDER}\n⚠️ Nota: dados parcialmente indisponíveis — ${result.dataQuality.errors.join('; ')}`;
+            }
+            return text;
+        } catch (err) {
+            return `❌ Erro ao consultar alertas ativos: ${err.message}`;
+        }
+    }
+
+    /**
+     * @deprecated Use renderActiveAlertsReport() — kept for backwards compatibility.
      * @param {number} [radiusKm]
      * @returns {Promise<string>}
      */
     async renderInmetWarningsReport(radiusKm) {
-        try {
-            const targetRadius = radiusKm || this.getConfig().radiusKm;
-            const cities = await getSurroundingCities(targetRadius);
-            const { regionalWarnings } = await getRegionalRiskWarnings(cities);
-
-            const lines = [
-                '⚡ AVISOS METEOROLÓGICOS OFICIAIS (INMET)',
-                CARD_HEADER,
-                `Raio monitorado: ${targetRadius} km (${cities.length} municípios)`,
-                `Atualizado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-                ''
-            ];
-
-            if (regionalWarnings.length === 0) {
-                lines.push('🟢 Nenhum aviso meteorológico ativo emitido para a região no momento.');
-                lines.push('', CARD_DIVIDER);
-                lines.push('💡 O monitoramento continua 24/7 a cada ciclo agendado.');
-                return lines.join('\n');
-            }
-
-            regionalWarnings.forEach((w, idx) => {
-                const emoji = getAlertEmoji(w);
-                const citiesStr = (w.affectedRegionalCities || []).join(', ') || 'Região Metropolitana';
-
-                lines.push(`${idx + 1}. ${emoji} ${w.descricao || w.tipo || 'Aviso Meteorológico'}`);
-                lines.push(`   Severidade: ${w.severidade || 'Não informada'}`);
-                lines.push(`   Período: ${w.inicio || 'N/A'} -> ${w.fim || 'N/A'}`);
-                lines.push(`   Municípios Afetados: ${citiesStr}`);
-
-                if (w.riscos) {
-                    const rText = Array.isArray(w.riscos) ? w.riscos.join(' | ') : w.riscos;
-                    lines.push(`   Riscos: ${rText}`);
-                }
-                lines.push('');
-            });
-
-            lines.push(CARD_DIVIDER);
-            lines.push('⚠️ Fonte: Instituto Nacional de Meteorologia (INMET / CPTEC).');
-            return lines.join('\n');
-        } catch (err) {
-            return `❌ Erro ao consultar avisos do INMET: ${err.message}`;
-        }
+        return this.renderActiveAlertsReport();
     }
 
     /**
@@ -731,7 +734,7 @@ export class WeatherTelegramBot {
                 '• /start ou /menu — Abre o painel interativo com botões de navegação',
                 '• /status — Exibe o status da varredura e métricas do banco SQLite',
                 '• /config — Ajusta raio, intervalo e limiares independentes por instituto',
-                '• /inmet — Exibe os alertas ativos do INMET na região',
+                '• /alertas — Consulta avisos e alertas ativos (INMET + Defesa Civil RS)',
                 '',
                 CARD_DIVIDER,
                 '💡 Todas as opções acima também estão disponíveis nos botões do painel.'
@@ -758,15 +761,17 @@ export class WeatherTelegramBot {
             });
         });
 
-        // Command: /inmet -> Live Active INMET Warnings
-        this.telegram.onCommand('inmet', async ctx => {
+        // Command: /alertas -> On-demand multi-source active alerts (INMET + Defesa Civil RS)
+        const handleAlertas = async ctx => {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
-            const report = await this.renderInmetWarningsReport();
+            const report = await this.renderActiveAlertsReport();
             const kb = new InlineKeyboard()
-                .text('🔄 Atualizar Avisos', 'action:inmet_warnings')
+                .text('🔄 Atualizar Alertas', 'action:active_alerts')
                 .text('⬅️ Menu', 'menu:main');
             return ctx.reply(report, { reply_markup: kb });
-        });
+        };
+        this.telegram.onCommand('alertas', handleAlertas);
+        this.telegram.onCommand('inmet', handleAlertas);
 
         // Callback Query Router for Inline Buttons
         this.telegram.onCallbackQuery(async ctx => {
@@ -935,11 +940,11 @@ export class WeatherTelegramBot {
                 });
             }
 
-            if (data === 'action:inmet_warnings') {
-                await answer('⚡ Consultando INMET...');
-                const report = await this.renderInmetWarningsReport();
+            if (data === 'action:active_alerts' || data === 'action:inmet_warnings') {
+                await answer('🚨 Consultando INMET e Defesa Civil...');
+                const report = await this.renderActiveAlertsReport();
                 const kb = new InlineKeyboard()
-                    .text('🔄 Atualizar', 'action:inmet_warnings')
+                    .text('🔄 Atualizar', 'action:active_alerts')
                     .text('⬅️ Menu', 'menu:main');
                 return ctx.editMessageText?.(report, { reply_markup: kb });
             }
@@ -950,7 +955,7 @@ export class WeatherTelegramBot {
                     '📖 AJUDA E OPERAÇÃO DO PAINEL',
                     CARD_HEADER,
                     '• Status & Varredura: Diagnóstico em tempo real das métricas do serviço.',
-                    '• Avisos INMET: Consulta imediata aos boletins oficiais de perigo.',
+                    '• Alertas Ativos: Varredura imediata dos avisos do INMET e alertas da Defesa Civil RS.',
                     '• Configurações: Altere raio, intervalo e limiares independentes por instituto.'
                 ].join('\n');
 
