@@ -5,8 +5,8 @@
 | File | Primary Responsibility |
 | :--- | :--- |
 | `src/telegram.js` | Direct grammY wrapper. Parses `TELEGRAM_BOT_TOKEN` & `TELEGRAM_ADMIN_CHAT_ID`, provides `splitMessage(text, 4096)`, `sendToAdmins(text)`, `start({ onStart })`, and `stop(signal)`. |
-| `src/telegram_bot.js` | High-level bot behavior. Implements `createWeatherTelegramBot` (registers `/start`, `/help`, `/status`, `/chatid` and fallback handler) and `formatWeatherAlertMessage(payload)` + `createTelegramAlertCallback`. |
-| `src/weather_bot.js` | Process composition entry point. Initializes `TelegramBotClient`, attaches alert callback to `startMonitoringService`, and coordinates graceful process exit. |
+| `src/telegram_bot.js` | High-level OOP bot layer (`WeatherTelegramBot`). Manages interactive menus, inline keyboards, visual gauges, card templates, command routes, and `sendHighRiskAlerts` / `createAlertCallback`. |
+| `src/weather_bot.js` | Process composition entry point. Initializes `WeatherTelegramBot`, binds alert callback to `startMonitoringService`, and coordinates graceful process exit. |
 
 ---
 
@@ -15,11 +15,15 @@
 ```
 Command   | Access Level       | Behavior
 ----------|--------------------|----------------------------------------------------
-/start    | Public             | Explains service purpose and informs whether caller is an authorized administrator.
-/help     | Public             | Lists available commands and authorization rules.
+/start    | Admin Only         | Opens rich interactive dashboard with visual telemetry cards and inline action buttons.
+/menu     | Admin Only         | Renders primary menu and dashboard overview.
+/jacui    | Admin Only         | Displays real-time Defesa Civil RS river telemetry and rain gauges.
+/inmet    | Admin Only         | Displays active official INMET warnings and severities.
+/config   | Admin Only         | Interactive settings (interval, radius, independent institute thresholds).
+/status   | Admin Only         | Reports operational health, monitoring interval, radius, and SQLite metrics.
+/help     | Admin Only         | Lists available commands and operational guide.
 /chatid   | Public             | Returns caller's numeric chat ID for allowlist configuration.
-/status   | Admin Only         | Reports operational health, monitoring interval, and radius.
-Fallback  | Public             | Friendly guidance with /help recommendation.
+Fallback  | Admin Only         | Friendly guidance with main dashboard inline buttons.
 ```
 
 ---
@@ -29,12 +33,12 @@ Fallback  | Public             | Friendly guidance with /help recommendation.
 To test bot command responses and alert delivery without contacting the Telegram Bot API servers, use fake bot client objects:
 
 ```javascript
-import { createWeatherTelegramBot } from '../src/telegram_bot.js';
+import { WeatherTelegramBot } from '../src/telegram_bot.js';
 
 // In-memory test client implementing TelegramBotClient interface
 const recordedMessages = [];
 const fakeTelegram = {
-  adminChatIds: ['12345'],
+  isAdminChat: id => id === 12345,
   commandHandlers: {},
   command(name, handler) {
     this.commandHandlers[name] = handler;
@@ -42,11 +46,23 @@ const fakeTelegram = {
   on(eventType, handler) {
     this.messageHandler = handler;
   },
+  onCommand(name, handler) {
+    this.commandHandlers[name] = handler;
+  },
+  onCallbackQuery(handler) {
+    this.callbackHandler = handler;
+  },
+  onText(handler) {
+    this.textHandler = handler;
+  },
+  onError(handler) {
+    this.errorHandler = handler;
+  },
   async sendToAdmins(message) {
     recordedMessages.push(message);
-    return [{ chatId: '12345', messageId: 100 }];
+    return { sent: [{ chatId: '12345', chunks: 1 }], failed: [] };
   }
 };
 
-createWeatherTelegramBot({ telegram: fakeTelegram });
+new WeatherTelegramBot({ telegram: fakeTelegram });
 ```

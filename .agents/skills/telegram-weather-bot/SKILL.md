@@ -49,18 +49,21 @@ For message formatting, layout templates, and character budget rules, see [Alert
 The monitoring loop must never stall or crash due to Telegram network timeouts or rate limits:
 
 ```javascript
-import { createTelegramAlertCallback } from './telegram_bot.js';
+import { WeatherTelegramBot } from './telegram_bot.js';
 import { TelegramBotClient } from './telegram.js';
 
 const telegramClient = new TelegramBotClient({ token, adminChatIds, logger });
-const alertCallback = createTelegramAlertCallback({ telegram: telegramClient, logger });
+const bot = new WeatherTelegramBot({ telegram: telegramClient, logger });
+const alertCallback = bot.createAlertCallback();
 
 // Callback receives array of high-risk events detected in 24h window
-await alertCallback({
-  highRiskEvents: [...],
-  detectedAt: new Date(),
-  radiusKm: 50
-});
+await alertCallback([
+  {
+    type: 'Tempestade severa',
+    severity: 'Grande Perigo',
+    affectedCities: ['Charqueadas']
+  }
+]);
 ```
 
 ### 3. Telegram Message Length Guardrails (4096 Chars)

@@ -169,7 +169,7 @@ Use lightweight dependency injection without bringing in heavy mock libraries:
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { TelegramBotClient } from '../src/telegram.js';
-import { createWeatherTelegramBot } from '../src/telegram_bot.js';
+import { WeatherTelegramBot } from '../src/telegram_bot.js';
 
 /**
  * Creates a controllable fake bot matching grammY's core interface.
@@ -214,7 +214,7 @@ describe('Telegram Bot Verification', () => {
       logger: { error() {}, log() {} }
     });
 
-    createWeatherTelegramBot({
+    new WeatherTelegramBot({
       telegram: telegramClient,
       getStatus: () => '📡 Status: All systems operational'
     });
