@@ -170,6 +170,32 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(text, /Grande Perigo/i);
     });
 
+    it('aggregates same-hazard per-city events into one grouped alert entry', () => {
+        const makeEvent = city => ({
+            emoji: '🟠',
+            type: 'Geada / Frio Típico de Inverno',
+            severity: 'MODERATE',
+            colorTier: 'ORANGE',
+            source: 'FORECAST_ANALYSIS',
+            affectedCities: [city],
+            timeframe: 'Janela de 24h (21/08/2026, manhã)',
+            triggerReason: `Métrica da previsão para ${city}`,
+            details: `Temp. Mínima: 3°C em ${city}`
+        });
+
+        const text = WeatherTelegramBot.formatHighRiskAlert([
+            makeEvent('Charqueadas'),
+            makeEvent('Eldorado do Sul'),
+            makeEvent('Triunfo')
+        ], new Date('2026-08-13T12:00:00Z'));
+
+        // One grouped entry instead of one per city
+        assert.match(text, /1 tipos de alerta agrupados \(3 ocorrências\)/);
+        assert.match(text, /Charqueadas, Eldorado do Sul, Triunfo/);
+        const numberedEntries = text.match(/^\d+\. /gm) || [];
+        assert.strictEqual(numberedEntries.length, 1);
+    });
+
     it('uses severity-aware wording for informative yellow alerts', () => {
         const text = WeatherTelegramBot.formatHighRiskAlert([{
             type: 'Chuva moderada',
@@ -252,6 +278,68 @@ describe('Weather Telegram bot presentation & keyboards', () => {
             });
             // legacy callback should still render the new combined report
             assert.ok(editedLegacy);
+        } finally {
+            globalThis.fetch = origFetch;
+        }
+    });
+
+    it('aggregates per-city alerts and respects the chosen threat level', async () => {
+        const { aggregateRiskEvents } = await import('../src/risk_analyzer.js');
+        const events = [
+            { source: 'FORECAST_ANALYSIS', type: 'Geada / Frio Típico de Inverno', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', affectedCities: ['Charqueadas'], timeframe: 'Janela de 24h (21/08/2026, manhã)', triggerReason: 'x', details: 'Temp. Mínima: 3°C em Charqueadas' },
+            { source: 'FORECAST_ANALYSIS', type: 'Geada / Frio Típico de Inverno', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', affectedCities: ['Eldorado do Sul'], timeframe: 'Janela de 24h (21/08/2026, manhã)', triggerReason: 'x', details: 'Temp. Mínima: 4°C em Eldorado do Sul' },
+            { source: 'FORECAST_ANALYSIS', type: 'Chuva / Instabilidade', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', affectedCities: ['Charqueadas'], timeframe: 'Janela de 24h (21/08/2026, manhã)', triggerReason: 'y', details: 'Chuva em Charqueadas' },
+        ];
+        const aggregated = aggregateRiskEvents(events);
+        assert.equal(aggregated.length, 2);
+        const geada = aggregated.find(group => group.type.includes('Geada'));
+        assert.ok(geada);
+        assert.equal(geada.aggregatedCount, 2);
+        assert.ok(geada.affectedCities.includes('Charqueadas'));
+        assert.ok(geada.affectedCities.includes('Eldorado do Sul'));
+        assert.match(geada.triggerReason, /2 municípios/);
+
+        // Button report must be filtered by the configured thresholds and rendered aggregated
+        const { client, fakeBot } = createClient();
+        const bot = new WeatherTelegramBot({
+            telegram: client,
+            monitorService: {
+                getConfig: () => ({
+                    radiusKm: 25,
+                    intervalMinutes: 15,
+                    intervalMs: 900000,
+                    inmetMinSeverity: 'RED',
+                    defesaCivilMinSeverity: 'OFF'
+                })
+            }
+        });
+        const origFetch = globalThis.fetch;
+        const now = new Date();
+        const start = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+        const end = new Date(now.getTime() + 12 * 60 * 60 * 1000).toISOString();
+        globalThis.fetch = async (url) => {
+            const u = String(url);
+            if (u.includes('avisos/ativos')) {
+                return {
+                    ok: true, status: 200, json: async () => ([
+                        { id_aviso: 'red-1', aviso_cor: '#FF0000', severidade: 'Grande Perigo', descricao: 'Tempestade severa', inicio: start, fim: end, geocodes: '4305355', estados: 'RS', riscos: ['Vento'] },
+                        { id_aviso: 'yellow-1', aviso_cor: '#FFFE00', severidade: 'Perigo Potencial', descricao: 'Chuva fraca', inicio: start, fim: end, geocodes: '4305355', estados: 'RS', riscos: ['Chuva'] },
+                    ])
+                };
+            }
+            if (u.includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
+            if (u.toLowerCase().includes('graphql') || u.toLowerCase().includes('defesacivil')) {
+                return { ok: true, status: 200, json: async () => ({ data: { tags_data: { qualle_meteorologia: [] } } }) };
+            }
+            return { ok: true, status: 200, json: async () => [] };
+        };
+        try {
+            const reportRedOnly = await bot.renderActiveAlertsReport();
+            // RED threshold must keep the red alert and hide the yellow one
+            assert.match(reportRedOnly, /Tempestade severa/);
+            assert.doesNotMatch(reportRedOnly, /Chuva fraca/);
+            assert.match(reportRedOnly, /Limiares aplicados/);
+            assert.match(reportRedOnly, /1 tipos de alerta agrupados/);
         } finally {
             globalThis.fetch = origFetch;
         }

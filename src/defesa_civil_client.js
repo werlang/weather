@@ -24,7 +24,7 @@ export const REGIONAL_STATIONS = [
 ];
 
 export const TAGS_DATA_QUERY = `
-query GetStationTelemetry($stations: [String!], $clients: [String!]) {
+query GetStationTelemetry($stations: [String!]!, $clients: [String!]!) {
   tags_data(station: $stations, clients: $clients) {
     qualle_meteorologia {
       codigo

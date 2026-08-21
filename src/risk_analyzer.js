@@ -432,3 +432,59 @@ export function evaluateHighRisksIn24hWindow({
 
     return uniqueEvents;
 }
+
+/**
+ * Groups high-risk events that share the same hazard type and severity tier,
+ * merging their affected municipalities. This produces a compact, aggregated
+ * report (e.g. one “Geada” entry for 18 cities instead of 18 separate lines)
+ * while preserving the original event count for metrics.
+ *
+ * @param {Array<object>} events - Normalized risk events.
+ * @returns {Array<object>} Aggregated events, sorted by severity descending.
+ */
+export function aggregateRiskEvents(events) {
+    if (!Array.isArray(events) || events.length === 0) return [];
+
+    const groups = new Map();
+    for (const event of events) {
+        const key = `${event.source || 'UNKNOWN'}|${event.type}|${event.colorTier || event.severity}`;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                ...event,
+                affectedCities: [...(event.affectedCities || [])],
+                _count: 1,
+                _timeframes: new Set([event.timeframe]),
+            });
+        } else {
+            const grouped = groups.get(key);
+            for (const city of event.affectedCities || []) {
+                if (!grouped.affectedCities.includes(city)) grouped.affectedCities.push(city);
+            }
+            grouped._count += 1;
+            grouped._timeframes.add(event.timeframe);
+        }
+    }
+
+    return Array.from(groups.values())
+        .map(grouped => {
+            const cities = [...grouped.affectedCities].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+            const aggregated = grouped._count > 1;
+            const timeframe = grouped._timeframes.size === 1
+                ? [...grouped._timeframes][0]
+                : `Próximas 24h (${grouped._count} ocorrências)`;
+            const { _count, _timeframes, ...rest } = grouped;
+            return {
+                ...rest,
+                affectedCities: cities,
+                timeframe,
+                triggerReason: aggregated
+                    ? `${rest.type} detectado em ${cities.length} municípios (${_count} ocorrências na janela)`
+                    : rest.triggerReason,
+                details: aggregated
+                    ? `${rest.type} — ${cities.length} municípios afetados (ex.: ${rest.details})`
+                    : rest.details,
+                aggregatedCount: _count,
+            };
+        })
+        .sort((left, right) => (SEVERITY_LEVELS[right.colorTier] ?? 0) - (SEVERITY_LEVELS[left.colorTier] ?? 0));
+}

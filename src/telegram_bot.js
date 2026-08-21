@@ -8,10 +8,10 @@
  * @module telegramBot
  */
 
-import { InlineKeyboard } from './telegram.js';
+import { InlineKeyboard, splitTelegramMessage } from './telegram.js';
 import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring } from './monitor_service.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
-import { normalizeSeverityTier } from './risk_analyzer.js';
+import { aggregateRiskEvents, normalizeSeverityTier } from './risk_analyzer.js';
 
 
 /**
@@ -576,6 +576,7 @@ export class WeatherTelegramBot {
                     '🟢 NENHUM ALERTA ATIVO NO MOMENTO',
                     CARD_HEADER,
                     `Raio monitorado: ${result.citiesCount} municípios (${config.radiusKm} km)`,
+                    `Limiares ativos: INMET ${getTierBadge(config.inmetMinSeverity)} | Defesa Civil ${getTierBadge(config.defesaCivilMinSeverity)}`,
                     `Atualizado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
                     ''
                 ];
@@ -584,16 +585,51 @@ export class WeatherTelegramBot {
                     lines.push('');
                 }
                 lines.push(CARD_DIVIDER);
-                lines.push('💡 O monitoramento continua 24/7 a cada ciclo agendado.');
+                lines.push('💡 O monitoramento continua 24/7 a cada ciclo agendado (apenas alertas dentro do limiar configurado são exibidos).');
                 lines.push('⚠️ Fontes: avisos oficiais do INMET e telemetria da Defesa Civil RS.');
                 return lines.join('\n');
             }
 
-            let text = WeatherTelegramBot.formatHighRiskAlert(result.events);
+            const aggregated = aggregateRiskEvents(result.events);
+            const uniqueCities = [...new Set(result.events.flatMap(event => event.affectedCities || []))];
+
+            const presentation = getAlertPresentation(aggregated);
+            const lines = [
+                presentation.header,
+                presentation.criteria,
+                CARD_HEADER,
+                `🕒 Detectado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+                `📊 ${aggregated.length} tipos de alerta agrupados — ${result.events.length} ocorrências em ${uniqueCities.length} de ${result.citiesCount} municípios monitorados`,
+                `🎯 Limiares aplicados: INMET ${getTierBadge(config.inmetMinSeverity)} | Defesa Civil ${getTierBadge(config.defesaCivilMinSeverity)}`,
+                `📏 Raio: ${config.radiusKm} km`,
+                ''
+            ];
+
+            aggregated.forEach((event, index) => {
+                const badge = renderSeverityBadge(event.severity);
+                const cityCount = event.affectedCities.length;
+                const cityLabel = cityCount === 1 ? event.affectedCities[0] : `${cityCount} municípios: ${event.affectedCities.join(', ')}`;
+                const occurrenceNote = event.aggregatedCount > 1 ? ` (${event.aggregatedCount} ocorrências agrupadas)` : '';
+                lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico severo'}${occurrenceNote}`);
+                lines.push(`   Severidade: ${badge}`);
+                lines.push(`   Origem: ${event.source || 'Não informada'}`);
+                lines.push(`   Municípios: ${cityLabel}`);
+                lines.push(`   Janela: ${event.timeframe || 'Não informada'}`);
+                lines.push(`   💡 Motivo: ${event.triggerReason || 'Não informado'}`);
+                if (event.details && event.details !== event.triggerReason) {
+                    lines.push(`   📝 Detalhes: ${event.details}`);
+                }
+                if (index < aggregated.length - 1) lines.push('', CARD_DIVIDER, '');
+            });
+
+            lines.push('', CARD_HEADER);
+            lines.push(presentation.footer);
             if (!result.dataQuality.complete) {
-                text += `\n\n${CARD_DIVIDER}\n⚠️ Nota: dados parcialmente indisponíveis — ${result.dataQuality.errors.join('; ')}`;
+                lines.push('', `${CARD_DIVIDER}`);
+                lines.push(`⚠️ Nota: dados parcialmente indisponíveis — ${result.dataQuality.errors.join('; ')}`);
             }
-            return text;
+            lines.push(`⚠️ Fontes: avisos oficiais do INMET e telemetria da Defesa Civil RS (filtrados pelos limiares configurados).`);
+            return lines.join('\n');
         } catch (err) {
             return `❌ Erro ao consultar alertas ativos: ${err.message}`;
         }
@@ -616,17 +652,20 @@ export class WeatherTelegramBot {
      * @returns {string} Formatted alert message.
      */
     static formatHighRiskAlert(events, sentAt = new Date()) {
-        const presentation = getAlertPresentation(events);
+        const aggregated = aggregateRiskEvents(events);
+        const presentation = getAlertPresentation(aggregated);
         const lines = [
             presentation.header,
             presentation.criteria,
             CARD_HEADER,
             `🕒 Detectado em: ${sentAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-            `📊 Eventos Detectados: ${events.length}`,
+            aggregated.length < events.length
+                ? `📊 ${aggregated.length} tipos de alerta agrupados (${events.length} ocorrências)`
+                : `📊 Eventos Detectados: ${aggregated.length}`,
             ''
         ];
 
-        events.forEach((event, index) => {
+        aggregated.forEach((event, index) => {
             const badge = renderSeverityBadge(event.severity);
             lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico severo'}`);
             lines.push(`   Severidade: ${badge}`);
@@ -638,7 +677,7 @@ export class WeatherTelegramBot {
             if (event.details && event.details !== event.triggerReason) {
                 lines.push(`   📝 Detalhes: ${event.details}`);
             }
-            if (index < events.length - 1) lines.push('', CARD_DIVIDER, '');
+            if (index < aggregated.length - 1) lines.push('', CARD_DIVIDER, '');
         });
 
         lines.push('', CARD_HEADER);
@@ -765,10 +804,15 @@ export class WeatherTelegramBot {
         const handleAlertas = async ctx => {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
             const report = await this.renderActiveAlertsReport();
+            const chunks = splitTelegramMessage(report);
             const kb = new InlineKeyboard()
                 .text('🔄 Atualizar Alertas', 'action:active_alerts')
                 .text('⬅️ Menu', 'menu:main');
-            return ctx.reply(report, { reply_markup: kb });
+            for (let i = 0; i < chunks.length; i += 1) {
+                const isLast = i === chunks.length - 1;
+                // eslint-disable-next-line no-await-in-loop
+                await ctx.reply(chunks[i], { reply_markup: isLast ? kb : undefined });
+            }
         };
         this.telegram.onCommand('alertas', handleAlertas);
         this.telegram.onCommand('inmet', handleAlertas);
@@ -943,10 +987,20 @@ export class WeatherTelegramBot {
             if (data === 'action:active_alerts' || data === 'action:inmet_warnings') {
                 await answer('🚨 Consultando INMET e Defesa Civil...');
                 const report = await this.renderActiveAlertsReport();
+                const chunks = splitTelegramMessage(report);
                 const kb = new InlineKeyboard()
                     .text('🔄 Atualizar', 'action:active_alerts')
                     .text('⬅️ Menu', 'menu:main');
-                return ctx.editMessageText?.(report, { reply_markup: kb });
+                if (chunks.length === 1) {
+                    return ctx.editMessageText?.(chunks[0], { reply_markup: kb });
+                }
+                await ctx.editMessageText?.(chunks[0]);
+                for (let i = 1; i < chunks.length; i += 1) {
+                    const isLast = i === chunks.length - 1;
+                    // eslint-disable-next-line no-await-in-loop
+                    await ctx.reply?.(chunks[i], { reply_markup: isLast ? kb : undefined });
+                }
+                return;
             }
 
             if (data === 'action:help') {

@@ -4,7 +4,8 @@ import {
     getDefesaCivilTelemetry,
     evaluateDefesaCivilRisks,
     CHARQUEADAS_STATION_CODE,
-    REGIONAL_STATIONS
+    REGIONAL_STATIONS,
+    TAGS_DATA_QUERY
 } from '../src/defesa_civil_client.js';
 import { evaluateHighRisksIn24hWindow } from '../src/risk_analyzer.js';
 import { getDatabase } from '../src/log_database.js';
@@ -21,6 +22,13 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(REGIONAL_STATIONS.some(s => s.code === 'DCRS-00032' && s.name === 'Charqueadas'));
         assert.ok(REGIONAL_STATIONS.some(s => s.code === 'DCRS-00093'));
         assert.ok(REGIONAL_STATIONS.some(s => s.code === 'DCRS-00076'));
+    });
+
+    it('declares non-null GraphQL list variables required by the server schema', () => {
+        // The live API rejects nullable "$stations"/"$clients" with HTTP 400
+        // (GRAPHQL_VALIDATION_FAILED: position expects type "[String!]!").
+        assert.ok(TAGS_DATA_QUERY.includes('$stations: [String!]!'));
+        assert.ok(TAGS_DATA_QUERY.includes('$clients: [String!]!'));
     });
 
     it('evaluates Orange Alert for rain >= 30mm/h or wind >= 75km/h or rapid river rise >= 0.25m/h', () => {
