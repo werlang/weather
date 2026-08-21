@@ -1,7 +1,7 @@
 /**
  * Telegram Bot Presentation & Interactive UI Layer.
  * Provides an object-oriented WeatherTelegramBot class managing interactive menus,
- * inline button keyboards, visual telemetry gauges, high-contrast cards, and alert delivery.
+ * inline button keyboards, high-contrast cards, and alert delivery.
  * 
  * Supports independent alert thresholds for INMET and DEFESA CIVIL RS.
  * 
@@ -10,7 +10,6 @@
 
 import { InlineKeyboard } from './telegram.js';
 import { onHighRiskEventDetected, parseMonitorConfig } from './monitor_service.js';
-import { getDefesaCivilTelemetry, REGIONAL_STATIONS } from './defesa_civil_client.js';
 import { getSurroundingCities, getRegionalRiskWarnings, getAlertEmoji } from './inmet_client.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
 import { normalizeSeverityTier } from './risk_analyzer.js';
@@ -100,50 +99,11 @@ export function getTierShortBadge(tier) {
 export const BOT_COMMANDS = [
     { command: 'start', description: '🌤️ Painel meteorológico e menu interativo' },
     { command: 'menu', description: '🌤️ Abrir painel principal' },
-    { command: 'status', description: '📊 Status do monitor e telemetria' },
-    { command: 'jacui', description: '🌊 Rio Jacuí e dados da Defesa Civil RS' },
+    { command: 'status', description: '📊 Status do monitor e do banco de dados' },
     { command: 'inmet', description: '⚡ Avisos meteorológicos oficiais' },
     { command: 'config', description: '⚙️ Ajustes de intervalo, raio e alertas' },
-    { command: 'help', description: '📖 Ajuda e guia operacional' },
-    { command: 'chatid', description: '🆔 Consultar ID deste chat Telegram' }
+    { command: 'help', description: '📖 Ajuda e guia operacional' }
 ];
-
-/**
- * Renders a visual Unicode gauge/progress meter.
- * E.g. [██████░░░░] 60%
- *
- * @param {number} value - Current value.
- * @param {number} max - Maximum scale value.
- * @param {number} [length=8] - Number of segments.
- * @param {string} [filledChar='█'] - Filled character.
- * @param {string} [emptyChar='░'] - Empty character.
- * @returns {string} E.g. "[████░░░░] 50%"
- */
-export function renderProgressBar(value, max, length = 8, filledChar = '█', emptyChar = '░') {
-    if (max <= 0 || value === null || value === undefined || isNaN(value)) {
-        return `[${emptyChar.repeat(length)}]`;
-    }
-    const ratio = Math.max(0, Math.min(1, value / max));
-    const filled = Math.round(ratio * length);
-    const empty = Math.max(0, length - filled);
-    const pct = Math.round(ratio * 100);
-    return `[${filledChar.repeat(filled)}${emptyChar.repeat(empty)}] ${pct}%`;
-}
-
-/**
- * Renders a descriptive river level trend with speed context.
- *
- * @param {number|undefined|null} trend - Trend in m/h.
- * @returns {string} Formatted trend indicator.
- */
-export function renderRiverTrend(trend) {
-    if (trend === undefined || trend === null || isNaN(trend)) return '';
-    if (trend >= 0.25) return `🔺 Subida Crítica (+${trend} m/h)`;
-    if (trend > 0) return `📈 Subindo (+${trend} m/h)`;
-    if (trend === 0) return '➡️ Estável (0.00 m/h)';
-    if (trend <= -0.25) return `🔻 Descida Rápida (${trend} m/h)`;
-    return `📉 Descendo (${trend} m/h)`;
-}
 
 /**
  * Maps a severity string to a high-contrast visual badge.
@@ -278,9 +238,7 @@ export class WeatherTelegramBot {
         return ctx.reply([
             '🔒 ACESSO RESTRITO',
             CARD_HEADER,
-            'Este bot está restrito ao administrador configurado.',
-            '',
-            '💡 Use /chatid para consultar o ID deste chat e solicite autorização ao mantenedor do sistema.'
+            'Este bot está restrito ao administrador configurado.'
         ].join('\n'));
     }
 
@@ -313,13 +271,10 @@ export class WeatherTelegramBot {
     static buildMainMenuKeyboard() {
         return new InlineKeyboard()
             .text('🔍 Status & Varredura', 'action:status')
-            .text('🌊 Jacuí & Telemetria', 'action:defesa_civil')
-            .row()
             .text('⚡ Avisos Ativos INMET', 'action:inmet_warnings')
-            .text('⚙️ Configurações', 'menu:settings')
             .row()
-            .text('❓ Ajuda & Comandos', 'action:help')
-            .text('🆔 Meu Chat ID', 'action:chatid');
+            .text('⚙️ Configurações', 'menu:settings')
+            .text('❓ Ajuda & Comandos', 'action:help');
     }
 
     /**
@@ -451,7 +406,6 @@ export class WeatherTelegramBot {
      */
     static buildAlertActionKeyboard() {
         return new InlineKeyboard()
-            .text('🌊 Ver Jacuí & Chuva', 'action:defesa_civil')
             .text('⚡ Avisos INMET', 'action:inmet_warnings')
             .row()
             .text('🏠 Abrir Painel Principal', 'menu:main');
@@ -471,7 +425,7 @@ export class WeatherTelegramBot {
         return [
             '🌤️ PAINEL METEOROLÓGICO — CHARQUEADAS / RS',
             CARD_HEADER,
-            'Monitoramento 24/7 de Riscos e Telemetria Hidrometeorológica',
+            'Monitoramento 24/7 de Riscos Meteorológicos na Região',
             '',
             `📍 Município Central: Charqueadas - RS (IBGE 4305355)`,
             `📏 Raio de Cobertura: ${config.radiusKm} km`,
@@ -528,78 +482,13 @@ export class WeatherTelegramBot {
             `• Limiar INMET: ${getTierBadge(config.inmetMinSeverity)}`,
             `• Limiar Defesa Civil RS: ${getTierBadge(config.defesaCivilMinSeverity)}`,
             '',
-            '📈 Métricas de Telemetria & Banco (SQLite):',
+            '📈 Métricas do Banco de Dados (SQLite):',
             stats ? `  - Requisições Registradas: ${stats.totalFetches} (${stats.successfulFetches} OK)` : '  - Banco SQLite conectado',
             stats ? `  - Tempo Médio de Resposta: ${Math.round(stats.avgDurationMs || 0)} ms` : '',
             stats ? `  - Alertas Históricos Gravados: ${stats.totalAlertsRecorded}` : '',
             CARD_DIVIDER,
             `🕒 Consulta realizada em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
         ].filter(Boolean).join('\n');
-    }
-
-    /**
-     * Renders real-time Defesa Civil RS river and weather telemetry with visual progress gauges.
-     * 
-     * @returns {Promise<string>}
-     */
-    async renderDefesaCivilTelemetryReport() {
-        try {
-            const stations = await getDefesaCivilTelemetry(['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054']);
-            const lines = [
-                '🌊 TELEMETRIA HIDROMETEOROLÓGICA — DEFESA CIVIL RS',
-                CARD_HEADER,
-                `Atualizado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
-                ''
-            ];
-
-            if (!stations || stations.length === 0) {
-                lines.push('⚠️ Telemetria temporariamente indisponível na rede estadual.');
-                return lines.join('\n');
-            }
-
-            stations.forEach(st => {
-                const meta = REGIONAL_STATIONS.find(s => s.code === st.codigo) || { name: st.name?.local || st.codigo, river: 'Rio Baixo Jacuí' };
-                const data = st.data || {};
-
-                const riverLevel = data.rio?.rio_nivel?.value;
-                const riverTrend = data.rio?.rio_nivel_tendencia?.value;
-                const rain15min = data.chuva?.acumulado?.min015?.value;
-                const rain1h = data.chuva?.acumulado?.h001?.value;
-                const rain3h = data.chuva?.acumulado?.h003?.value;
-                const rain24h = data.chuva?.acumulado?.h024?.value;
-                const wind = data.vento?.velocidade_maxima?.value;
-                const temp = data.temperatura?.atual?.value;
-                const humidity = data.umidade?.atual?.value;
-
-                lines.push(`📍 ${meta.name} (${st.codigo})`);
-
-                if (riverLevel !== undefined && riverLevel !== null) {
-                    const trendStr = renderRiverTrend(riverTrend);
-                    lines.push(`  🌊 ${meta.river}: ${riverLevel} m ${trendStr ? `• ${trendStr}` : ''}`);
-                }
-
-                // Visual Rain Gauge (scale 0-50mm/h)
-                const rainGauge = renderProgressBar(rain1h ?? 0, 50, 6);
-                lines.push(`  🌧️ Chuva 1h: ${rain1h ?? 0} mm ${rainGauge} | 15min: ${rain15min ?? 0}mm | 24h: ${rain24h ?? 0}mm`);
-
-                if (wind !== undefined) {
-                    const windGauge = renderProgressBar(wind, 100, 6);
-                    lines.push(`  💨 Rajada Vento: ${wind} km/h ${windGauge}`);
-                }
-
-                if (temp !== undefined || humidity !== undefined) {
-                    lines.push(`  🌡️ Temp: ${temp ?? 'N/A'}°C | Umidade: ${humidity ?? 'N/A'}%`);
-                }
-
-                lines.push('');
-            });
-
-            lines.push(CARD_DIVIDER);
-            lines.push('💡 Dados oficiais transmitidos por estações telemétricas da Defesa Civil RS.');
-            return lines.join('\n');
-        } catch (err) {
-            return `❌ Erro ao consultar telemetria da Defesa Civil RS: ${err.message}`;
-        }
     }
 
     /**
@@ -778,9 +667,7 @@ export class WeatherTelegramBot {
                 '• /start ou /menu — Abre o painel interativo com botões de navegação',
                 '• /status — Exibe o status da varredura e métricas do banco SQLite',
                 '• /config — Ajusta raio, intervalo e limiares independentes por instituto',
-                '• /jacui — Exibe a telemetria ao vivo do Rio Jacuí e Defesa Civil RS',
                 '• /inmet — Exibe os alertas ativos do INMET na região',
-                '• /chatid — Informa o ID deste chat para fins de autorização',
                 '',
                 CARD_DIVIDER,
                 '💡 Todas as opções acima também estão disponíveis nos botões do painel.'
@@ -789,12 +676,6 @@ export class WeatherTelegramBot {
             return ctx.reply(text, {
                 reply_markup: new InlineKeyboard().text('🌤️ Abrir Painel Principal', 'menu:main')
             });
-        });
-
-        // Command: /chatid -> Print current Chat ID
-        this.telegram.onCommand('chatid', ctx => {
-            const chatId = ctx.chat?.id;
-            return ctx.reply(`ID deste chat: ${chatId ?? 'indisponível'}`);
         });
 
         // Command: /status -> Diagnostic and Telemetry Status Report
@@ -811,16 +692,6 @@ export class WeatherTelegramBot {
             return ctx.reply(this.renderSettingsMenu(), {
                 reply_markup: WeatherTelegramBot.buildSettingsKeyboard(this.getConfig())
             });
-        });
-
-        // Command: /jacui -> Live Defesa Civil Telemetry
-        this.telegram.onCommand('jacui', async ctx => {
-            if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
-            const report = await this.renderDefesaCivilTelemetryReport();
-            const kb = new InlineKeyboard()
-                .text('🔄 Atualizar Telemetria', 'action:defesa_civil')
-                .text('⬅️ Menu', 'menu:main');
-            return ctx.reply(report, { reply_markup: kb });
         });
 
         // Command: /inmet -> Live Active INMET Warnings
@@ -911,7 +782,7 @@ export class WeatherTelegramBot {
                     CARD_HEADER,
                     `Limiar ativo: ${getTierBadge(config.defesaCivilMinSeverity)}`,
                     '',
-                    'Selecione o nível mínimo para acionamento de telemetria da Defesa Civil:'
+                    'Selecione o nível mínimo para acionamento de alertas da Defesa Civil:'
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
@@ -984,7 +855,7 @@ export class WeatherTelegramBot {
                     CARD_HEADER,
                     `Limiar ativo: ${getTierBadge(updated.defesaCivilMinSeverity)}`,
                     '',
-                    'Selecione o nível mínimo para acionamento de telemetria da Defesa Civil:'
+                    'Selecione o nível mínimo para acionamento de alertas da Defesa Civil:'
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
@@ -998,15 +869,6 @@ export class WeatherTelegramBot {
                 return ctx.editMessageText?.(this.renderStatusReport(), {
                     reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
                 });
-            }
-
-            if (data === 'action:defesa_civil') {
-                await answer('🌊 Carregando telemetria...');
-                const report = await this.renderDefesaCivilTelemetryReport();
-                const kb = new InlineKeyboard()
-                    .text('🔄 Atualizar', 'action:defesa_civil')
-                    .text('⬅️ Menu', 'menu:main');
-                return ctx.editMessageText?.(report, { reply_markup: kb });
             }
 
             if (data === 'action:inmet_warnings') {
@@ -1024,19 +886,11 @@ export class WeatherTelegramBot {
                     '📖 AJUDA E OPERAÇÃO DO PAINEL',
                     CARD_HEADER,
                     '• Status & Varredura: Diagnóstico em tempo real das métricas do serviço.',
-                    '• Jacuí & Telemetria: Monitoramento telemétrico do Rio Jacuí e bacias.',
                     '• Avisos INMET: Consulta imediata aos boletins oficiais de perigo.',
                     '• Configurações: Altere raio, intervalo e limiares independentes por instituto.'
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
-                });
-            }
-
-            if (data === 'action:chatid') {
-                await answer();
-                return ctx.editMessageText?.(`🆔 ID deste chat: ${ctx.chat?.id ?? 'indisponível'}`, {
                     reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
                 });
             }

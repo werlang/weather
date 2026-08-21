@@ -110,6 +110,9 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.ok(Array.isArray(mainKb.inline_keyboard));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:status')));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:settings')));
+        // Telemetry and chat id actions were removed from the main menu.
+        assert.ok(!mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:defesa_civil')));
+        assert.ok(!mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:chatid')));
 
         // Settings buttons must show the current color circle of each provider.
         const settingsKb = WeatherTelegramBot.buildSettingsKeyboard({
@@ -162,20 +165,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
     });
 
     it('builds alert action tray and renders UI visual components properly', async () => {
-        const { renderProgressBar, renderRiverTrend, renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
-
-        // Progress meter / gauge tests
-        assert.strictEqual(renderProgressBar(2.5, 5.0, 8), '[████░░░░] 50%');
-        assert.strictEqual(renderProgressBar(5.0, 5.0, 8), '[████████] 100%');
-        assert.strictEqual(renderProgressBar(0, 5.0, 8), '[░░░░░░░░] 0%');
-        assert.strictEqual(renderProgressBar(null, 5.0, 8), '[░░░░░░░░]');
-
-        // River trend indicators
-        assert.match(renderRiverTrend(0.35), /Subida Crítica/);
-        assert.match(renderRiverTrend(0.12), /Subindo/);
-        assert.match(renderRiverTrend(0), /Estável/);
-        assert.match(renderRiverTrend(-0.15), /Descendo/);
-        assert.strictEqual(renderRiverTrend(null), '');
+        const { renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
 
         // Severity badge
         assert.match(renderSeverityBadge('Grande Perigo'), /🔴 GRANDE PERIGO/);
@@ -185,15 +175,15 @@ describe('Weather Telegram bot presentation & keyboards', () => {
 
         // Alert action keyboard
         const alertKb = WeatherTelegramBot.buildAlertActionKeyboard();
-        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:defesa_civil')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:inmet_warnings')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:main')));
 
-        // Command definitions
+        // Command definitions (telemetry and chat id commands were removed)
         assert.ok(Array.isArray(BOT_COMMANDS));
         assert.ok(BOT_COMMANDS.some(c => c.command === 'start'));
-        assert.ok(BOT_COMMANDS.some(c => c.command === 'jacui'));
         assert.ok(BOT_COMMANDS.some(c => c.command === 'inmet'));
+        assert.ok(!BOT_COMMANDS.some(c => c.command === 'jacui'));
+        assert.ok(!BOT_COMMANDS.some(c => c.command === 'chatid'));
     });
 
     it('registers bot commands with Telegram API menu autocomplete', async () => {
@@ -214,7 +204,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         const ok = await bot.initCommands();
         assert.strictEqual(ok, true);
         assert.ok(Array.isArray(registeredCommands));
-        assert.strictEqual(registeredCommands.length, 8);
+        assert.strictEqual(registeredCommands.length, 6);
     });
 
     it('handles interactive button navigation and independent institute adjustments', async () => {
@@ -288,9 +278,11 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.strictEqual(currentConfig.defesaCivilMinSeverity, 'RED');
         assert.match(answeredText, /Limiar Defesa Civil atualizado/);
 
-        // Click action:chatid
-        await callbackHandler(fakeContext('action:chatid'));
-        assert.match(edited.msg, /ID deste chat: 123/);
+        // Reopen the settings menu: provider buttons must show current color circles
+        await callbackHandler(fakeContext('menu:settings'));
+        const settingsButtons = (edited.opts?.reply_markup?.inline_keyboard || []).flat();
+        assert.ok(settingsButtons.some(btn => btn.callback_data === 'menu:inmet_level' && btn.text.includes('🟠 Laranja')));
+        assert.ok(settingsButtons.some(btn => btn.callback_data === 'menu:defesa_civil_level' && btn.text.includes('🔴 Vermelho')));
     });
 
     it('restricts status, commands, and buttons to configured administrators', async () => {
