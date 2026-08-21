@@ -65,9 +65,10 @@ ifsul/weather/
 │   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # GraphQL/WebSocket schema for Defesa Civil RS
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md # Severity tiers, color codes, and filtering rules
 │   └── TELEGRAM_BOT_SCOPE.md         # Telegram bot capabilities, security & non-goals
+├── database/
+│   └── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 ├── src/
 │   ├── inmet_client.js               # INMET & IBGE HTTP client (native fetch)
-│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Business logic: risk parsing, 24h window evaluation
 │   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator
 │   ├── telegram.js                   # grammY wrapper, allowlist auth, splitMessage (<4096)
@@ -92,7 +93,7 @@ ifsul/weather/
 | Module | Allowed Responsibilities | Forbidden Responsibilities |
 | :--- | :--- | :--- |
 | `src/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
-| `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs. | Direct external network I/O, Telegram alert dispatch. |
+| `database/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs. | Direct external network I/O, Telegram alert dispatch. |
 | `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback. | Direct Telegram API calls, command handling. |
 | `src/telegram.js` | grammY client lifecycle, allowlist parsing, `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |

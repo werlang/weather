@@ -8,7 +8,7 @@ import {
     extractEndpoint,
     closeDatabase,
     SCHEMA_SQL
-} from '../src/log_database.js';
+} from '../database/log_database.js';
 import { httpGet } from '../src/inmet_client.js';
 
 describe('SQLite Log Database Schema & Basics', () => {

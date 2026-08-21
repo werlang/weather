@@ -4,7 +4,7 @@
  * @module inmetClient
  */
 
-import { logFetch } from './log_database.js';
+import { logFetch } from '../database/log_database.js';
 
 export const CHARQUEADAS_IBGE_CODE = process.env.CHARQUEADAS_IBGE_CODE || '4305355';
 export const BASE_PREVMET_URL = process.env.INMET_PREVMET_URL || 'https://apiprevmet3.inmet.gov.br';

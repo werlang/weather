@@ -20,9 +20,10 @@ ifsul/weather/
 │   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # Detailed GraphQL & WebSocket API reference for Defesa Civil RS
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
 │   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
+├── database/
+│   └── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
-│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
 │   ├── monitor_service.js            # Long-running 24h risk monitoring service
 │   ├── telegram.js                   # grammY wrapper and administrator delivery client

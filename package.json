@@ -8,7 +8,7 @@
     "start": "node src/weather_bot.js",
     "monitor:console": "node src/monitor_service.js",
     "monitor:regional": "node src/monitor_regional_risks.js",
-    "db:logs": "node src/log_database.js",
+    "db:logs": "node database/log_database.js",
     "test": "node --test tests/*.test.js"
   },
   "keywords": [
