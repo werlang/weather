@@ -184,4 +184,52 @@ describe('Sqlite Database Driver (Adapted from node-aec)', () => {
 
         assert.strictEqual(Sqlite.findOne('items', { filter: { code: 'TX3' } }), null);
     });
+
+    it('ensures query execution method is private and not exposed on Sqlite', () => {
+        assert.strictEqual(Sqlite.query, undefined);
+        assert.strictEqual(typeof Sqlite.query, 'undefined');
+    });
+
+    it('counts rows with and without filters', () => {
+        Sqlite.insert('items', [
+            { code: 'CNT1', name: 'Item 1', quantity: 10 },
+            { code: 'CNT2', name: 'Item 2', quantity: 20 },
+            { code: 'CNT3', name: 'Item 3', quantity: 30 }
+        ]);
+
+        assert.strictEqual(Sqlite.count('items'), 3);
+        assert.strictEqual(Sqlite.count('items', { quantity: Sqlite.gt(15) }), 2);
+        assert.strictEqual(Sqlite.count('items', { code: 'NONEXISTENT' }), 0);
+    });
+
+    it('supports Sqlite.raw aggregate projections in find and findOne', () => {
+        Sqlite.insert('items', [
+            { code: 'AGG1', name: 'Item 1', quantity: 10, price: 100 },
+            { code: 'AGG2', name: 'Item 2', quantity: 20, price: 200 }
+        ]);
+
+        const stats = Sqlite.findOne('items', {
+            view: [
+                Sqlite.raw('COUNT(*) AS total'),
+                Sqlite.raw('SUM(quantity) AS totalQty'),
+                Sqlite.raw('AVG(price) AS avgPrice')
+            ]
+        });
+
+        assert.ok(stats);
+        assert.strictEqual(stats.total, 2);
+        assert.strictEqual(stats.totalQty, 30);
+        assert.strictEqual(stats.avgPrice, 150);
+    });
+
+    it('serializes Date objects during insert and upsert', () => {
+        const now = new Date('2026-08-20T12:00:00.000Z');
+        const [inserted] = Sqlite.insert('items', {
+            code: 'DATE1',
+            name: 'Date Test',
+            created_at: now
+        });
+
+        assert.strictEqual(inserted.created_at, '2026-08-20T12:00:00.000Z');
+    });
 });

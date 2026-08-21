@@ -1,6 +1,6 @@
 /**
  * SQLite Log Database for Weather API Fetch Requests, Alerts, and Telemetry.
- * Built on the shared SQLite database driver (`src/database_driver.js`) and Node 26 `node:sqlite`.
+ * Built on the shared SQLite database driver (`src/database_driver.js`).
  * 
  * Provides an audit and performance log of every HTTP fetch executed
  * by the weather monitoring service, CLI tools, and detected severe alerts.
@@ -8,14 +8,9 @@
  * @module logDatabase
  */
 
-import { DatabaseSync } from 'node:sqlite';
-import { resolve, dirname } from 'node:path';
-import { mkdirSync } from 'node:fs';
 import { Sqlite } from './database_driver.js';
 
 export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db';
-
-let defaultDbInstance = null;
 
 /**
  * SQL Schema for fetch_logs, alert_logs, monitor_cycle_logs, and performance indexes.
@@ -66,42 +61,26 @@ CREATE INDEX IF NOT EXISTS idx_monitor_cycle_logs_timestamp ON monitor_cycle_log
 `;
 
 /**
- * Initializes or returns an active SQLite database instance.
+ * Initializes or returns the shared SQLite database driver instance.
  * Applies table and index creation idempotently.
  * 
  * @param {string} [dbPath=DEFAULT_DB_PATH] - Path to the SQLite database file or ':memory:'.
- * @returns {DatabaseSync} The initialized SQLite database instance.
+ * @returns {typeof Sqlite} The initialized SQLite database driver.
  */
 export function getDatabase(dbPath = DEFAULT_DB_PATH) {
     if (dbPath === ':memory:') {
-        const memDb = new DatabaseSync(':memory:');
-        memDb.exec(SCHEMA_SQL);
-        return memDb;
+        Sqlite.close();
+        Sqlite.connect({ path: ':memory:' });
+        Sqlite.exec(SCHEMA_SQL);
+        return Sqlite;
     }
 
-    if (defaultDbInstance && dbPath === DEFAULT_DB_PATH) {
-        return defaultDbInstance;
+    if (!Sqlite.connected) {
+        Sqlite.connect({ path: dbPath });
+        Sqlite.exec(SCHEMA_SQL);
     }
 
-    const resolvedPath = resolve(dbPath);
-    mkdirSync(dirname(resolvedPath), { recursive: true });
-    const db = new DatabaseSync(resolvedPath);
-    
-    // Performance and reliability pragmas
-    try {
-        db.exec('PRAGMA journal_mode = WAL;');
-        db.exec('PRAGMA synchronous = NORMAL;');
-    } catch {
-        // WAL mode may not apply in all environments (e.g. read-only)
-    }
-
-    db.exec(SCHEMA_SQL);
-
-    if (dbPath === DEFAULT_DB_PATH) {
-        defaultDbInstance = db;
-    }
-
-    return db;
+    return Sqlite;
 }
 
 /**
@@ -121,7 +100,7 @@ export function extractEndpoint(url) {
 }
 
 /**
- * Logs an HTTP fetch operation into SQLite.
+ * Logs an HTTP fetch operation into SQLite using the driver.
  * 
  * @param {object} logData
  * @param {string} logData.url - Full URL fetched.
@@ -133,16 +112,16 @@ export function extractEndpoint(url) {
  * @param {number|null} [logData.itemCount] - Number of items/records in response.
  * @param {string|null} [logData.errorMessage] - Error details if failed.
  * @param {string|null} [logData.timestamp] - ISO timestamp (defaults to current time).
- * @param {DatabaseSync} [customDb] - Optional custom DB instance (useful for tests).
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {object|null} The inserted log record metadata.
  */
-export function logFetch(logData, customDb = null) {
+export function logFetch(logData, customDriver = null) {
     if (!logData || !logData.url) {
         return null;
     }
 
     try {
-        const db = customDb || getDatabase();
+        const db = customDriver || getDatabase();
         const endpoint = logData.endpoint || extractEndpoint(logData.url);
         const success = (logData.success === false || logData.success === 0) ? 0 : 1;
         const statusCode = typeof logData.statusCode === 'number' ? logData.statusCode : null;
@@ -152,43 +131,29 @@ export function logFetch(logData, customDb = null) {
         const errorMessage = logData.errorMessage ? String(logData.errorMessage) : null;
         const timestamp = logData.timestamp || new Date().toISOString();
 
-        const insertStmt = db.prepare(`
-            INSERT INTO fetch_logs (
-                timestamp,
-                url,
-                endpoint,
-                status_code,
-                duration_ms,
-                success,
-                response_size_bytes,
-                item_count,
-                error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = insertStmt.run(
-            timestamp,
-            logData.url,
-            endpoint,
-            statusCode,
-            durationMs,
-            success,
-            responseSizeBytes,
-            itemCount,
-            errorMessage
-        );
-
-        return {
-            id: Number(result.lastInsertRowid),
+        const [inserted] = db.insert('fetch_logs', {
             timestamp,
             url: logData.url,
             endpoint,
-            statusCode,
-            durationMs,
+            status_code: statusCode,
+            duration_ms: durationMs,
             success,
-            responseSizeBytes,
-            itemCount,
-            errorMessage
+            response_size_bytes: responseSizeBytes,
+            item_count: itemCount,
+            error_message: errorMessage
+        });
+
+        return {
+            id: inserted.id,
+            timestamp: inserted.timestamp,
+            url: inserted.url,
+            endpoint: inserted.endpoint,
+            statusCode: inserted.status_code,
+            durationMs: inserted.duration_ms,
+            success: inserted.success,
+            responseSizeBytes: inserted.response_size_bytes,
+            itemCount: inserted.item_count,
+            errorMessage: inserted.error_message
         };
     } catch (err) {
         console.error('⚠️ [SQLite Log Error] Failed to write fetch log:', err.message);
@@ -197,7 +162,7 @@ export function logFetch(logData, customDb = null) {
 }
 
 /**
- * Logs a detected severe weather alert event into SQLite.
+ * Logs a detected severe weather alert event into SQLite using the driver.
  * 
  * @param {object} alertData
  * @param {string} alertData.type - Alert type / hazard name.
@@ -208,16 +173,16 @@ export function logFetch(logData, customDb = null) {
  * @param {string} [alertData.timeframe] - Event window.
  * @param {string} [alertData.details] - Full event description.
  * @param {string} [alertData.timestamp] - ISO timestamp.
- * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {object|null} The inserted alert record metadata.
  */
-export function logAlert(alertData, customDb = null) {
+export function logAlert(alertData, customDriver = null) {
     if (!alertData || (!alertData.type && !alertData.event_type)) {
         return null;
     }
 
     try {
-        const db = customDb || getDatabase();
+        const db = customDriver || getDatabase();
         const timestamp = alertData.timestamp || new Date().toISOString();
         const eventType = alertData.type || alertData.event_type;
         const severity = alertData.severity || null;
@@ -229,40 +194,27 @@ export function logAlert(alertData, customDb = null) {
         const timeframe = alertData.timeframe || null;
         const details = alertData.details || null;
 
-        const insertStmt = db.prepare(`
-            INSERT INTO alert_logs (
-                timestamp,
-                event_type,
-                severity,
-                source,
-                affected_cities,
-                trigger_reason,
-                timeframe,
-                details
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = insertStmt.run(
+        const [inserted] = db.insert('alert_logs', {
             timestamp,
-            eventType,
+            event_type: eventType,
             severity,
             source,
-            affectedCities,
-            triggerReason,
+            affected_cities: affectedCities,
+            trigger_reason: triggerReason,
             timeframe,
             details
-        );
+        });
 
         return {
-            id: Number(result.lastInsertRowid),
-            timestamp,
-            eventType,
-            severity,
-            source,
-            affectedCities,
-            triggerReason,
-            timeframe,
-            details
+            id: inserted.id,
+            timestamp: inserted.timestamp,
+            eventType: inserted.event_type,
+            severity: inserted.severity,
+            source: inserted.source,
+            affectedCities: inserted.affected_cities,
+            triggerReason: inserted.trigger_reason,
+            timeframe: inserted.timeframe,
+            details: inserted.details
         };
     } catch (err) {
         console.error('⚠️ [SQLite Alert Log Error] Failed to write alert log:', err.message);
@@ -271,7 +223,7 @@ export function logAlert(alertData, customDb = null) {
 }
 
 /**
- * Logs a completed regional monitoring cycle into SQLite.
+ * Logs a completed regional monitoring cycle into SQLite using the driver.
  * 
  * @param {object} cycleData
  * @param {number} [cycleData.radiusKm] - Coverage radius in km.
@@ -280,14 +232,14 @@ export function logAlert(alertData, customDb = null) {
  * @param {number} [cycleData.durationMs] - Cycle latency in ms.
  * @param {boolean|number} [cycleData.success=true] - Whether cycle completed without fatal error.
  * @param {string} [cycleData.errorMessage] - Error details if failed.
- * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {object|null} Inserted cycle record metadata.
  */
-export function logMonitorCycle(cycleData, customDb = null) {
+export function logMonitorCycle(cycleData, customDriver = null) {
     if (!cycleData) return null;
 
     try {
-        const db = customDb || getDatabase();
+        const db = customDriver || getDatabase();
         const timestamp = cycleData.timestamp || new Date().toISOString();
         const radiusKm = typeof cycleData.radiusKm === 'number' ? cycleData.radiusKm : null;
         const citiesCount = typeof cycleData.citiesCount === 'number' ? cycleData.citiesCount : null;
@@ -296,37 +248,25 @@ export function logMonitorCycle(cycleData, customDb = null) {
         const success = (cycleData.success === false || cycleData.success === 0) ? 0 : 1;
         const errorMessage = cycleData.errorMessage ? String(cycleData.errorMessage) : null;
 
-        const insertStmt = db.prepare(`
-            INSERT INTO monitor_cycle_logs (
-                timestamp,
-                radius_km,
-                cities_count,
-                high_risk_count,
-                duration_ms,
-                success,
-                error_message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const result = insertStmt.run(
+        const [inserted] = db.insert('monitor_cycle_logs', {
             timestamp,
-            radiusKm,
-            citiesCount,
-            highRiskCount,
-            durationMs,
+            radius_km: radiusKm,
+            cities_count: citiesCount,
+            high_risk_count: highRiskCount,
+            duration_ms: durationMs,
             success,
-            errorMessage
-        );
+            error_message: errorMessage
+        });
 
         return {
-            id: Number(result.lastInsertRowid),
-            timestamp,
-            radiusKm,
-            citiesCount,
-            highRiskCount,
-            durationMs,
-            success,
-            errorMessage
+            id: inserted.id,
+            timestamp: inserted.timestamp,
+            radiusKm: inserted.radius_km,
+            citiesCount: inserted.cities_count,
+            highRiskCount: inserted.high_risk_count,
+            durationMs: inserted.duration_ms,
+            success: inserted.success,
+            errorMessage: inserted.error_message
         };
     } catch (err) {
         console.error('⚠️ [SQLite Monitor Cycle Log Error] Failed to write cycle log:', err.message);
@@ -335,53 +275,62 @@ export function logMonitorCycle(cycleData, customDb = null) {
 }
 
 /**
- * Queries recent fetch logs from SQLite with filtering and pagination.
+ * Queries recent fetch logs from SQLite with filtering and pagination via driver.
  * 
  * @param {object} [options]
  * @param {number} [options.limit=50] - Number of records to return.
  * @param {number} [options.offset=0] - Offset for pagination.
  * @param {boolean|number} [options.success] - Filter by success status (true/false/1/0).
  * @param {string} [options.endpoint] - Filter by endpoint substring.
- * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {Array<object>} Array of log records.
  */
-export function getRecentFetchLogs({ limit = 50, offset = 0, success = null, endpoint = null } = {}, customDb = null) {
+export function getRecentFetchLogs({ limit = 50, offset = 0, success = null, endpoint = null } = {}, customDriver = null) {
     try {
-        const db = customDb || getDatabase();
-        const conditions = [];
-        const params = [];
+        const db = customDriver || getDatabase();
+        const filter = {};
 
         if (success !== null && success !== undefined) {
-            conditions.push('success = ?');
-            params.push(success ? 1 : 0);
+            filter.success = (success === true || success === 1) ? 1 : 0;
         }
 
         if (endpoint) {
-            conditions.push('endpoint LIKE ?');
-            params.push(`%${endpoint}%`);
+            filter.endpoint = Sqlite.like(endpoint);
         }
 
-        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-        const query = `
-            SELECT 
-                id,
-                timestamp,
-                url,
-                endpoint,
-                status_code AS statusCode,
-                duration_ms AS durationMs,
-                success,
-                response_size_bytes AS responseSizeBytes,
-                item_count AS itemCount,
-                error_message AS errorMessage
-            FROM fetch_logs
-            ${whereClause}
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-        `;
+        const rows = db.find('fetch_logs', {
+            filter,
+            view: [
+                'id',
+                'timestamp',
+                'url',
+                'endpoint',
+                'status_code',
+                'duration_ms',
+                'success',
+                'response_size_bytes',
+                'item_count',
+                'error_message'
+            ],
+            opt: {
+                order: { id: -1 },
+                limit: Math.max(1, limit),
+                skip: Math.max(0, offset)
+            }
+        });
 
-        params.push(Math.max(1, limit), Math.max(0, offset));
-        return db.prepare(query).all(...params);
+        return rows.map(r => ({
+            id: r.id,
+            timestamp: r.timestamp,
+            url: r.url,
+            endpoint: r.endpoint,
+            statusCode: r.status_code,
+            durationMs: r.duration_ms,
+            success: r.success,
+            responseSizeBytes: r.response_size_bytes,
+            itemCount: r.item_count,
+            errorMessage: r.error_message
+        }));
     } catch (err) {
         console.error('⚠️ [SQLite Query Error] Failed to fetch logs:', err.message);
         return [];
@@ -389,32 +338,47 @@ export function getRecentFetchLogs({ limit = 50, offset = 0, success = null, end
 }
 
 /**
- * Queries recent alert logs from SQLite.
+ * Queries recent alert logs from SQLite via driver.
  * 
  * @param {object} [options]
  * @param {number} [options.limit=20]
  * @param {number} [options.offset=0]
- * @param {DatabaseSync} [customDb]
+ * @param {typeof Sqlite} [customDriver]
  * @returns {Array<object>}
  */
-export function getRecentAlertLogs({ limit = 20, offset = 0 } = {}, customDb = null) {
+export function getRecentAlertLogs({ limit = 20, offset = 0 } = {}, customDriver = null) {
     try {
-        const db = customDb || getDatabase();
-        return db.prepare(`
-            SELECT 
-                id,
-                timestamp,
-                event_type AS eventType,
-                severity,
-                source,
-                affected_cities AS affectedCities,
-                trigger_reason AS triggerReason,
-                timeframe,
-                details
-            FROM alert_logs
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-        `).all(Math.max(1, limit), Math.max(0, offset));
+        const db = customDriver || getDatabase();
+        const rows = db.find('alert_logs', {
+            view: [
+                'id',
+                'timestamp',
+                'event_type',
+                'severity',
+                'source',
+                'affected_cities',
+                'trigger_reason',
+                'timeframe',
+                'details'
+            ],
+            opt: {
+                order: { id: -1 },
+                limit: Math.max(1, limit),
+                skip: Math.max(0, offset)
+            }
+        });
+
+        return rows.map(a => ({
+            id: a.id,
+            timestamp: a.timestamp,
+            eventType: a.event_type,
+            severity: a.severity,
+            source: a.source,
+            affectedCities: a.affected_cities,
+            triggerReason: a.trigger_reason,
+            timeframe: a.timeframe,
+            details: a.details
+        }));
     } catch (err) {
         console.error('⚠️ [SQLite Alert Query Error] Failed to fetch alert logs:', err.message);
         return [];
@@ -422,28 +386,28 @@ export function getRecentAlertLogs({ limit = 20, offset = 0 } = {}, customDb = n
 }
 
 /**
- * Returns aggregated statistics for all logged API fetch requests.
+ * Returns aggregated statistics for all logged API fetch requests via driver.
  * 
- * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {object} Aggregated stats.
  */
-export function getFetchStats(customDb = null) {
+export function getFetchStats(customDriver = null) {
     try {
-        const db = customDb || getDatabase();
-        const stats = db.prepare(`
-            SELECT 
-                COUNT(*) AS totalFetches,
-                COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successfulFetches,
-                COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failedFetches,
-                COALESCE(ROUND(AVG(duration_ms), 2), 0) AS avgDurationMs,
-                COALESCE(SUM(response_size_bytes), 0) AS totalResponseBytes,
-                MIN(timestamp) AS firstFetchAt,
-                MAX(timestamp) AS lastFetchAt
-            FROM fetch_logs
-        `).get();
+        const db = customDriver || getDatabase();
+        const stats = db.findOne('fetch_logs', {
+            view: [
+                Sqlite.raw('COUNT(*) AS totalFetches'),
+                Sqlite.raw('COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successfulFetches'),
+                Sqlite.raw('COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failedFetches'),
+                Sqlite.raw('COALESCE(ROUND(AVG(duration_ms), 2), 0) AS avgDurationMs'),
+                Sqlite.raw('COALESCE(SUM(response_size_bytes), 0) AS totalResponseBytes'),
+                Sqlite.raw('MIN(timestamp) AS firstFetchAt'),
+                Sqlite.raw('MAX(timestamp) AS lastFetchAt')
+            ]
+        }) || {};
 
-        const alertCount = db.prepare('SELECT COUNT(*) AS totalAlerts FROM alert_logs').get()?.totalAlerts || 0;
-        const cycleCount = db.prepare('SELECT COUNT(*) AS totalCycles FROM monitor_cycle_logs').get()?.totalCycles || 0;
+        const alertCount = db.count('alert_logs');
+        const cycleCount = db.count('monitor_cycle_logs');
 
         return {
             totalFetches: Number(stats.totalFetches || 0),
@@ -451,8 +415,8 @@ export function getFetchStats(customDb = null) {
             failedFetches: Number(stats.failedFetches || 0),
             avgDurationMs: Number(stats.avgDurationMs || 0),
             totalResponseBytes: Number(stats.totalResponseBytes || 0),
-            totalAlertsRecorded: Number(alertCount),
-            totalCyclesRecorded: Number(cycleCount),
+            totalAlertsRecorded: Number(alertCount || 0),
+            totalCyclesRecorded: Number(cycleCount || 0),
             firstFetchAt: stats.firstFetchAt || null,
             lastFetchAt: stats.lastFetchAt || null
         };
@@ -475,17 +439,14 @@ export function getFetchStats(customDb = null) {
 /**
  * Closes the active database connection.
  * 
- * @param {DatabaseSync} [customDb] - Database instance to close.
+ * @param {typeof Sqlite} [customDriver] - Driver instance to close.
  */
-export function closeDatabase(customDb = null) {
-    if (customDb) {
-        try { customDb.close(); } catch {}
+export function closeDatabase(customDriver = null) {
+    if (customDriver && typeof customDriver.close === 'function') {
+        try { customDriver.close(); } catch {}
         return;
     }
-    if (defaultDbInstance) {
-        try { defaultDbInstance.close(); } catch {}
-        defaultDbInstance = null;
-    }
+    Sqlite.close();
 }
 
 // CLI utility runner: prints database statistics and recent logs

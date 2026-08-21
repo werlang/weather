@@ -199,6 +199,24 @@ export class TelegramBotClient {
     }
 
     /**
+     * Registers standard bot commands with Telegram's BotFather menu interface.
+     *
+     * @param {Array<{ command: string, description: string }>} commands - List of commands.
+     * @returns {Promise<boolean>} True if registered successfully.
+     */
+    async setMyCommands(commands) {
+        try {
+            if (this.bot?.api?.setMyCommands) {
+                await this.bot.api.setMyCommands(commands);
+                return true;
+            }
+        } catch (error) {
+            this.logger.warn?.('Failed to register Telegram bot commands:', error.message || error);
+        }
+        return false;
+    }
+
+    /**
      * Starts grammY long polling and resolves when polling stops.
      *
      * @param {object} [options] - grammY `bot.start` options.
@@ -218,3 +236,4 @@ export class TelegramBotClient {
         this.bot.stop(reason);
     }
 }
+

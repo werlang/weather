@@ -8,6 +8,7 @@ import {
     TELEGRAM_MAX_MESSAGE_LENGTH
 } from '../src/telegram.js';
 import {
+    WeatherTelegramBot,
     createWeatherTelegramBot,
     formatHighRiskAlert,
     sendHighRiskAlerts,
@@ -253,3 +254,67 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(fakeBot.sentMessages[0].text, /Teste/);
     });
 });
+
+describe('WeatherTelegramBot OOP Class Lifecycle & Methods', () => {
+    it('requires a telegram client on construction', () => {
+        assert.throws(() => new WeatherTelegramBot({ telegram: null }), /A Telegram bot client is required/);
+    });
+
+    it('manages config access and updates via class methods', () => {
+        const { client } = createClient();
+        const bot = new WeatherTelegramBot({ telegram: client });
+
+        const initialConfig = bot.getConfig();
+        assert.strictEqual(initialConfig.radiusKm, 50);
+        assert.strictEqual(initialConfig.intervalMinutes, 15);
+        assert.strictEqual(initialConfig.alertPolicy, 'school');
+
+        const updated = bot.updateConfig({ radiusKm: 100, intervalMinutes: 60, policy: 'red_only' });
+        assert.strictEqual(updated.radiusKm, 100);
+        assert.strictEqual(updated.intervalMinutes, 60);
+        assert.strictEqual(updated.alertPolicy, 'red_only');
+    });
+
+    it('renders structured dashboard, settings, and status texts', () => {
+        const { client } = createClient();
+        const bot = new WeatherTelegramBot({
+            telegram: client,
+            getStatus: () => 'CUSTOM MONITOR STATUS'
+        });
+
+        assert.match(bot.renderMainMenu(), /PAINEL METEOROLÓGICO/);
+        assert.match(bot.renderSettingsMenu(), /CONFIGURAÇÕES DO MONITOR/);
+        assert.strictEqual(bot.renderStatusReport(), 'CUSTOM MONITOR STATUS');
+    });
+
+    it('creates alert callback that delivers alerts and returns delivery summary', async () => {
+        const { client, fakeBot } = createClient();
+        const bot = new WeatherTelegramBot({ telegram: client });
+        const callback = bot.createAlertCallback();
+
+        const summary = await callback([{
+            type: 'Temporal',
+            severity: 'Perigo',
+            affectedCities: ['Charqueadas'],
+            timeframe: 'Próximas 6h',
+            triggerReason: 'Ventos fortes'
+        }]);
+
+        assert.deepEqual(summary.sent, [{ chatId: '123', chunks: 1 }]);
+        assert.strictEqual(fakeBot.sentMessages.length, 1);
+        assert.match(fakeBot.sentMessages[0].text, /Temporal/);
+    });
+
+    it('delegates start and stop lifecycle methods to the telegram client', async () => {
+        const { client, fakeBot } = createClient();
+        const bot = new WeatherTelegramBot({ telegram: client });
+
+        let started = false;
+        await bot.start({ onStart: () => { started = true; } });
+        assert.ok(started);
+
+        bot.stop('SIGTERM');
+        assert.strictEqual(fakeBot.stopReason, 'SIGTERM');
+    });
+});
+

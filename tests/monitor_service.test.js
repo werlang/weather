@@ -4,9 +4,11 @@ import {
   parseMonitorConfig,
   parseForecastDate,
   evaluateHighRisksIn24hWindow,
-  onHighRiskEventDetected
+  onHighRiskEventDetected,
+  startMonitoringService
 } from '../src/monitor_service.js';
 import { analyzeForecastRisks, parseRadiusArg } from '../src/risk_analyzer.js';
+import { getSurroundingCities } from '../src/inmet_client.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
   it('parseRadiusArg extracts distance from CLI args and env vars', () => {
@@ -47,7 +49,7 @@ describe('Shared Risk Analyzer Utilities', () => {
   });
 });
 
-describe('Monitor Service Configuration & Utilities', () => {
+describe('Monitor Service Configuration, Dynamic Updates & Radius Verification', () => {
   it('parseMonitorConfig parses default values correctly when env vars are absent', () => {
     const origRadius = process.env.RADIUS_KM;
     const origInterval = process.env.MONITOR_INTERVAL_MINUTES;
@@ -73,6 +75,68 @@ describe('Monitor Service Configuration & Utilities', () => {
     assert.strictEqual(config.radiusKm, 75);
     assert.strictEqual(config.intervalMs, 10 * 60 * 1000);
     assert.strictEqual(config.intervalMinutes, 10);
+
+    delete process.env.RADIUS_KM;
+    delete process.env.MONITOR_INTERVAL_MINUTES;
+  });
+
+  it('getSurroundingCities strictly filters tracked cities by radius (25km vs 50km vs 75km vs 100km)', async () => {
+    const cities25 = await getSurroundingCities(25);
+    const cities50 = await getSurroundingCities(50);
+    const cities75 = await getSurroundingCities(75);
+    const cities100 = await getSurroundingCities(100);
+
+    assert.strictEqual(cities25.length, 6, '25km ring must contain exactly 6 cities');
+    assert.strictEqual(cities50.length, 20, '50km ring must contain exactly 20 cities');
+    assert.strictEqual(cities75.length, 31, '75km ring must contain exactly 31 cities');
+    assert.strictEqual(cities100.length, 38, '100km ring must contain exactly 38 cities');
+
+    // Verify distance invariant
+    assert.ok(cities25.every(c => c.distKm <= 25));
+    assert.ok(cities50.every(c => c.distKm <= 50));
+    assert.ok(cities75.every(c => c.distKm <= 75));
+    assert.ok(cities100.every(c => c.distKm <= 100));
+
+    // Verify Charqueadas is always center in every ring
+    assert.ok(cities25.some(c => c.name === 'Charqueadas' && c.distKm === 0));
+  });
+
+  it('startMonitoringService dynamically updates radius, interval timer, and policy at runtime', () => {
+    delete process.env.RADIUS_KM;
+    delete process.env.MONITOR_INTERVAL_MINUTES;
+
+    const monitor = startMonitoringService({
+      radiusKm: 50,
+      intervalMs: 15 * 60 * 1000,
+      registerSignalHandlers: false
+    });
+
+    try {
+      const initialConfig = monitor.getConfig();
+      assert.strictEqual(initialConfig.radiusKm, 50);
+      assert.strictEqual(initialConfig.intervalMinutes, 15);
+      assert.strictEqual(initialConfig.intervalMs, 900000);
+
+      // Change interval to 5 min -> timer rescheduled to 300,000 ms
+      const updatedInterval = monitor.updateConfig({ intervalMinutes: 5 });
+      assert.strictEqual(updatedInterval.intervalMinutes, 5);
+      assert.strictEqual(updatedInterval.intervalMs, 300000);
+
+      // Change radius to 100 km -> tracked radius expanded
+      const updatedRadius = monitor.updateConfig({ radiusKm: 100 });
+      assert.strictEqual(updatedRadius.radiusKm, 100);
+
+      // Change policy to 'all' -> alert policy updated
+      const updatedPolicy = monitor.updateConfig({ policy: 'all' });
+      assert.strictEqual(updatedPolicy.alertPolicy, 'all');
+
+      const finalConfig = monitor.getConfig();
+      assert.strictEqual(finalConfig.radiusKm, 100);
+      assert.strictEqual(finalConfig.intervalMinutes, 5);
+      assert.strictEqual(finalConfig.alertPolicy, 'all');
+    } finally {
+      monitor.stop();
+    }
   });
 
   it('parseForecastDate parses DD/MM/YYYY dates into valid Date objects', () => {
@@ -116,6 +180,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     const highRisks = evaluateHighRisksIn24hWindow({
       regionalWarnings,
       regionalForecasts: [],
+      alertPolicy: 'school',
       now
     });
 
@@ -157,6 +222,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     const highRisks = evaluateHighRisksIn24hWindow({
       regionalWarnings: [],
       regionalForecasts,
+      alertPolicy: 'school',
       now
     });
 

@@ -178,13 +178,14 @@ export function evaluateHighRisksIn24hWindow({
     regionalWarnings = [],
     regionalForecasts = [],
     defesaCivilTelemetry = [],
+    alertPolicy = 'school',
     now = new Date()
 }) {
     const highRiskEvents = [];
     const windowStart = now.getTime();
     const windowEnd = now.getTime() + (24 * 60 * 60 * 1000); // 24 horas
 
-    // 1. Filtrar Avisos Oficiais do INMET — 🔴 APENAS VERMELHO (Grande Perigo)
+    // 1. Filtrar Avisos Oficiais do INMET com base na política configurada
     for (const warning of regionalWarnings) {
         const severidade = String(warning.severidade || '').toLowerCase();
         const avisoCor = String(warning.aviso_cor || '').toUpperCase();
@@ -194,28 +195,53 @@ export function evaluateHighRisksIn24hWindow({
             severidade.includes('extremo') ||
             severidade.includes('vermelho');
 
-        if (isRedAlert) {
+        const isOrangeAlert = avisoCor === '#F96602' ||
+            (severidade.includes('perigo') && !severidade.includes('potencial'));
+
+        const isYellowAlert = avisoCor === '#FFFE00' ||
+            severidade.includes('potencial') ||
+            severidade.includes('moderado');
+
+        let matchesPolicy = false;
+        if (alertPolicy === 'all') {
+            matchesPolicy = isRedAlert || isOrangeAlert || isYellowAlert;
+        } else {
+            // 'school' e 'red_only' exigem estritamente VERMELHO no INMET
+            matchesPolicy = isRedAlert;
+        }
+
+        if (matchesPolicy) {
             const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
             highRiskEvents.push({
                 source: 'INMET_OFFICIAL_WARNING',
-                type: warning.descricao || warning.tipo || 'Aviso de Grande Perigo (INMET)',
-                severity: warning.severidade || 'Grande Perigo',
-                colorTier: 'RED',
-                emoji: '🔴',
+                type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
+                severity: warning.severidade || (isRedAlert ? 'Grande Perigo' : (isOrangeAlert ? 'Perigo' : 'Perigo Potencial')),
+                colorTier: isRedAlert ? 'RED' : (isOrangeAlert ? 'ORANGE' : 'YELLOW'),
+                emoji: getAlertEmoji(warning),
                 affectedCities: warning.affectedRegionalCities || [],
                 timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
-                details: risksText || 'Aviso oficial de Grande Perigo emitido pelo INMET.',
-                triggerReason: `INMET 🔴 Grande Perigo emitido para a região.`
+                details: risksText || 'Aviso oficial emitido pelo INMET.',
+                triggerReason: `INMET ${isRedAlert ? '🔴 Grande Perigo' : (isOrangeAlert ? '🟠 Perigo' : '🟡 Perigo Potencial')} emitido para a região.`
             });
         }
     }
 
-    // 2. Avaliar Telemetria e Alertas da DEFESA CIVIL RS — 🟠 LARANJA E 🔴 VERMELHO
+    // 2. Avaliar Telemetria e Alertas da DEFESA CIVIL RS
     if (Array.isArray(defesaCivilTelemetry) && defesaCivilTelemetry.length > 0) {
         const dcRisks = evaluateDefesaCivilRisks(defesaCivilTelemetry);
         for (const dcr of dcRisks) {
-            if (dcr.colorTier === 'ORANGE' || dcr.colorTier === 'RED') {
+            if (alertPolicy === 'all') {
                 highRiskEvents.push(dcr);
+            } else if (alertPolicy === 'school') {
+                // 'school' aceita Laranja (Alerta) e Vermelho (Alerta Máximo)
+                if (dcr.colorTier === 'ORANGE' || dcr.colorTier === 'RED') {
+                    highRiskEvents.push(dcr);
+                }
+            } else if (alertPolicy === 'red_only') {
+                // 'red_only' aceita estritamente Vermelho
+                if (dcr.colorTier === 'RED') {
+                    highRiskEvents.push(dcr);
+                }
             }
         }
     }

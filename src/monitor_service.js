@@ -96,10 +96,10 @@ export function onHighRiskEventDetected(highRiskEvents) {
  * @param {function} [options.alertCallback] - Callback customizado para alertas.
  * @returns {Promise<{ citiesCount: number, highRiskCount: number, events: Array<object> }>}
  */
-export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallback = onHighRiskEventDetected } = {}) {
+export async function performRegionalRiskMonitoring({ radiusKm = 50, alertPolicy = 'school', alertCallback = onHighRiskEventDetected } = {}) {
     const startTime = Date.now();
     const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-    console.log(`\n[${timestamp}] 🔍 Iniciando verificação de riscos regionais (Raio: ${radiusKm}km)...`);
+    console.log(`\n[${timestamp}] 🔍 Iniciando verificação de riscos regionais (Raio: ${radiusKm}km, Política: ${alertPolicy})...`);
 
     try {
         const cities = await getSurroundingCities(radiusKm);
@@ -114,6 +114,7 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
             regionalWarnings,
             regionalForecasts,
             defesaCivilTelemetry,
+            alertPolicy,
             now: new Date()
         });
 
@@ -198,7 +199,11 @@ export function startMonitoringService(options = {}) {
         if (isRunning) return;
         isRunning = true;
         try {
-            await performRegionalRiskMonitoring({ radiusKm: currentRadiusKm, alertCallback });
+            await performRegionalRiskMonitoring({
+                radiusKm: currentRadiusKm,
+                alertPolicy,
+                alertCallback
+            });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);
         } finally {

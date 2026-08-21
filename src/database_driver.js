@@ -120,11 +120,15 @@ export class Sqlite {
 
     /**
      * Quotes SQL identifiers using double quotes, handling dotted table or column references.
+     * Supports raw SQL expressions created via Sqlite.raw().
      *
-     * @param {string} identifier
+     * @param {string|{ toSqlString: () => string }} identifier
      * @returns {string}
      */
     static #quoteIdentifier(identifier) {
+        if (identifier && typeof identifier === 'object' && typeof identifier.toSqlString === 'function') {
+            return identifier.toSqlString();
+        }
         return String(identifier)
             .split('.')
             .map(part => {
@@ -219,7 +223,7 @@ export class Sqlite {
         return rows.map(row => {
             const sanitizedRow = Sqlite.#sanitizeWriteData(row, 'insert');
             const fields = Object.keys(sanitizedRow);
-            const values = Object.values(sanitizedRow);
+            const values = Object.values(sanitizedRow).map(val => (val instanceof Date ? val.toISOString() : val));
             const fieldSql = fields.map(field => Sqlite.#quoteIdentifier(field)).join(',');
             const valueSql = fields.map(() => '?').join(',');
             const sql = `INSERT INTO ${Sqlite.#quoteIdentifier(table)} (${fieldSql}) VALUES (${valueSql}) RETURNING *`;
@@ -258,7 +262,12 @@ export class Sqlite {
             .join(', ');
         const sql = `INSERT INTO ${Sqlite.#quoteIdentifier(table)} (${fieldSql}) VALUES (${valueSql}) ON CONFLICT (${conflictTarget}) DO UPDATE SET ${updateSql} RETURNING *`;
 
-        return Sqlite.#query(sql, fields.map(field => sanitizedData[field]), context);
+        const values = fields.map(field => {
+            const val = sanitizedData[field];
+            return val instanceof Date ? val.toISOString() : val;
+        });
+
+        return Sqlite.#query(sql, values, context);
     }
 
     /**
@@ -409,6 +418,25 @@ export class Sqlite {
             throw new DatabaseError(404, 'Record not found.', 'RECORD_NOT_FOUND');
         }
         return row;
+    }
+
+    /**
+     * Counts rows in a table matching an optional filter object.
+     *
+     * @param {string} table
+     * @param {Record<string, unknown>} [filter={}]
+     * @param {{ connection?: DatabaseSync }} [context]
+     * @returns {number}
+     */
+    static count(table, filter = {}, context = {}) {
+        if (typeof filter !== 'object' || Array.isArray(filter)) {
+            throw new DatabaseError(400, 'Invalid filter for count operation.');
+        }
+        const { statement, values } = Sqlite.getWhereStatements(filter);
+        const whereSql = Object.keys(filter).length ? ` WHERE ${statement}` : '';
+        const sql = `SELECT COUNT(*) AS count FROM ${Sqlite.#quoteIdentifier(table)}${whereSql}`;
+        const result = Sqlite.#query(sql, values, context);
+        return Number(result[0]?.count || 0);
     }
 
     /**

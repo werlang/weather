@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import {
     getDatabase,
@@ -21,17 +21,33 @@ describe('SQLite Log Database Schema & Basics', () => {
         testDb = getDatabase(':memory:');
     });
 
+    afterEach(() => {
+        closeDatabase(testDb);
+    });
+
     it('creates fetch_logs, alert_logs, and monitor_cycle_logs tables', () => {
-        const fetchTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fetch_logs'").get();
+        const fetchTable = testDb.findOne('sqlite_master', {
+            filter: { type: 'table', name: 'fetch_logs' },
+            view: ['name']
+        });
         assert.ok(fetchTable, 'fetch_logs table must exist');
 
-        const alertTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='alert_logs'").get();
+        const alertTable = testDb.findOne('sqlite_master', {
+            filter: { type: 'table', name: 'alert_logs' },
+            view: ['name']
+        });
         assert.ok(alertTable, 'alert_logs table must exist');
 
-        const cycleTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='monitor_cycle_logs'").get();
+        const cycleTable = testDb.findOne('sqlite_master', {
+            filter: { type: 'table', name: 'monitor_cycle_logs' },
+            view: ['name']
+        });
         assert.ok(cycleTable, 'monitor_cycle_logs table must exist');
 
-        const indexes = testDb.prepare("SELECT name FROM sqlite_master WHERE type='index'").all();
+        const indexes = testDb.find('sqlite_master', {
+            filter: { type: 'index' },
+            view: ['name']
+        });
         const indexNames = indexes.map(idx => idx.name);
         assert.ok(indexNames.includes('idx_fetch_logs_timestamp'));
         assert.ok(indexNames.includes('idx_alert_logs_timestamp'));
@@ -52,6 +68,10 @@ describe('SQLite Fetch & Telemetry Logging Operations', () => {
 
     beforeEach(() => {
         testDb = getDatabase(':memory:');
+    });
+
+    afterEach(() => {
+        closeDatabase(testDb);
     });
 
     it('records a successful fetch event with metrics', () => {
@@ -76,9 +96,9 @@ describe('SQLite Fetch & Telemetry Logging Operations', () => {
         assert.strictEqual(entry.errorMessage, null);
         assert.ok(entry.timestamp);
 
-        const rows = testDb.prepare('SELECT * FROM fetch_logs WHERE id = ?').all(entry.id);
-        assert.strictEqual(rows.length, 1);
-        assert.strictEqual(rows[0].status_code, 200);
+        const row = testDb.get('fetch_logs', entry.id);
+        assert.ok(row);
+        assert.strictEqual(row.status_code, 200);
     });
 
     it('records a failed fetch event with error details', () => {
@@ -185,6 +205,10 @@ describe('SQLite Querying & Aggregated Statistics', () => {
             source: 'INMET',
             affectedCities: ['Charqueadas']
         }, testDb);
+    });
+
+    afterEach(() => {
+        closeDatabase(testDb);
     });
 
     it('getRecentFetchLogs returns paginated records in reverse chronological order', () => {

@@ -4,10 +4,7 @@ import {
     parseTelegramConfig,
     TelegramBotClient
 } from './telegram.js';
-import {
-    createTelegramAlertCallback,
-    createWeatherTelegramBot
-} from './telegram_bot.js';
+import { WeatherTelegramBot } from './telegram_bot.js';
 import { startMonitoringService } from './monitor_service.js';
 
 /**
@@ -27,16 +24,17 @@ export async function startWeatherBot({ env = process.env, logger = console, tel
         logger
     });
 
+    const bot = new WeatherTelegramBot({
+        telegram: telegramClient,
+        logger
+    });
+
     const monitor = startMonitoringService({
-        alertCallback: createTelegramAlertCallback({ telegram: telegramClient, logger }),
+        alertCallback: bot.createAlertCallback(),
         registerSignalHandlers: false
     });
 
-    createWeatherTelegramBot({
-        telegram: telegramClient,
-        monitorService: monitor,
-        logger
-    });
+    bot.setMonitorService(monitor);
 
     const stop = signal => {
         monitor.stop();
