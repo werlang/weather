@@ -67,6 +67,7 @@ ifsul/weather/
 │   └── TELEGRAM_BOT_SCOPE.md         # Telegram bot capabilities, security & non-goals
 ├── src/
 │   ├── inmet_client.js               # INMET & IBGE HTTP client (native fetch)
+│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Business logic: risk parsing, 24h window evaluation
 │   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator
 │   ├── telegram.js                   # grammY wrapper, allowlist auth, splitMessage (<4096)
@@ -75,6 +76,7 @@ ifsul/weather/
 │   └── monitor_regional_risks.js     # On-demand CLI regional report generator
 ├── tests/
 │   ├── inmet_client.test.js          # Unit tests for INMET client & regional rings
+│   ├── log_database.test.js          # Unit tests for SQLite log database
 │   ├── monitor_service.test.js       # Unit tests for risk analyzer & 24h window logic
 │   └── telegram.test.js              # Unit tests for grammY wrapper & command handling
 ├── Dockerfile                        # Multi-stage Docker build (base, dev, prod)
@@ -90,11 +92,13 @@ ifsul/weather/
 | Module | Allowed Responsibilities | Forbidden Responsibilities |
 | :--- | :--- | :--- |
 | `src/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
+| `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs. | Direct external network I/O, Telegram alert dispatch. |
 | `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback. | Direct Telegram API calls, command handling. |
 | `src/telegram.js` | grammY client lifecycle, allowlist parsing, `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
 | `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/chatid`, formatting plain-text alert templates. | Socket handling, low-level grammY polling. |
 | `src/weather_bot.js` | Composing Telegram bot and monitor service, handling `SIGINT`/`SIGTERM` graceful stop. | Domain logic, low-level HTTP requests. |
+
 
 ---
 

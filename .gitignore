@@ -3,3 +3,7 @@ node_modules
 .env
 TODO.md
 .playwright-mcp
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

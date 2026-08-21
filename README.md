@@ -22,6 +22,7 @@ ifsul/weather/
 │   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
+│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
 │   ├── monitor_service.js            # Long-running 24h risk monitoring service
 │   ├── telegram.js                   # grammY wrapper and administrator delivery client
@@ -30,6 +31,7 @@ ifsul/weather/
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
     ├── inmet_client.test.js          # Unit tests for INMET client
+    ├── log_database.test.js          # Unit tests for SQLite log database
     ├── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
     └── telegram.test.js               # Unit tests for Telegram config, delivery, and commands
 ```
@@ -54,6 +56,7 @@ Configurable via `.env`:
 - `TELEGRAM_ADMIN_CHAT_ID`: One or more authorized chat IDs, comma-separated.
 - `MONITOR_INTERVAL_MINUTES`: Interval between checks (default: `15` minutes)
 - `RADIUS_KM`: Regional monitoring radius in kilometers (default: `50` km)
+- `SQLITE_DB_PATH`: Path to SQLite logs database (default: `weather_logs.db`)
 
 When a high-risk meteorological event is detected in the next 24h window, the
 service logs it and sends the formatted alert to every configured administrator.
@@ -76,7 +79,13 @@ docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_
 docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
 ```
 
-### 4. Running Unit Tests
+### 4. Inspect SQLite API Fetch Logs & Telemetry
+```bash
+# View recent fetch logs, response times, payload sizes, and aggregate metrics:
+docker run --rm -v $(pwd):/app -w /app node:26-alpine npm run db:logs
+```
+
+### 5. Running Unit Tests
 ```bash
 docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 ```
@@ -126,4 +135,3 @@ GET https://apitempo.inmet.gov.br/estacoes/T
 * [`telegram-weather-bot`](.agents/skills/telegram-weather-bot/SKILL.md) — grammY bot lifecycle, message chunking & admin delivery
 * [`weather-test-delivery`](.agents/skills/weather-test-delivery/SKILL.md) — Localized TDD & unit testing (Node 26 + Docker)
 * [`weather-code-quality-and-ops`](.agents/skills/weather-code-quality-and-ops/SKILL.md) — Docker Compose runbooks & KISS/YAGNI architecture
-
