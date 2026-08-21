@@ -281,18 +281,18 @@ Always save and restore `process.env` properties inside test blocks:
 
 ```javascript
 it('parses custom environment configuration safely', () => {
-  const origRadius = process.env.RADIUS_KM;
+  const origSeverity = process.env.INMET_MIN_SEVERITY;
   const origToken = process.env.TELEGRAM_BOT_TOKEN;
 
   try {
-    process.env.RADIUS_KM = '85';
+    process.env.INMET_MIN_SEVERITY = 'YELLOW';
     process.env.TELEGRAM_BOT_TOKEN = 'test-token-123';
 
     // Call configuration parser
     // assert expectations...
   } finally {
-    if (origRadius !== undefined) process.env.RADIUS_KM = origRadius;
-    else delete process.env.RADIUS_KM;
+    if (origSeverity !== undefined) process.env.INMET_MIN_SEVERITY = origSeverity;
+    else delete process.env.INMET_MIN_SEVERITY;
 
     if (origToken !== undefined) process.env.TELEGRAM_BOT_TOKEN = origToken;
     else delete process.env.TELEGRAM_BOT_TOKEN;

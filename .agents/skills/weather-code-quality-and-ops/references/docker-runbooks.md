@@ -57,10 +57,13 @@ cp .env.example .env
 Key environment variables supported:
 * `TELEGRAM_BOT_TOKEN`: The bot authentication token from BotFather (required for `npm start`).
 * `TELEGRAM_ADMIN_CHAT_ID`: Comma-separated list of numerical Telegram chat IDs authorized to receive alerts and send commands.
-* `MONITOR_INTERVAL_MINUTES`: Evaluation interval in minutes (default: `15`).
-* `RADIUS_KM`: Regional monitoring radius around Charqueadas in kilometers (default: `50`).
 * `CHARQUEADAS_IBGE_CODE`: IBGE geocode (default: `4305355`).
 * `INMET_PREVMET_URL`: INMET base forecast URL (default: `https://apiprevmet3.inmet.gov.br`).
+
+Note: the monitoring radius (default `50` km) and cycle interval (default `15`
+minutes) are **not** environment variables anymore — they live in the SQLite
+`system_settings` table (seeded by migration 002) and are adjusted at runtime
+via the bot's `/config` menu.
 
 ---
 

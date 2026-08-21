@@ -62,9 +62,11 @@ docker compose up --build
 Configurable via `.env`:
 - `TELEGRAM_BOT_TOKEN`: Token issued by Telegram's BotFather.
 - `TELEGRAM_ADMIN_CHAT_ID`: One or more authorized chat IDs, comma-separated.
-- `MONITOR_INTERVAL_MINUTES`: Interval between checks (default: `15` minutes)
-- `RADIUS_KM`: Regional monitoring radius in kilometers (default: `50` km)
 - `SQLITE_DB_PATH`: Path to SQLite logs database (default: `weather_logs.db`)
+
+Monitoring radius (default: `50` km) and cycle interval (default: `15` minutes)
+live in the SQLite `system_settings` table — adjust them at runtime through the
+bot's `/config` menu; changes persist across restarts.
 
 When a high-risk meteorological event is detected in the next 24h window, the
 service logs it and sends the formatted alert to every configured administrator.
