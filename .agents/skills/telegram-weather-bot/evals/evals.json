@@ -1,0 +1,32 @@
+{
+  "skill_name": "telegram-weather-bot",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How does the bot verify whether an incoming chat ID is authorized for administrative commands like /status?",
+      "expected_output": "Explanation of parseTelegramConfig normalizing and deduplicating TELEGRAM_ADMIN_CHAT_ID into a string array, and telegram_bot.js checking if context chat ID is included before responding or returning an unauthorized message.",
+      "files": [
+        "src/telegram.js",
+        "src/telegram_bot.js"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "How does the Telegram delivery mechanism guarantee that large alert payloads with multiple risk events never exceed the 4096 character Telegram API limit?",
+      "expected_output": "Explanation of splitMessage dividing messages at paragraph/line boundaries into chunks under 4096 characters, preserving event ordering and appending pagination headers if split.",
+      "files": [
+        "src/telegram.js",
+        ".agents/skills/telegram-weather-bot/references/alert-templates.md"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "How should a self-service /subscribe command be implemented to allow citizens to receive alerts without granting them admin privileges?",
+      "expected_output": "Instructions to add a separate subscriber store/set, register /subscribe and /unsubscribe handlers in telegram_bot.js for all users, and update broadcast delivery to notify both admin allowlist and subscriber list while keeping admin-only commands restricted.",
+      "files": [
+        "src/telegram_bot.js",
+        ".agents/skills/telegram-weather-bot/references/grammy-architecture.md"
+      ]
+    }
+  ]
+}
