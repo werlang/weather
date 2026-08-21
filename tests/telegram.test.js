@@ -130,6 +130,9 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         const dcKb = WeatherTelegramBot.buildDefesaCivilLevelKeyboard('ORANGE');
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:ORANGE' && btn.text.includes('✅'))));
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:OFF')));
+
+        // Defesa Civil threat levels are ordered from most to least severe.
+        assert.deepEqual(DEFESA_CIVIL_SEVERITY_OPTIONS.map(opt => opt.id), ['RED', 'ORANGE', 'YELLOW', 'OFF']);
     });
 
     it('formats high-risk events with the fields needed by an administrator', () => {
