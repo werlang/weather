@@ -210,13 +210,7 @@ export class WeatherTelegramBot {
         this.getStatus = getStatus;
         this.logger = logger;
 
-        this.localState = {
-            radiusKm: 50,
-            intervalMinutes: 15,
-            intervalMs: 15 * 60 * 1000,
-            inmetMinSeverity: 'RED',
-            defesaCivilMinSeverity: 'ORANGE'
-        };
+        this.localState = parseMonitorConfig();
 
         this.registerHandlers();
     }
@@ -239,14 +233,7 @@ export class WeatherTelegramBot {
         if (this.monitorService?.getConfig) {
             return this.monitorService.getConfig();
         }
-        const base = parseMonitorConfig();
-        return {
-            radiusKm: this.localState.radiusKm || base.radiusKm,
-            intervalMinutes: this.localState.intervalMinutes || base.intervalMinutes,
-            intervalMs: this.localState.intervalMs || base.intervalMs,
-            inmetMinSeverity: this.localState.inmetMinSeverity || base.inmetMinSeverity,
-            defesaCivilMinSeverity: this.localState.defesaCivilMinSeverity || base.defesaCivilMinSeverity
-        };
+        return this.localState;
     }
 
     /**

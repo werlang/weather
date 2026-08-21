@@ -37,10 +37,11 @@ export { parseForecastDate, evaluateHighRisksIn24hWindow };
 
 /**
  * Lê e processa as configurações prioritárias:
- * 1º Banco SQLite (tabela system_settings)
- * 2º Variáveis de ambiente
- * 3º Valores padrão seguros
- * 
+ * 1º Banco SQLite (tabela system_settings) — fonte da verdade, semeada com
+ *    padrões na primeira execução (migration 002) e atualizada via bot/CLI.
+ * 2º Variáveis de ambiente — apenas fallback quando a chave não existe no banco.
+ * 3º Valores padrão seguros.
+ *
  * @returns {{ intervalMs: number, radiusKm: number, intervalMinutes: number, inmetMinSeverity: string, defesaCivilMinSeverity: string }}
  */
 export function parseMonitorConfig() {
@@ -49,20 +50,21 @@ export function parseMonitorConfig() {
         saved = loadAllSettings();
     } catch {}
 
-    // 1. Raio Regional em KM
+    // 1. Raio Regional em KM (banco > ambiente > padrão)
     let radiusKm = 50;
-    if (process.env.RADIUS_KM || process.env.RADIUS) {
-        radiusKm = parseRadiusArg(50);
-    } else if (saved.radius_km) {
+    if (saved.radius_km) {
         const parsed = parseInt(saved.radius_km, 10);
         if (!isNaN(parsed) && parsed > 0) radiusKm = parsed;
-    } else {
+    } else if (process.env.RADIUS_KM || process.env.RADIUS) {
         radiusKm = parseRadiusArg(50);
     }
 
-    // 2. Intervalo de execução
+    // 2. Intervalo de execução (banco > ambiente > padrão)
     let intervalMs = 15 * 60 * 1000; // Padrão: 15 minutos
-    if (process.env.MONITOR_INTERVAL_MS) {
+    if (saved.interval_minutes) {
+        const mins = parseFloat(saved.interval_minutes);
+        if (!isNaN(mins) && mins > 0) intervalMs = Math.round(mins * 60 * 1000);
+    } else if (process.env.MONITOR_INTERVAL_MS) {
         const ms = parseInt(process.env.MONITOR_INTERVAL_MS, 10);
         if (!isNaN(ms) && ms >= 1000) intervalMs = ms;
     } else if (process.env.MONITOR_INTERVAL_MINUTES) {
@@ -74,9 +76,6 @@ export function parseMonitorConfig() {
     } else if (process.env.MONITOR_INTERVAL) {
         const val = parseFloat(process.env.MONITOR_INTERVAL);
         if (!isNaN(val) && val > 0) intervalMs = Math.round(val * 60 * 1000);
-    } else if (saved.interval_minutes) {
-        const mins = parseFloat(saved.interval_minutes);
-        if (!isNaN(mins) && mins > 0) intervalMs = Math.round(mins * 60 * 1000);
     }
 
     // Trava de segurança: mínimo 1 segundo de intervalo

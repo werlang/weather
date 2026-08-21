@@ -77,6 +77,22 @@ describe('Database Migration Workflow & SQL Parser', () => {
             assert.ok(tables.includes('system_settings'));
         });
 
+        it('seeds default monitor settings into system_settings on first application', async () => {
+            await migrate({
+                dbPath: ':memory:',
+                silent: true
+            });
+
+            const settings = Object.fromEntries(
+                Sqlite.find('system_settings', { view: ['key', 'value'] }).map(row => [row.key, row.value])
+            );
+
+            assert.strictEqual(settings.radius_km, '50');
+            assert.strictEqual(settings.interval_minutes, '15');
+            assert.strictEqual(settings.inmet_min_severity, 'RED');
+            assert.strictEqual(settings.defesa_civil_min_severity, 'ORANGE');
+        });
+
         it('is idempotent: running migrations a second time does not re-apply existing versions', () => {
             const firstRun = migrateSync({
                 dbPath: ':memory:',

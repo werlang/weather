@@ -88,9 +88,11 @@ Registration is configuration-based:
 | :--- | :--- | :--- | :--- |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
 | `TELEGRAM_ADMIN_CHAT_ID` | Yes | — | Comma-separated allowlist of Telegram chat IDs. |
-| `RADIUS_KM` | No | `50` | Default regional monitoring radius in kilometers. |
-| `MONITOR_INTERVAL_MINUTES` | No | `15` | Default time between monitoring cycles in minutes. |
-| `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs and metrics. |
+| `RADIUS_KM` | No | `50` | Fallback regional radius — used only when `radius_km` is absent from the database (bot `/config` writes take precedence). |
+| `MONITOR_INTERVAL_MINUTES` | No | `15` | Fallback cycle interval — used only when `interval_minutes` is absent from the database. |
+| `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, and runtime settings. |
+
+Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002). The database always takes precedence over environment variables; `/config` changes persist across restarts.
 
 ---
 

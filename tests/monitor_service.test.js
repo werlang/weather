@@ -12,6 +12,7 @@ import {
 import { analyzeForecastRisks, parseRadiusArg } from '../src/risk_analyzer.js';
 import { getSurroundingCities } from '../src/inmet_client.js';
 import { Sqlite } from '../src/database_driver.js';
+import { getDatabase } from '../src/log_database.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
   it('parseRadiusArg extracts distance from CLI args and env vars', () => {
@@ -78,22 +79,57 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
     }
   });
 
-  it('parseMonitorConfig respects MONITOR_INTERVAL_MINUTES and RADIUS_KM env vars', () => {
+  it('parseMonitorConfig prefers database settings over environment variables', () => {
     const origDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
     process.env.RADIUS_KM = '75';
     process.env.MONITOR_INTERVAL_MINUTES = '10';
+    process.env.INMET_MIN_SEVERITY = 'YELLOW';
 
     try {
+      // Fresh database is seeded with defaults (migration 002): 50 km / 15 min / RED / ORANGE.
       const config = parseMonitorConfig();
-      assert.strictEqual(config.radiusKm, 75);
-      assert.strictEqual(config.intervalMs, 10 * 60 * 1000);
-      assert.strictEqual(config.intervalMinutes, 10);
+      assert.strictEqual(config.radiusKm, 50);
+      assert.strictEqual(config.intervalMinutes, 15);
+      assert.strictEqual(config.inmetMinSeverity, 'RED');
+      assert.strictEqual(config.defesaCivilMinSeverity, 'ORANGE');
     } finally {
       Sqlite.close();
       delete process.env.RADIUS_KM;
       delete process.env.MONITOR_INTERVAL_MINUTES;
+      delete process.env.INMET_MIN_SEVERITY;
+      if (origDbPath) process.env.DB_PATH = origDbPath;
+      else delete process.env.DB_PATH;
+    }
+  });
+
+  it('parseMonitorConfig falls back to environment variables when the database key is absent', () => {
+    const origDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+    const db = getDatabase();
+    for (const key of ['radius_km', 'interval_minutes', 'inmet_min_severity', 'defesa_civil_min_severity']) {
+      db.delete('system_settings', { key });
+    }
+
+    process.env.RADIUS_KM = '75';
+    process.env.MONITOR_INTERVAL_MINUTES = '10';
+    process.env.INMET_MIN_SEVERITY = 'YELLOW';
+    process.env.DEFESA_CIVIL_MIN_SEVERITY = 'ORANGE';
+
+    try {
+      const config = parseMonitorConfig();
+      assert.strictEqual(config.radiusKm, 75);
+      assert.strictEqual(config.intervalMinutes, 10);
+      assert.strictEqual(config.inmetMinSeverity, 'YELLOW');
+      assert.strictEqual(config.defesaCivilMinSeverity, 'ORANGE');
+    } finally {
+      Sqlite.close();
+      delete process.env.RADIUS_KM;
+      delete process.env.MONITOR_INTERVAL_MINUTES;
+      delete process.env.INMET_MIN_SEVERITY;
+      delete process.env.DEFESA_CIVIL_MIN_SEVERITY;
       if (origDbPath) process.env.DB_PATH = origDbPath;
       else delete process.env.DB_PATH;
     }
