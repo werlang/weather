@@ -1,0 +1,47 @@
+{
+  "evals": [
+    {
+      "id": "defesa_civil_station_telemetry_query",
+      "prompt": "How do you query real-time river level and precipitation accumulation for Charqueadas using the Defesa Civil RS GraphQL API?",
+      "expected_criteria": [
+        "Specifies endpoint https://redehidrometeorologica.defesacivil.rs.gov.br/graphql",
+        "Uses tags_data query with station [\"DCRS-00032\"] and client \"casa-militar-defesa-civil-rs\"",
+        "Queries data.rio.rio_nivel.value and data.rio.rio_nivel_tendencia.value",
+        "Queries data.chuva.acumulado with intervals like min015, h001, h024",
+        "Uses native Node.js 26 fetch with POST method and JSON payload"
+      ]
+    },
+    {
+      "id": "defesa_civil_dual_source_risk_fusion",
+      "prompt": "Explain how Defesa Civil RS telemetry integrates with INMET forecast alerts as a secondary ground-truth verification layer.",
+      "expected_criteria": [
+        "Explains role of INMET as primary forecasting and official warning polygon source",
+        "Explains role of Defesa Civil RS as hyper-local real-time ground truth verification layer",
+        "Describes correlation of INMET Orange/Red storm warnings with Defesa Civil live rainfall (min015, h001) and river level (rio_nivel)",
+        "Outlines critical threshold escalation when live sensors confirm forecasted hazards",
+        "Mentions automated delivery via Telegram bot alerts"
+      ]
+    },
+    {
+      "id": "defesa_civil_basin_dynamics_backwater",
+      "prompt": "Explain the hydrological relationship between stations DCRS-00032 (Charqueadas), DCRS-00093 (General Câmara), and DCRS-00076 (Eldorado do Sul), including the Guaíba backwater effect.",
+      "expected_criteria": [
+        "Identifies DCRS-00093 as upstream confluence of Rio Taquari and Rio Jacuí",
+        "Identifies DCRS-00032 as central Baixo Jacuí monitoring point at Charqueadas",
+        "Identifies DCRS-00076 as downstream outlet in Delta do Jacuí / Lago Guaíba",
+        "Explains how southerly winds (Vento Sul) over Lago Guaíba dam water outflow (represamento/repiquete), raising river levels in Charqueadas even after local rain stops"
+      ]
+    },
+    {
+      "id": "defesa_civil_historical_query",
+      "prompt": "How do you perform a historical time-series query on Defesa Civil RS telemetry for an hourly 7-day rainfall audit?",
+      "expected_criteria": [
+        "Uses the historic GraphQL query",
+        "Specifies system: Qualle_Hidrometeorologia, client: \"casa-militar-defesa-civil-rs\", stationCode: \"DCRS-00032\"",
+        "Specifies startDate and endDate formatted as YYYY-MM-DD HH:mm:ss",
+        "Uses interval: HOUR_1 or HOUR_24",
+        "Explains payload processing for multi-day accumulation analysis"
+      ]
+    }
+  ]
+}

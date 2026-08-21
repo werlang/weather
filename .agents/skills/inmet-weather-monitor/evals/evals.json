@@ -1,0 +1,47 @@
+{
+  "evals": [
+    {
+      "id": "inmet_active_warning_filtering",
+      "prompt": "How does the INMET client query active severe alerts and verify if Charqueadas - RS is impacted?",
+      "expected_criteria": [
+        "Identifies endpoint GET https://apiprevmet3.inmet.gov.br/avisos/ativos",
+        "Mentions Charqueadas IBGE code 4305355",
+        "Explains splitting and checking warning.geocodes array or warning.municipios containing Charqueadas",
+        "Explains severity level color hex mapping (#FFFE00 yellow, #F96602 orange, #FF0000 red)",
+        "Includes User-Agent header requirement"
+      ]
+    },
+    {
+      "id": "inmet_24h_risk_evaluation_algorithm",
+      "prompt": "Explain the 24-hour lookahead risk evaluation algorithm used in risk_analyzer.js and monitor_service.js.",
+      "expected_criteria": [
+        "Explains time window calculation [now, now + 24h]",
+        "Explains ingestion of official INMET warnings with severity 'Perigo' (#F96602) or 'Grande Perigo' (#FF0000)",
+        "Explains forecast threshold analysis for storm/trovoadas, frost (temp_min <= 3°C), extreme heat (temp_max >= 36°C), and dry air (umidade_min <= 20%)",
+        "Details deduplication logic by source, type, and affected cities",
+        "Mentions triggering of high risk alerts"
+      ]
+    },
+    {
+      "id": "inmet_regional_rings_classification",
+      "prompt": "List the distance rings around Charqueadas and classify São Jerônimo, Porto Alegre, and Lajeado into their respective rings.",
+      "expected_criteria": [
+        "Immediate Zone (< 25km): São Jerônimo (5km, IBGE 4318408)",
+        "Intermediate Zone (25-50km): Porto Alegre (45km, IBGE 4314902)",
+        "Outer Ring (50-100km): Lajeado (74km, IBGE 4311403)",
+        "Explains total coverage of 38 municipalities across 100km radius around Charqueadas (IBGE 4305355)",
+        "Explains hydrological relevance to upstream Baixo Jacuí and Vale do Taquari basins"
+      ]
+    },
+    {
+      "id": "inmet_docker_execution",
+      "prompt": "How do you execute the regional risk monitor CLI tool for a 100km radius scan in this project?",
+      "expected_criteria": [
+        "Uses Docker command with node:26-alpine",
+        "Mounts workspace volume $(pwd):/app or /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app",
+        "Runs node src/monitor_regional_risks.js with --radius=100",
+        "Mentions constraint of no host Node/Python"
+      ]
+    }
+  ]
+}
