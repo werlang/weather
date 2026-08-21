@@ -34,7 +34,7 @@ Official alerts and risk levels are mapped to standardized color badges:
 - `🟠 PERIGO (SEVERO)` — Defesa Civil Orange / Heavy storm / Flood risk.
 - `🟡 PERIGO POTENCIAL (MODERADO)` — Yellow advisory.
 - `🟢 NORMAL / MONITORAMENTO` — Nominal conditions.
-- `❓ DESCONHECIDO — REVISAR` — Unrecognized color/severity vocabulary. UNKNOWN-tier events alert as red-equivalent, are flagged "NÃO CLASSIFICADO" for manual review, and their raw payload is recorded in the `unknown_alert_sources` SQLite table for future vocabulary hardening.
+- `❓ DESCONHECIDO — REVISAR` — Unrecognized color/severity vocabulary. UNKNOWN-tier events alert as red-equivalent, are flagged "NÃO CLASSIFICADO" for manual review, and their raw payload is recorded in the `unknown_alert_sources` SQLite table for future vocabulary hardening. Known no-worry forecast summaries (sol/céu/claro/nuvens) are discarded entirely — no alert, no record.
 
 ### C. Stateful Inline Keyboards & Radio Selectors
 Settings menus show the active choice directly on the inline button with `✅` and provide direct one-tap switching:

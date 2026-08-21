@@ -175,9 +175,9 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       });
       assert.ok(unknownEvents.some(e => e.colorTier === 'UNKNOWN' && e.type.includes('Não Classificada')));
 
-      // 3. Benign unmatched summary is recorded but does not alert
+      // 3. Benign unmatched summary is a known no-worry signal: discarded entirely
       const benignForecast = analyzeForecastRisks({ resumo: 'Sol com muitas nuvens' });
-      assert.strictEqual(benignForecast[0].unknown, false);
+      assert.strictEqual(benignForecast.length, 0);
 
       const benignEvents = evaluateHighRisksIn24hWindow({
         regionalForecasts: [{
@@ -190,7 +190,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       });
       assert.strictEqual(benignEvents.length, 0);
 
-      // 4. Both sources were registered for future analysis
+      // 4. Only genuinely unknown signals are registered for future analysis
       const { getDatabase } = await import('../src/log_database.js');
       const rows = getDatabase().find('unknown_alert_sources');
       const texts = rows.map(row => row.raw_text).join(' | ');
@@ -199,7 +199,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       assert.match(severities, /Observação Especial da Defesa/);
       assert.match(rows.map(r => r.raw_color).join(' | '), /#ABCDEF/);
       assert.match(texts, /Nebulosidade variável/);
-      assert.match(texts, /Sol com muitas nuvens/);
+      assert.doesNotMatch(texts, /Sol com muitas nuvens/);
     } finally {
       Sqlite.close();
       if (originalDbPath === undefined) delete process.env.DB_PATH;

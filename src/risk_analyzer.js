@@ -298,26 +298,28 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         });
     }
 
-    // 6. Vocabulário não reconhecido: registra e escala para revisão manual.
-    // Resumos claramente benignos (sol/nuvens/claro) são registrados, mas não alertam.
+    // 6. Vocabulário não reconhecido: registra apenas sinais de fato desconhecidos.
+    // Resumos benignos conhecidos (sol/nuvens/claro) são descartados — sinais
+    // conhecidos e sem risco não geram registro nem alerta.
     if (risks.length === 0 && summary) {
-        // Resumos claramente benignos são registrados mas não alertam.
         const benign = /sol|céu|ceu|claro|limpo|nuvem|nublado/.test(summary);
-        risks.push({
-            type: 'Condição Não Classificada',
-            severity: 'HIGH',
-            detail: `Resumo de previsão fora do vocabulário de análise: "${forecastDay.resumo}"`,
-            unknown: !benign
-        });
-        try {
-            logUnknownAlert({
-                dedupeKey: `inmet_forecast:${context.city || forecastDay.ibgeCode || 'desconhecida'}:${context.dateStr || ''}:${context.periodKey || 'dia'}:${summary}`,
-                sourceType: 'inmet_forecast',
-                externalId: String(forecastDay.ibgeCode || ''),
-                rawText: String(forecastDay.resumo || ''),
-                city: context.city || null
+        if (!benign) {
+            risks.push({
+                type: 'Condição Não Classificada',
+                severity: 'HIGH',
+                detail: `Resumo de previsão fora do vocabulário de análise: "${forecastDay.resumo}"`,
+                unknown: true
             });
-        } catch {}
+            try {
+                logUnknownAlert({
+                    dedupeKey: `inmet_forecast:${context.city || forecastDay.ibgeCode || 'desconhecida'}:${context.dateStr || ''}:${context.periodKey || 'dia'}:${summary}`,
+                    sourceType: 'inmet_forecast',
+                    externalId: String(forecastDay.ibgeCode || ''),
+                    rawText: String(forecastDay.resumo || ''),
+                    city: context.city || null
+                });
+            } catch {}
+        }
     }
 
     return risks;
