@@ -111,11 +111,15 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:status')));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:settings')));
 
-        const settingsKb = WeatherTelegramBot.buildSettingsKeyboard();
+        // Settings buttons must show the current color circle of each provider.
+        const settingsKb = WeatherTelegramBot.buildSettingsKeyboard({
+            inmetMinSeverity: 'RED',
+            defesaCivilMinSeverity: 'ORANGE'
+        });
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:interval')));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:radius')));
-        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:inmet_level')));
-        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:defesa_civil_level')));
+        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:inmet_level' && btn.text.includes('🔴 Vermelho'))));
+        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:defesa_civil_level' && btn.text.includes('🟠 Laranja'))));
 
         const intervalKb = WeatherTelegramBot.buildIntervalKeyboard(15);
         assert.ok(intervalKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('15 min') && btn.text.includes('✅'))));

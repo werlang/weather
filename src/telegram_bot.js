@@ -80,6 +80,21 @@ export function getTierBadge(tier) {
 
 
 /**
+ * Maps a severity tier to its short colored circle badge for compact menu buttons.
+ *
+ * @param {string} tier
+ * @returns {string}
+ */
+export function getTierShortBadge(tier) {
+    const normalized = String(tier || '').toUpperCase();
+    if (normalized === 'RED') return '🔴 Vermelho';
+    if (normalized === 'ORANGE') return '🟠 Laranja';
+    if (normalized === 'YELLOW') return '🟡 Amarelo';
+    return '🚫 Desativado';
+}
+
+
+/**
  * Standard Telegram Bot command menu definition for autocomplete.
  */
 export const BOT_COMMANDS = [
@@ -308,18 +323,22 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Builds the settings overview inline keyboard.
+     * Builds the settings overview inline keyboard, showing the current color
+     * circle badge of each provider's minimum alert level.
      *
+     * @param {object} [config] - Active monitoring configuration.
+     * @param {string} [config.inmetMinSeverity] - Current INMET minimum severity tier.
+     * @param {string} [config.defesaCivilMinSeverity] - Current Defesa Civil RS minimum severity tier.
      * @returns {InlineKeyboard}
      */
-    static buildSettingsKeyboard() {
+    static buildSettingsKeyboard(config = {}) {
         return new InlineKeyboard()
             .text('⏱️ Alterar Intervalo', 'menu:interval')
             .text('📍 Alterar Raio Regional', 'menu:radius')
             .row()
-            .text('🏛️ Nível Mínimo: INMET', 'menu:inmet_level')
+            .text(`🏛️ Limiar INMET: ${getTierShortBadge(config.inmetMinSeverity)}`, 'menu:inmet_level')
             .row()
-            .text('🛡️ Nível Mínimo: Defesa Civil', 'menu:defesa_civil_level')
+            .text(`🛡️ Limiar Defesa Civil: ${getTierShortBadge(config.defesaCivilMinSeverity)}`, 'menu:defesa_civil_level')
             .row()
             .text('⬅️ Voltar ao Menu Principal', 'menu:main');
     }
@@ -790,7 +809,7 @@ export class WeatherTelegramBot {
         this.telegram.onCommand('config', ctx => {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
             return ctx.reply(this.renderSettingsMenu(), {
-                reply_markup: WeatherTelegramBot.buildSettingsKeyboard()
+                reply_markup: WeatherTelegramBot.buildSettingsKeyboard(this.getConfig())
             });
         });
 
@@ -836,7 +855,7 @@ export class WeatherTelegramBot {
             if (data === 'menu:settings') {
                 await answer();
                 return ctx.editMessageText?.(this.renderSettingsMenu(), {
-                    reply_markup: WeatherTelegramBot.buildSettingsKeyboard()
+                    reply_markup: WeatherTelegramBot.buildSettingsKeyboard(config)
                 });
             }
 
