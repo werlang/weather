@@ -9,15 +9,6 @@ import {
 } from '../src/telegram.js';
 import {
     WeatherTelegramBot,
-    createWeatherTelegramBot,
-    formatHighRiskAlert,
-    sendHighRiskAlerts,
-    buildMainMenuKeyboard,
-    buildSettingsKeyboard,
-    buildIntervalKeyboard,
-    buildRadiusKeyboard,
-    buildInmetLevelKeyboard,
-    buildDefesaCivilLevelKeyboard,
     INMET_SEVERITY_OPTIONS,
     DEFESA_CIVIL_SEVERITY_OPTIONS
 } from '../src/telegram_bot.js';
@@ -114,35 +105,35 @@ describe('Telegram configuration and wrapper', () => {
 
 describe('Weather Telegram bot presentation & keyboards', () => {
     it('builds interactive button keyboards with expected independent institute options', () => {
-        const mainKb = buildMainMenuKeyboard();
+        const mainKb = WeatherTelegramBot.buildMainMenuKeyboard();
         assert.ok(mainKb);
         assert.ok(Array.isArray(mainKb.inline_keyboard));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:status')));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:settings')));
 
-        const settingsKb = buildSettingsKeyboard();
+        const settingsKb = WeatherTelegramBot.buildSettingsKeyboard();
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:interval')));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:radius')));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:inmet_level')));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:defesa_civil_level')));
 
-        const intervalKb = buildIntervalKeyboard(15);
+        const intervalKb = WeatherTelegramBot.buildIntervalKeyboard(15);
         assert.ok(intervalKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('15 min') && btn.text.includes('✅'))));
 
-        const radiusKb = buildRadiusKeyboard(50);
+        const radiusKb = WeatherTelegramBot.buildRadiusKeyboard(50);
         assert.ok(radiusKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('50 km') && btn.text.includes('✅'))));
 
-        const inmetKb = buildInmetLevelKeyboard('RED');
+        const inmetKb = WeatherTelegramBot.buildInmetLevelKeyboard('RED');
         assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:RED' && btn.text.includes('✅'))));
         assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:OFF')));
 
-        const dcKb = buildDefesaCivilLevelKeyboard('ORANGE');
+        const dcKb = WeatherTelegramBot.buildDefesaCivilLevelKeyboard('ORANGE');
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:ORANGE' && btn.text.includes('✅'))));
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:OFF')));
     });
 
     it('formats high-risk events with the fields needed by an administrator', () => {
-        const text = formatHighRiskAlert([
+        const text = WeatherTelegramBot.formatHighRiskAlert([
             {
                 emoji: '🔴',
                 type: 'Tempestade severa',
@@ -164,7 +155,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
     });
 
     it('builds alert action tray and renders UI visual components properly', async () => {
-        const { renderProgressBar, renderRiverTrend, renderSeverityBadge, buildAlertActionKeyboard, BOT_COMMANDS } = await import('../src/telegram_bot.js');
+        const { renderProgressBar, renderRiverTrend, renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
 
         // Progress meter / gauge tests
         assert.strictEqual(renderProgressBar(2.5, 5.0, 8), '[████░░░░] 50%');
@@ -186,7 +177,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(renderSeverityBadge('Normal'), /🟢 NORMAL/);
 
         // Alert action keyboard
-        const alertKb = buildAlertActionKeyboard();
+        const alertKb = WeatherTelegramBot.buildAlertActionKeyboard();
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:defesa_civil')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:inmet_warnings')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:main')));
@@ -240,7 +231,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
             }
         };
 
-        createWeatherTelegramBot({
+        new WeatherTelegramBot({
             telegram: client,
             monitorService: mockMonitor
         });
@@ -297,7 +288,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
 
     it('restricts status, commands, and buttons to configured administrators', async () => {
         const { client, fakeBot } = createClient();
-        createWeatherTelegramBot({
+        new WeatherTelegramBot({
             telegram: client,
             getStatus: () => 'STATUS OK'
         });
@@ -319,7 +310,8 @@ describe('Weather Telegram bot presentation & keyboards', () => {
 
     it('returns the delivery summary for a formatted alert', async () => {
         const { client, fakeBot } = createClient();
-        const result = await sendHighRiskAlerts(client, [{
+        const bot = new WeatherTelegramBot({ telegram: client });
+        const result = await bot.sendHighRiskAlerts([{
             type: 'Teste',
             affectedCities: ['Charqueadas']
         }], new Date('2026-08-13T12:00:00Z'));

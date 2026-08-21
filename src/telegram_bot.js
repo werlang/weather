@@ -690,23 +690,33 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Creates a monitor alert callback that broadcasts alerts to all configured administrators.
+     * Sends a formatted high-risk alert to all configured administrators.
+     * 
+     * @param {Array<object>} events - Detected high-risk events.
+     * @param {Date} [sentAt] - Timestamp.
+     * @returns {Promise<object>} Telegram delivery result summary.
+     */
+    async sendHighRiskAlerts(events, sentAt = new Date()) {
+        const delivery = await this.telegram.sendToAdmins(
+            WeatherTelegramBot.formatHighRiskAlert(events, sentAt),
+            { reply_markup: WeatherTelegramBot.buildAlertActionKeyboard() }
+        );
+
+        if (delivery?.failed?.length > 0) {
+            this.logger.error?.(`Telegram alert delivery failed for ${delivery.failed.length} administrator chat(s).`);
+        }
+        return delivery;
+    }
+
+    /**
+     * Creates a monitor alert callback that logs and broadcasts alerts to all configured administrators.
      * 
      * @returns {(events: Array<object>) => Promise<object>}
      */
     createAlertCallback() {
-
         return async events => {
             onHighRiskEventDetected(events);
-            const delivery = await this.telegram.sendToAdmins(
-                WeatherTelegramBot.formatHighRiskAlert(events),
-                { reply_markup: WeatherTelegramBot.buildAlertActionKeyboard() }
-            );
-
-            if (delivery.failed.length > 0) {
-                this.logger.error?.(`Telegram alert delivery failed for ${delivery.failed.length} administrator chat(s).`);
-            }
-            return delivery;
+            return this.sendHighRiskAlerts(events);
         };
     }
 
@@ -1016,100 +1026,4 @@ export class WeatherTelegramBot {
         });
     }
 }
-
-// =============================================================================
-// BACKWARD-COMPATIBLE FUNCTIONAL EXPORTS
-// =============================================================================
-
-/**
- * Creates and registers the weather Telegram bot handlers.
- * 
- * @param {object} options
- * @returns {import('./telegram.js').TelegramBotClient}
- */
-export function createWeatherTelegramBot(options) {
-    const bot = new WeatherTelegramBot(options);
-    return bot.telegram;
-}
-
-/**
- * Formats detected high-risk events as plain Telegram text.
- * 
- * @param {Array<object>} events
- * @param {Date} [sentAt]
- * @returns {string}
- */
-export function formatHighRiskAlert(events, sentAt) {
-    return WeatherTelegramBot.formatHighRiskAlert(events, sentAt);
-}
-
-/**
- * Sends a formatted high-risk alert to administrators.
- * 
- * @param {import('./telegram.js').TelegramBotClient} telegram
- * @param {Array<object>} events
- * @param {Date} [sentAt]
- * @returns {Promise<object>}
- */
-export function sendHighRiskAlerts(telegram, events, sentAt) {
-    return telegram.sendToAdmins(
-        WeatherTelegramBot.formatHighRiskAlert(events, sentAt),
-        { reply_markup: WeatherTelegramBot.buildAlertActionKeyboard() }
-    );
-}
-
-/**
- * Builds the short status response.
- * 
- * @returns {string}
- */
-export function defaultStatusMessage() {
-    const { radiusKm, intervalMinutes, inmetMinSeverity, defesaCivilMinSeverity } = parseMonitorConfig();
-    return [
-        '✅ Monitor meteorológico ativo.',
-        `Raio regional: ${radiusKm} km.`,
-        `Intervalo: ${intervalMinutes} min.`,
-        `Limiar INMET: ${getTierBadge(inmetMinSeverity)}.`,
-        `Limiar Defesa Civil: ${getTierBadge(defesaCivilMinSeverity)}.`,
-        'Alertas de alto risco: habilitados para este chat.'
-    ].join('\n');
-}
-
-/**
- * Creates the monitor alert callback.
- * 
- * @param {object} options
- * @returns {(events: Array<object>) => Promise<object>}
- */
-export function createTelegramAlertCallback({ telegram, logger = console }) {
-    const bot = new WeatherTelegramBot({ telegram, logger });
-    return bot.createAlertCallback();
-}
-
-export const buildMainMenuKeyboard = WeatherTelegramBot.buildMainMenuKeyboard;
-export const buildSettingsKeyboard = WeatherTelegramBot.buildSettingsKeyboard;
-export const buildIntervalKeyboard = WeatherTelegramBot.buildIntervalKeyboard;
-export const buildRadiusKeyboard = WeatherTelegramBot.buildRadiusKeyboard;
-export const buildInmetLevelKeyboard = WeatherTelegramBot.buildInmetLevelKeyboard;
-export const buildDefesaCivilLevelKeyboard = WeatherTelegramBot.buildDefesaCivilLevelKeyboard;
-export const buildAlertActionKeyboard = WeatherTelegramBot.buildAlertActionKeyboard;
-
-export const renderMainMenu = (config) => {
-    const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
-    if (config) bot.localState = { ...bot.localState, ...config };
-    return bot.renderMainMenu();
-};
-export const renderSettingsMenu = (config) => {
-    const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
-    if (config) bot.localState = { ...bot.localState, ...config };
-    return bot.renderSettingsMenu();
-};
-export const renderDefesaCivilTelemetryReport = () => {
-    const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
-    return bot.renderDefesaCivilTelemetryReport();
-};
-export const renderInmetWarningsReport = (radiusKm) => {
-    const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
-    return bot.renderInmetWarningsReport(radiusKm);
-};
 
