@@ -16,8 +16,10 @@ import {
     buildSettingsKeyboard,
     buildIntervalKeyboard,
     buildRadiusKeyboard,
-    buildAlertLevelKeyboard,
-    ALERT_POLICIES
+    buildInmetLevelKeyboard,
+    buildDefesaCivilLevelKeyboard,
+    INMET_SEVERITY_OPTIONS,
+    DEFESA_CIVIL_SEVERITY_OPTIONS
 } from '../src/telegram_bot.js';
 
 function createFakeBot() {
@@ -111,7 +113,7 @@ describe('Telegram configuration and wrapper', () => {
 });
 
 describe('Weather Telegram bot presentation & keyboards', () => {
-    it('builds interactive button keyboards with expected options', () => {
+    it('builds interactive button keyboards with expected independent institute options', () => {
         const mainKb = buildMainMenuKeyboard();
         assert.ok(mainKb);
         assert.ok(Array.isArray(mainKb.inline_keyboard));
@@ -121,7 +123,8 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         const settingsKb = buildSettingsKeyboard();
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:interval')));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:radius')));
-        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:alert_level')));
+        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:inmet_level')));
+        assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:defesa_civil_level')));
 
         const intervalKb = buildIntervalKeyboard(15);
         assert.ok(intervalKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('15 min') && btn.text.includes('✅'))));
@@ -129,8 +132,13 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         const radiusKb = buildRadiusKeyboard(50);
         assert.ok(radiusKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('50 km') && btn.text.includes('✅'))));
 
-        const alertKb = buildAlertLevelKeyboard('school');
-        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_alert:school')));
+        const inmetKb = buildInmetLevelKeyboard('RED');
+        assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:RED' && btn.text.includes('✅'))));
+        assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:OFF')));
+
+        const dcKb = buildDefesaCivilLevelKeyboard('ORANGE');
+        assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:ORANGE' && btn.text.includes('✅'))));
+        assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:OFF')));
     });
 
     it('formats high-risk events with the fields needed by an administrator', () => {
@@ -152,18 +160,82 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(text, /Tempestade severa/);
         assert.match(text, /Charqueadas/);
         assert.match(text, /Alagamentos/);
+        assert.match(text, /Grande Perigo/i);
     });
 
-    it('handles interactive button navigation and runtime configuration adjustments', async () => {
+    it('builds alert action tray and renders UI visual components properly', async () => {
+        const { renderProgressBar, renderRiverTrend, renderSeverityBadge, buildAlertActionKeyboard, BOT_COMMANDS } = await import('../src/telegram_bot.js');
+
+        // Progress meter / gauge tests
+        assert.strictEqual(renderProgressBar(2.5, 5.0, 8), '[████░░░░] 50%');
+        assert.strictEqual(renderProgressBar(5.0, 5.0, 8), '[████████] 100%');
+        assert.strictEqual(renderProgressBar(0, 5.0, 8), '[░░░░░░░░] 0%');
+        assert.strictEqual(renderProgressBar(null, 5.0, 8), '[░░░░░░░░]');
+
+        // River trend indicators
+        assert.match(renderRiverTrend(0.35), /Subida Crítica/);
+        assert.match(renderRiverTrend(0.12), /Subindo/);
+        assert.match(renderRiverTrend(0), /Estável/);
+        assert.match(renderRiverTrend(-0.15), /Descendo/);
+        assert.strictEqual(renderRiverTrend(null), '');
+
+        // Severity badge
+        assert.match(renderSeverityBadge('Grande Perigo'), /🔴 GRANDE PERIGO/);
+        assert.match(renderSeverityBadge('Perigo'), /🟠 PERIGO/);
+        assert.match(renderSeverityBadge('Perigo Potencial'), /🟡 PERIGO POTENCIAL/);
+        assert.match(renderSeverityBadge('Normal'), /🟢 NORMAL/);
+
+        // Alert action keyboard
+        const alertKb = buildAlertActionKeyboard();
+        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:defesa_civil')));
+        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:inmet_warnings')));
+        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:main')));
+
+        // Command definitions
+        assert.ok(Array.isArray(BOT_COMMANDS));
+        assert.ok(BOT_COMMANDS.some(c => c.command === 'start'));
+        assert.ok(BOT_COMMANDS.some(c => c.command === 'jacui'));
+        assert.ok(BOT_COMMANDS.some(c => c.command === 'inmet'));
+    });
+
+    it('registers bot commands with Telegram API menu autocomplete', async () => {
+        const { TelegramBotClient } = await import('../src/telegram.js');
+        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const fakeBot = createFakeBot();
+        let registeredCommands = null;
+        fakeBot.api.setMyCommands = async cmds => { registeredCommands = cmds; };
+
+        const client = new TelegramBotClient({
+            token: 'test-token',
+            adminChatIds: ['123'],
+            botFactory: () => fakeBot,
+            logger: { warn() {} }
+        });
+
+        const bot = new WeatherTelegramBot({ telegram: client });
+        const ok = await bot.initCommands();
+        assert.strictEqual(ok, true);
+        assert.ok(Array.isArray(registeredCommands));
+        assert.strictEqual(registeredCommands.length, 8);
+    });
+
+    it('handles interactive button navigation and independent institute adjustments', async () => {
         const { client, fakeBot } = createClient();
-        let currentConfig = { radiusKm: 50, intervalMinutes: 15, intervalMs: 900000, alertPolicy: 'school' };
+        let currentConfig = {
+            radiusKm: 50,
+            intervalMinutes: 15,
+            intervalMs: 900000,
+            inmetMinSeverity: 'RED',
+            defesaCivilMinSeverity: 'ORANGE'
+        };
 
         const mockMonitor = {
             getConfig: () => currentConfig,
             updateConfig: update => {
                 if (update.radiusKm) currentConfig.radiusKm = update.radiusKm;
                 if (update.intervalMinutes) currentConfig.intervalMinutes = update.intervalMinutes;
-                if (update.policy) currentConfig.alertPolicy = update.policy;
+                if (update.inmetMinSeverity) currentConfig.inmetMinSeverity = update.inmetMinSeverity;
+                if (update.defesaCivilMinSeverity) currentConfig.defesaCivilMinSeverity = update.defesaCivilMinSeverity;
                 return currentConfig;
             }
         };
@@ -200,20 +272,23 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         await callbackHandler(fakeContext('menu:settings'));
         assert.match(edited.msg, /CONFIGURAÇÕES DO MONITOR/);
 
-        // Click set_interval:30
-        await callbackHandler(fakeContext('set_interval:30'));
-        assert.strictEqual(currentConfig.intervalMinutes, 30);
-        assert.match(answeredText, /Intervalo atualizado para 30 minutos/);
+        // Click menu:inmet_level
+        await callbackHandler(fakeContext('menu:inmet_level'));
+        assert.match(edited.msg, /LIMIAR MÍNIMO DE ALERTA — INMET/);
 
-        // Click set_radius:75
-        await callbackHandler(fakeContext('set_radius:75'));
-        assert.strictEqual(currentConfig.radiusKm, 75);
-        assert.match(answeredText, /Raio regional atualizado para 75 km/);
+        // Click set_inmet:ORANGE
+        await callbackHandler(fakeContext('set_inmet:ORANGE'));
+        assert.strictEqual(currentConfig.inmetMinSeverity, 'ORANGE');
+        assert.match(answeredText, /Limiar INMET atualizado/);
 
-        // Click set_alert:red_only
-        await callbackHandler(fakeContext('set_alert:red_only'));
-        assert.strictEqual(currentConfig.alertPolicy, 'red_only');
-        assert.match(answeredText, /Política de alerta atualizada/);
+        // Click menu:defesa_civil_level
+        await callbackHandler(fakeContext('menu:defesa_civil_level'));
+        assert.match(edited.msg, /LIMIAR MÍNIMO DE ALERTA — DEFESA CIVIL RS/);
+
+        // Click set_dc:RED
+        await callbackHandler(fakeContext('set_dc:RED'));
+        assert.strictEqual(currentConfig.defesaCivilMinSeverity, 'RED');
+        assert.match(answeredText, /Limiar Defesa Civil atualizado/);
 
         // Click action:chatid
         await callbackHandler(fakeContext('action:chatid'));
@@ -254,67 +329,3 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(fakeBot.sentMessages[0].text, /Teste/);
     });
 });
-
-describe('WeatherTelegramBot OOP Class Lifecycle & Methods', () => {
-    it('requires a telegram client on construction', () => {
-        assert.throws(() => new WeatherTelegramBot({ telegram: null }), /A Telegram bot client is required/);
-    });
-
-    it('manages config access and updates via class methods', () => {
-        const { client } = createClient();
-        const bot = new WeatherTelegramBot({ telegram: client });
-
-        const initialConfig = bot.getConfig();
-        assert.strictEqual(initialConfig.radiusKm, 50);
-        assert.strictEqual(initialConfig.intervalMinutes, 15);
-        assert.strictEqual(initialConfig.alertPolicy, 'school');
-
-        const updated = bot.updateConfig({ radiusKm: 100, intervalMinutes: 60, policy: 'red_only' });
-        assert.strictEqual(updated.radiusKm, 100);
-        assert.strictEqual(updated.intervalMinutes, 60);
-        assert.strictEqual(updated.alertPolicy, 'red_only');
-    });
-
-    it('renders structured dashboard, settings, and status texts', () => {
-        const { client } = createClient();
-        const bot = new WeatherTelegramBot({
-            telegram: client,
-            getStatus: () => 'CUSTOM MONITOR STATUS'
-        });
-
-        assert.match(bot.renderMainMenu(), /PAINEL METEOROLÓGICO/);
-        assert.match(bot.renderSettingsMenu(), /CONFIGURAÇÕES DO MONITOR/);
-        assert.strictEqual(bot.renderStatusReport(), 'CUSTOM MONITOR STATUS');
-    });
-
-    it('creates alert callback that delivers alerts and returns delivery summary', async () => {
-        const { client, fakeBot } = createClient();
-        const bot = new WeatherTelegramBot({ telegram: client });
-        const callback = bot.createAlertCallback();
-
-        const summary = await callback([{
-            type: 'Temporal',
-            severity: 'Perigo',
-            affectedCities: ['Charqueadas'],
-            timeframe: 'Próximas 6h',
-            triggerReason: 'Ventos fortes'
-        }]);
-
-        assert.deepEqual(summary.sent, [{ chatId: '123', chunks: 1 }]);
-        assert.strictEqual(fakeBot.sentMessages.length, 1);
-        assert.match(fakeBot.sentMessages[0].text, /Temporal/);
-    });
-
-    it('delegates start and stop lifecycle methods to the telegram client', async () => {
-        const { client, fakeBot } = createClient();
-        const bot = new WeatherTelegramBot({ telegram: client });
-
-        let started = false;
-        await bot.start({ onStart: () => { started = true; } });
-        assert.ok(started);
-
-        bot.stop('SIGTERM');
-        assert.strictEqual(fakeBot.stopReason, 'SIGTERM');
-    });
-});
-

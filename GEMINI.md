@@ -36,5 +36,7 @@ Refer to and trigger the hand-crafted skills in `.agents/skills/`:
 - `inmet-weather-monitor`: Official INMET API, 5-day forecasts, severe alerts, 24h risk engine.
 - `defesa-civil-rs-telemetry`: Defesa Civil RS GraphQL/WebSocket telemetry, station `DCRS-00032`, hydrometric river levels.
 - `telegram-weather-bot`: grammY bot lifecycle, message chunking (<4096 chars), admin allowlist, broadcast delivery.
+- `telegram-bot-ui-design`: Telegram Bot UI/UX design system, Unicode cards, progress gauges, river trends, breadcrumbs, action trays, toast feedback.
 - `weather-test-delivery`: Dockerized unit test execution with Node.js 26 native test runner and native mocking.
 - `weather-code-quality-and-ops`: Multi-stage Docker builds, Compose specifications, and ESM code quality.
+

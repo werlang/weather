@@ -115,8 +115,10 @@ When working on specialized tasks in this repository, leverage the project's han
 | **`inmet-weather-monitor`** | INMET API, 5-day forecasts, active warnings, IBGE `4305355`, regional rings, 24h risk engine. | [`.agents/skills/inmet-weather-monitor/SKILL.md`](.agents/skills/inmet-weather-monitor/SKILL.md) |
 | **`defesa-civil-rs-telemetry`** | Defesa Civil RS, GraphQL, WebSocket, station `DCRS-00032`, river levels (`rio_nivel`), rain spikes. | [`.agents/skills/defesa-civil-rs-telemetry/SKILL.md`](.agents/skills/defesa-civil-rs-telemetry/SKILL.md) |
 | **`telegram-weather-bot`** | Telegram bot, grammY, message chunking, admin allowlist, alert notifications, commands. | [`.agents/skills/telegram-weather-bot/SKILL.md`](.agents/skills/telegram-weather-bot/SKILL.md) |
+| **`telegram-bot-ui-design`** | Telegram Bot UI/UX design system, Unicode card layouts, progress gauges, river trends, breadcrumbs, action trays, toast feedback. | [`.agents/skills/telegram-bot-ui-design/SKILL.md`](.agents/skills/telegram-bot-ui-design/SKILL.md) |
 | **`weather-test-delivery`** | Writing/running unit tests, Node 26 test runner, Docker test execution, TDD, native mocking. | [`.agents/skills/weather-test-delivery/SKILL.md`](.agents/skills/weather-test-delivery/SKILL.md) |
 | **`weather-code-quality-and-ops`**| Docker Compose, multi-stage builds, CLI execution, ESM standards, JSDoc, KISS/YAGNI. | [`.agents/skills/weather-code-quality-and-ops/SKILL.md`](.agents/skills/weather-code-quality-and-ops/SKILL.md) |
+
 
 ---
 

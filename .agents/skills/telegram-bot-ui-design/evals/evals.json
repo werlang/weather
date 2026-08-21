@@ -1,0 +1,23 @@
+{
+  "skill_name": "telegram-bot-ui-design",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Design a high-contrast Telegram bot dashboard layout for a regional flood alert system with Unicode meters for river levels and inline keyboard buttons.",
+      "expected_output": "A structured card layout using CARD_HEADER / CARD_DIVIDER constants, renderProgressBar gauge for river height, dynamic river trend badge, and a balanced 2x2 or 2x3 InlineKeyboard with in-place callback handlers.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Implement an interactive settings menu for a Telegram bot with radio-button style inline keyboards indicating the active selection with checkmarks.",
+      "expected_output": "An InlineKeyboard generator function that highlights the currently selected option with ✅, handles set_*: callbacks via editMessageText, and answers callback queries with toast notifications.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Format a severe weather emergency broadcast message with actionable municipal directives and attached action buttons.",
+      "expected_output": "An alert template featuring high-contrast warning headers, severity badges (renderSeverityBadge), clear impact/timing metadata, actionable school/civil defense directives, and an attached buildAlertActionKeyboard tray.",
+      "files": []
+    }
+  ]
+}

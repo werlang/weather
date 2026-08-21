@@ -47,7 +47,10 @@ export async function startWeatherBot({ env = process.env, logger = console, tel
 
     try {
         await telegramClient.start({
-            onStart: botInfo => logger.log?.(`Telegram bot @${botInfo.username} started.`)
+            onStart: async botInfo => {
+                logger.log?.(`Telegram bot @${botInfo.username} started.`);
+                await bot.initCommands().catch(() => {});
+            }
         });
     } finally {
         process.removeListener('SIGINT', handleSignal);

@@ -1,105 +1,109 @@
-# Telegram Bot Capabilities and Scope
+# Telegram Bot Capabilities, UI/UX Design System & Scope
 
-## Purpose
+## 1. Purpose & Overview
 
-Telegram is the canonical operational interface for this weather-monitoring
-service. The bot delivers high-risk meteorological alerts detected by the
-existing regional monitor to an explicitly configured administrator.
+Telegram is the canonical operational interface for this weather-monitoring service for **Charqueadas - RS** (IBGE `4305355`) and surrounding municipalities (25–100 km radius). The bot combines 24/7 continuous risk monitoring with an interactive, high-contrast dashboard for administrators.
 
-The monitor remains responsible for obtaining INMET data and deciding whether
-an event is high risk. The Telegram layer is responsible for authentication,
-message formatting, delivery, and bot lifecycle.
+The monitor service (`src/monitor_service.js`) fetches meteorological data from INMET and real-time telemetry from Defesa Civil RS, evaluating severe weather risks in 24-hour windows. The Telegram bot presentation layer (`src/telegram_bot.js` & `src/telegram.js`) handles user interactions, runtime settings, visual cards, alert formatting, and delivery.
 
-## Library decision
+---
 
-The project uses [grammY](https://grammy.dev/) as the Telegram Bot API
-framework. On 2026-08-13, the npm package page reported approximately 3.6
-million weekly downloads for `grammy`, compared with approximately 332 thousand
-for `telegraf`. grammY also provides a current JavaScript API for command
-handlers, replies, long polling, and graceful shutdown.
+## 2. Industry UI/UX Benchmarking: Top Players in the Telegram Bot Scene
 
-The framework is isolated behind `src/telegram.js`. Application code should use
-the project wrapper instead of importing grammY directly unless a future bot
-feature requires an explicit extension of that boundary.
+To deliver a top-tier user experience, this bot incorporates design patterns and interaction paradigms from the industry's leading Telegram bots:
 
-## Capabilities in scope
+| Bot Category | Reference Players | UI/UX Innovations & Patterns Adopted |
+| :--- | :--- | :--- |
+| **System & Administration** | `@BotFather`, `@MissRose_bot`, `@Combot`, `@GroupHelpBot` | • **Breadcrumb Header Navigation** (`🏠 Início > ⚙️ Configurações > ⏱️ Intervalo`).<br>• **Stateful Inline Keyboards** with checkmark pills (`[ ✅ 15 min ]`, `[ ⏱️ 30 min ]`).<br>• **In-Place Updates** via `editMessageText` preventing chat clutter.<br>• **Toast Confirmations** via `answerCallbackQuery({ text: '...' })`. |
+| **FinTech & High-Frequency Operations** | `@Wallet`, `@CryptoBot`, `@TrojanBot`, `@Unibot` | • **Structured Visual Cards** using Unicode box dividers (`━━━━━━━━━━━━━━━━━━━━━━━━━` & `─────────────────────────`).<br>• **High-Contrast Status Badges** (`🟢 NORMAL`, `🟡 MODERADO`, `🟠 SEVERO`, `🔴 CRÍTICO`).<br>• **Compact Action Trays** (2x2 / 2x3 balanced button grids). |
+| **Weather & Environmental Telemetry** | `@WeathermanBot`, `@AirQualityBot`, Civil Protection Bots | • **Visual Unicode Gauges & Meters** (e.g. River Level: `2.45m [██████░░░░] 61%`).<br>• **Dynamic Trend Badges** (`📈 Subindo (+0.12 m/h)`, `🔺 Subida Crítica`).<br>• **Actionable Emergency Alert Headers** with clear municipal/school directives. |
+| **Telegram Platform Standards** | Native Telegram API | • **Native Command Autocomplete** via `setMyCommands` for instant `/` command palette.<br>• **Character Budget Guardrails** strictly chunking under 4096 UTF-8 characters. |
 
-### Alert delivery
+---
 
-- Send every high-risk event produced by the 24-hour regional monitor to each
-  configured administrator chat.
-- Include the event type, severity, source, affected municipalities, time
-  window, trigger reason, and details when available.
-- Split long messages into Telegram-safe chunks without losing event order.
-- Keep the existing console log path available through the direct monitor
-  entry point; Telegram delivery failures are logged without stopping the
-  monitoring loop.
+## 3. UI/UX Design System & Visual Components
 
-### Administrator interaction
+### A. High-Contrast Card Dividers
+Messages use standardized Unicode borders to structure sections cleanly:
+- `CARD_HEADER = '━━━━━━━━━━━━━━━━━━━━━━━━━'` — Used for outer message boundaries and category headers.
+- `CARD_DIVIDER = '─────────────────────────'` — Used between list items, stations, and warnings.
 
-- `/start`: explain the bot and whether the current chat is authorized.
-- `/help`: list the available commands and the authorization model.
-- `/chatid`: return the current Telegram chat ID for verification or a future
-  configuration change.
-- `/status`: return a short status response to an authorized administrator.
-- Reply to unsupported messages with a concise help message.
+### B. Visual Telemetry Gauges & Meters (`renderProgressBar`)
+Continuous numerical metrics (such as river water levels relative to overflow thresholds or rain accumulations) are rendered with Unicode progress meters:
+```text
+🌊 Rio Jacuí: 2.45 m [██████░░░░] 61%
+   ↳ Tendência: 📈 Subindo (+0.12 m/h)
+```
 
-Only configured administrator chat IDs may receive alerts or use the protected
-status command. The initial configuration supports one or more IDs through the
-`TELEGRAM_ADMIN_CHAT_ID` environment variable, separated by commas.
+### C. Severity Status Badges (`renderSeverityBadge`)
+Official alerts and risk levels are mapped to standardized color badges:
+- `🔴 GRANDE PERIGO (CRÍTICO)` — INMET Red / Defesa Civil Max Alert. Immediate class suspension advisory.
+- `🟠 PERIGO (SEVERO)` — Defesa Civil Orange / Heavy storm / Flood risk.
+- `🟡 PERIGO POTENCIAL (MODERADO)` — Yellow advisory.
+- `🟢 NORMAL / MONITORAMENTO` — Nominal conditions.
 
-## Registration and authorization
+### D. Stateful Inline Keyboards & Radio Selectors
+Settings menus show the active choice directly on the inline button with `✅` and provide direct one-tap switching:
+```text
+[ ⏱️ 5 min ]   [ ✅ 15 min ]
+[ ⏱️ 30 min ]  [ ⏱️ 60 min ]
+[ ⬅️ Voltar às Configurações ]
+```
 
-Registration is configuration-based, not self-service:
+### E. Alert Action Trays (`buildAlertActionKeyboard`)
+Broadcast emergency alerts include quick jump action buttons attached directly to the alert message:
+```text
+[ 🌊 Ver Jacuí & Chuva ] [ ⚡ Avisos INMET ]
+[ 🏠 Abrir Painel Principal ]
+```
 
-1. Create the bot with Telegram's BotFather and save its token as
-   `TELEGRAM_BOT_TOKEN`.
-2. Obtain the numeric ID of the intended private administrator chat through a
-   trusted Telegram client or account-ID utility.
-3. Set `TELEGRAM_ADMIN_CHAT_ID` to that ID before starting `npm start`.
-4. Use `/chatid` after startup to verify the configured chat ID; changing the
-   allowlist still requires an environment update and restart.
+---
 
-The bot never treats `/start`, `/chatid`, or an arbitrary incoming message as
-an authorization request. This prevents an unknown Telegram user from granting
-themselves alert access. The bot token and administrator IDs are configuration
-secrets or access-control data and must not be committed.
+## 4. Commands & Navigation Capabilities
 
-## Runtime configuration
+### Available Bot Commands
+
+| Command | Description | Access Level |
+| :--- | :--- | :--- |
+| `/start` or `/menu` | Opens the main interactive dashboard with button navigation. | Administrator |
+| `/status` | Returns system operational health, SQLite fetch stats, and active parameters. | Administrator |
+| `/jacui` | Displays real-time river level gauge and rainfall telemetry from Defesa Civil RS. | Administrator |
+| `/inmet` | Displays active official severe weather warnings for the monitored radius. | Administrator |
+| `/config` | Opens the interactive settings menu (interval, radius, alert policy). | Administrator |
+| `/help` | Shows operational help, command cheat sheet, and interactive shortcuts. | All (Public) |
+| `/chatid` | Returns the numeric Telegram Chat ID for authorization verification. | All (Public) |
+
+---
+
+## 5. Security & Administrator Allowlist
+
+Registration is configuration-based:
+1. Create the bot with Telegram's BotFather and obtain `TELEGRAM_BOT_TOKEN`.
+2. Retrieve the authorized Telegram Chat ID using `/chatid`.
+3. Set `TELEGRAM_ADMIN_CHAT_ID` in `.env` (comma-separated for multiple admins).
+4. Protected commands, telemetry views, settings modifications, and alert broadcasts are strictly restricted to allow-listed IDs.
+5. Unauthorized users receive a polite access restriction card with their Chat ID and guidance.
+
+---
+
+## 6. Runtime Configuration Parameters
 
 | Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Yes for the bot entry point | — | Token issued by BotFather. |
-| `TELEGRAM_ADMIN_CHAT_ID` | Yes for the bot entry point | — | One or more allow-listed chat IDs, comma-separated. |
-| `RADIUS_KM` | No | `50` | Regional monitoring radius. |
-| `MONITOR_INTERVAL_MINUTES` | No | `15` | Time between monitoring cycles. |
+| :--- | :--- | :--- | :--- |
+| `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
+| `TELEGRAM_ADMIN_CHAT_ID` | Yes | — | Comma-separated allowlist of Telegram chat IDs. |
+| `RADIUS_KM` | No | `50` | Default regional monitoring radius in kilometers. |
+| `MONITOR_INTERVAL_MINUTES` | No | `15` | Default time between monitoring cycles in minutes. |
+| `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs and metrics. |
 
-The bot uses long polling in this increment. A missing Telegram configuration
-is a startup error for `npm start`; the direct monitor entry point remains
-available for console-only diagnostics and tests.
+---
 
-## Module boundaries
+## 7. Architecture & Separation of Concerns
 
-| Module | Responsibility |
-| --- | --- |
-| `src/telegram.js` | Wrap grammY, parse configuration, enforce the admin allowlist for outbound delivery, and expose lifecycle/message methods. |
-| `src/telegram_bot.js` | Register commands, authorize incoming updates, format risk events, and connect the wrapper to the monitor callback. |
-| `src/weather_bot.js` | Compose the bot and monitor processes, start them, and coordinate graceful shutdown. |
-| `src/monitor_service.js` | Fetch regional data, evaluate high-risk events, and invoke the supplied alert callback. |
+| Module | Allowed Responsibilities |
+| :--- | :--- |
+| `src/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split messages (<4096 chars), register `setMyCommands`. |
+| `src/telegram_bot.js` | UI rendering, Unicode cards, progress gauges, inline keyboards, callback query routing, alert formatting. |
+| `src/weather_bot.js` | Process composition, signal handling (`SIGINT`/`SIGTERM`), coordinating bot + monitor startup. |
+| `src/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |
 
-## Explicit non-goals
-
-This increment does not include:
-
-- self-service admin enrollment or persistent user records;
-- database-backed subscriptions, acknowledgements, delivery history, or
-  deduplication across process restarts;
-- Telegram groups, channels, inline mode, webhooks, or interactive menus;
-- forecast lookup commands, configuration changes, or administrative controls
-  from Telegram;
-- replacement of INMET/Defesa Civil data collection or risk-analysis rules;
-- guaranteed delivery when Telegram or the network is unavailable.
-
-Future features must preserve the separation between risk analysis and
-notification delivery and must document any new authorization or persistence
-model before implementation.

@@ -137,5 +137,7 @@ GET https://apitempo.inmet.gov.br/estacoes/T
 * [`inmet-weather-monitor`](.agents/skills/inmet-weather-monitor/SKILL.md) — INMET API, 5-day forecasts, severe alerts & 24h risk engine
 * [`defesa-civil-rs-telemetry`](.agents/skills/defesa-civil-rs-telemetry/SKILL.md) — Defesa Civil RS GraphQL telemetry & river monitoring
 * [`telegram-weather-bot`](.agents/skills/telegram-weather-bot/SKILL.md) — grammY bot lifecycle, message chunking & admin delivery
+* [`telegram-bot-ui-design`](.agents/skills/telegram-bot-ui-design/SKILL.md) — Telegram bot UI/UX design system, Unicode card layouts, progress gauges & action trays
 * [`weather-test-delivery`](.agents/skills/weather-test-delivery/SKILL.md) — Localized TDD & unit testing (Node 26 + Docker)
 * [`weather-code-quality-and-ops`](.agents/skills/weather-code-quality-and-ops/SKILL.md) — Docker Compose runbooks & KISS/YAGNI architecture
+
