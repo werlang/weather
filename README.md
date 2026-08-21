@@ -22,9 +22,12 @@ ifsul/weather/
 │   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
 ├── database/
 │   └── weather_logs.db               # SQLite telemetry & audit log storage (git-ignored)
+├── migrations/
+│   └── 001_initial_schema.sql        # Initial schema migration
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
 │   ├── database_driver.js            # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│   ├── migrate.js                    # Versioned SQLite database migration runner
 │   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
 │   ├── monitor_service.js            # Long-running 24h risk monitoring service
@@ -34,6 +37,7 @@ ifsul/weather/
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
     ├── database_driver.test.js       # Unit tests for SQLite query-builder & CRUD driver
+    ├── migrate.test.js               # Unit tests for SQL migrations & schema_migrations
     ├── inmet_client.test.js          # Unit tests for INMET client
     ├── log_database.test.js          # Unit tests for SQLite log database
     ├── monitor_service.test.js       # Unit tests for 24h window risk monitoring service

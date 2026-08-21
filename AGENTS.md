@@ -66,9 +66,12 @@ ifsul/weather/
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md # Severity tiers, color codes, and filtering rules
 │   └── TELEGRAM_BOT_SCOPE.md         # Telegram bot capabilities, security & non-goals
 ├── database/                         # SQLite database storage (weather_logs.db)
+├── migrations/                       # Versioned SQL migration scripts
+│   └── 001_initial_schema.sql        # Initial schema migration
 ├── src/
 │   ├── inmet_client.js               # INMET & IBGE HTTP client (native fetch)
 │   ├── database_driver.js            # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│   ├── migrate.js                    # Versioned SQLite database migration runner
 │   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Business logic: risk parsing, 24h window evaluation
 │   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator
@@ -78,6 +81,7 @@ ifsul/weather/
 │   └── monitor_regional_risks.js     # On-demand CLI regional report generator
 ├── tests/
 │   ├── database_driver.test.js       # Unit tests for SQLite query-builder & CRUD driver
+│   ├── migrate.test.js               # Unit tests for SQL migrations & schema_migrations
 │   ├── inmet_client.test.js          # Unit tests for INMET client & regional rings
 │   ├── log_database.test.js          # Unit tests for SQLite log database
 │   ├── monitor_service.test.js       # Unit tests for risk analyzer & 24h window logic
@@ -96,6 +100,7 @@ ifsul/weather/
 | :--- | :--- | :--- |
 | `src/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
 | `src/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
+| `src/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
 | `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs. | Direct external network I/O, Telegram alert dispatch. |
 | `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback. | Direct Telegram API calls, command handling. |
