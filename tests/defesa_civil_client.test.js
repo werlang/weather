@@ -125,4 +125,38 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.strictEqual(resultDcOrange.length, 1, 'Defesa Civil Orange must trigger');
         assert.strictEqual(resultDcOrange[0].colorTier, 'ORANGE');
     });
+
+    it('alerts for daily basin rainfall and an already high river level', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00032',
+                data: {
+                    chuva: { acumulado: { h024: { value: 90 } } },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+
+        assert.ok(risks.some(risk => risk.details.includes('90 mm em 24h') && risk.colorTier === 'ORANGE'));
+        assert.ok(risks.some(risk => risk.type.includes('Elevação Crítica') && risk.colorTier === 'RED'));
+    });
+
+    it('can propagate telemetry failures to the monitoring coordinator', async () => {
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async () => ({
+            ok: false,
+            status: 503,
+            json: async () => ({})
+        });
+
+        try {
+            await assert.rejects(
+                getDefesaCivilTelemetry([], { log: false, throwOnError: true }),
+                /Defesa Civil GraphQL error 503/
+            );
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
 });

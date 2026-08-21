@@ -83,9 +83,11 @@ query GetStationTelemetry($stations: [String!], $clients: [String!]) {
  * @param {object} [options]
  * @param {boolean} [options.log=true] - Whether to record fetch metadata in SQLite.
  * @param {object} [options.db=null] - Custom SQLite instance for tests.
+ * @param {boolean} [options.throwOnError=false] - Propagate transport and GraphQL errors to the coordinator.
  * @returns {Promise<Array<object>>} List of telemetry objects per station.
+ * @throws {Error} When throwOnError is true and the request or GraphQL response fails.
  */
-export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054'], { log = true, db = null } = {}) {
+export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054'], { log = true, db = null, throwOnError = false } = {}) {
     const startTime = Date.now();
     const payload = {
         query: TAGS_DATA_QUERY,
@@ -110,6 +112,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
 
         if (!response.ok) {
             const errorMsg = `Defesa Civil GraphQL error ${response.status} when fetching telemetry`;
+            if (throwOnError) throw new Error(errorMsg);
             if (log) {
                 logFetch({
                     url: DEFESA_CIVIL_GRAPHQL_URL,
@@ -124,6 +127,21 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
         }
 
         const data = await response.json();
+        if (Array.isArray(data?.errors) && data.errors.length > 0) {
+            const errorMsg = `Defesa Civil GraphQL returned ${data.errors.length} error(s) when fetching telemetry`;
+            if (throwOnError) throw new Error(errorMsg);
+            if (log) {
+                logFetch({
+                    url: DEFESA_CIVIL_GRAPHQL_URL,
+                    endpoint: '/graphql?query=Tags_data',
+                    statusCode: response.status,
+                    durationMs,
+                    success: 0,
+                    errorMessage: errorMsg
+                }, db);
+            }
+            return [];
+        }
         const stationsList = data?.data?.tags_data?.qualle_meteorologia || [];
 
         if (log) {
@@ -157,6 +175,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
                 errorMessage: err.message
             }, db);
         }
+        if (throwOnError) throw err;
         return [];
     }
 }
@@ -203,7 +222,7 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 details: `Acúmulo crítico registrado: ${rain1h} mm em 1h (${rain3h} mm em 3h) na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Precipitação extrema (${rain1h} mm/h) com risco iminente de alagamentos severos.`
             });
-        } else if (rain15min >= 20 || rain1h >= 30 || rain3h >= 50) {
+        } else if (rain15min >= 20 || rain1h >= 30 || rain3h >= 50 || rain24h >= 80) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Chuva Intensa / Risco de Alagamento (Telemetria)',
@@ -212,8 +231,8 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 emoji: '🟠',
                 affectedCities: [cityName],
                 timeframe: 'Telemetria em Tempo Real',
-                details: `Pico de chuva registrado: ${rain15min} mm em 15min / ${rain1h} mm em 1h (${rain3h} mm em 3h) na estação ${code} (${cityName}).`,
-                triggerReason: `Defesa Civil RS: Alerta de chuva intensa (${rain1h} mm/h) com impacto no trânsito e transporte.`
+                details: `Acúmulo de chuva registrado: ${rain15min} mm em 15min / ${rain1h} mm em 1h / ${rain3h} mm em 3h / ${rain24h} mm em 24h na estação ${code} (${cityName}).`,
+                triggerReason: `Defesa Civil RS: Acúmulo de chuva com risco de saturação e alagamentos.`
             });
         }
 
@@ -246,8 +265,8 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
 
         // 3. Nível e Tendência do Rio (Baixo Jacuí / Guaíba)
         if (riverLevel !== null) {
-            // Se cota de elevação rápida (> +0.5m/h) ou cota extrema
-            if (riverTrend >= 0.5) {
+            // A cota absoluta mantém o alerta ativo mesmo quando a subida estabiliza.
+            if (riverLevel >= 6.5 || riverTrend >= 0.5) {
                 risks.push({
                     source: 'DEFESA_CIVIL_RS',
                     type: `Elevação Crítica do ${riverName} (Telemetria)`,
@@ -259,7 +278,7 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                     details: `Nível do rio: ${riverLevel}m com subida rápida de +${riverTrend}m/h na estação ${code} (${cityName}).`,
                     triggerReason: `Defesa Civil RS: Elevação acelerada do ${riverName} com risco de transbordamento.`
                 });
-            } else if (riverTrend >= 0.25) {
+            } else if (riverLevel > 5.5 || riverTrend >= 0.25) {
                 risks.push({
                     source: 'DEFESA_CIVIL_RS',
                     type: `Elevação do ${riverName} (Telemetria)`,

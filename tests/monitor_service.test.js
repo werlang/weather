@@ -5,7 +5,9 @@ import {
   parseForecastDate,
   evaluateHighRisksIn24hWindow,
   onHighRiskEventDetected,
-  startMonitoringService
+  startMonitoringService,
+  createAlertDispatcher,
+  performRegionalRiskMonitoring
 } from '../src/monitor_service.js';
 import { analyzeForecastRisks, parseRadiusArg } from '../src/risk_analyzer.js';
 import { getSurroundingCities } from '../src/inmet_client.js';
@@ -280,5 +282,177 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     assert.doesNotThrow(() => {
       onHighRiskEventDetected(dummyEvents);
     });
+  });
+
+  it('ignores INMET warnings outside the next 24-hour window', () => {
+    const events = evaluateHighRisksIn24hWindow({
+      now: new Date('2026-08-21T12:00:00Z'),
+      regionalWarnings: [
+        {
+          id_aviso: 'expired-warning',
+          aviso_cor: '#FF0000',
+          severidade: 'Grande Perigo',
+          descricao: 'Tempestade encerrada',
+          inicio: '2026-08-20 00:00',
+          fim: '2026-08-20 23:59',
+          affectedRegionalCities: ['Charqueadas']
+        },
+        {
+          id_aviso: 'future-warning',
+          aviso_cor: '#FF0000',
+          severidade: 'Grande Perigo',
+          descricao: 'Tempestade futura',
+          inicio: '2026-08-23 00:00',
+          fim: '2026-08-23 23:59',
+          affectedRegionalCities: ['Charqueadas']
+        }
+      ]
+    });
+
+    assert.deepStrictEqual(events, []);
+  });
+
+  it('evaluates morning, afternoon, and night forecast periods independently', () => {
+    const events = evaluateHighRisksIn24hWindow({
+      now: new Date('2026-08-21T10:00:00Z'),
+      regionalForecasts: [{
+        name: 'Charqueadas',
+        forecast: {
+          '21/08/2026': {
+            manha: { resumo: 'Céu limpo', temp_min: 15, temp_max: 25 },
+            tarde: { resumo: 'Tempestade severa com trovoadas', temp_min: 15, temp_max: 25 },
+            noite: { resumo: 'Céu limpo', temp_min: 15, temp_max: 22 }
+          }
+        }
+      }]
+    });
+
+    assert.strictEqual(events.length, 1);
+    assert.match(events[0].timeframe, /tarde/);
+  });
+
+  it('keeps distinct INMET warnings with the same type and city', () => {
+    const events = evaluateHighRisksIn24hWindow({
+      now: new Date('2026-08-21T10:00:00Z'),
+      regionalWarnings: [
+        {
+          id_aviso: 'warning-a',
+          aviso_cor: '#FF0000',
+          severidade: 'Grande Perigo',
+          descricao: 'Tempestade',
+          inicio: '2026-08-21 10:00',
+          fim: '2026-08-21 12:00',
+          riscos: ['Alagamento'],
+          affectedRegionalCities: ['Charqueadas']
+        },
+        {
+          id_aviso: 'warning-b',
+          aviso_cor: '#FF0000',
+          severidade: 'Grande Perigo',
+          descricao: 'Tempestade',
+          inicio: '2026-08-21 18:00',
+          fim: '2026-08-21 23:00',
+          riscos: ['Granizo'],
+          affectedRegionalCities: ['Charqueadas']
+        }
+      ]
+    });
+
+    assert.strictEqual(events.length, 2);
+    assert.deepStrictEqual(events.map(event => event.details), ['Alagamento', 'Granizo']);
+  });
+});
+
+describe('Alert dispatch state', () => {
+  it('sends an active event once and sends it again after it clears', async () => {
+    const deliveries = [];
+    const dispatch = createAlertDispatcher(async events => {
+      deliveries.push(events);
+      return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
+    });
+    const event = {
+      source: 'INMET_OFFICIAL_WARNING',
+      eventId: 'warning-1',
+      type: 'Tempestade',
+      affectedCities: ['Charqueadas'],
+      timeframe: '21/08/2026 10:00 -> 12:00'
+    };
+
+    await dispatch([event], { dataComplete: true });
+    await dispatch([event], { dataComplete: true });
+    await dispatch([], { dataComplete: true });
+    await dispatch([event], { dataComplete: true });
+
+    assert.strictEqual(deliveries.length, 2);
+  });
+
+  it('does not clear active alert state when source data is incomplete', async () => {
+    const deliveries = [];
+    const dispatch = createAlertDispatcher(async events => {
+      deliveries.push(events);
+      return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
+    });
+    const event = {
+      source: 'INMET_OFFICIAL_WARNING',
+      eventId: 'warning-1',
+      type: 'Tempestade',
+      affectedCities: ['Charqueadas'],
+      timeframe: '21/08/2026 10:00 -> 12:00'
+    };
+
+    await dispatch([event], { dataComplete: true });
+    await dispatch([], { dataComplete: false });
+    await dispatch([event], { dataComplete: true });
+
+    assert.strictEqual(deliveries.length, 1);
+  });
+});
+
+describe('Monitoring data quality', () => {
+  it('does not report no-risk when forecasts fail or return empty payloads', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    const originalSqliteDbPath = process.env.SQLITE_DB_PATH;
+    const callbackEvents = [];
+
+    process.env.DB_PATH = ':memory:';
+    delete process.env.SQLITE_DB_PATH;
+    Sqlite.close();
+    let forecastRequests = 0;
+    globalThis.fetch = async url => {
+      if (String(url).includes('/avisos/ativos')) {
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      if (String(url).includes('/previsao/')) {
+        forecastRequests += 1;
+        if (forecastRequests === 1) throw new Error('simulated forecast outage');
+        return { ok: true, status: 200, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: { tags_data: { qualle_meteorologia: [] } } })
+      };
+    };
+
+    try {
+      const result = await performRegionalRiskMonitoring({
+        radiusKm: 25,
+        alertCallback: events => callbackEvents.push(events)
+      });
+
+      assert.strictEqual(result.highRiskCount, 0);
+      assert.strictEqual(result.dataQuality.complete, false);
+      assert.strictEqual(result.dataQuality.forecastFailures, 6);
+      assert.strictEqual(result.dataQuality.telemetryAvailable, false);
+      assert.deepStrictEqual(callbackEvents, []);
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+      if (originalSqliteDbPath === undefined) delete process.env.SQLITE_DB_PATH;
+      else process.env.SQLITE_DB_PATH = originalSqliteDbPath;
+    }
   });
 });

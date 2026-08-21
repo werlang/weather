@@ -22,7 +22,8 @@ import {
     parseRadiusArg,
     parseForecastDate,
     evaluateHighRisksIn24hWindow,
-    normalizeSeverityTier
+    normalizeSeverityTier,
+    getRiskEventKey
 } from './risk_analyzer.js';
 
 import {
@@ -124,14 +125,56 @@ export function onHighRiskEventDetected(highRiskEvents) {
 }
 
 /**
+ * Creates a stateful dispatcher that sends only newly active events.
+ * The active set is replaced only after a complete data cycle and successful
+ * delivery, so a transient source outage cannot clear an alert or create spam.
+ *
+ * @param {function} alertCallback - Callback that delivers an alert batch.
+ * @returns {function(Array<object>, object): Promise<object>} Alert dispatcher.
+ */
+export function createAlertDispatcher(alertCallback) {
+    let activeAlertKeys = new Set();
+
+    return async (events = [], { dataComplete = true } = {}) => {
+        const normalizedEvents = Array.isArray(events) ? events : [];
+        const currentAlertKeys = new Set();
+        const newEvents = [];
+
+        for (const event of normalizedEvents) {
+            const key = getRiskEventKey(event);
+            currentAlertKeys.add(key);
+            if (!activeAlertKeys.has(key) && !newEvents.some(item => getRiskEventKey(item) === key)) {
+                newEvents.push(event);
+            }
+        }
+
+        let delivery = null;
+        if (newEvents.length > 0) {
+            delivery = await alertCallback(newEvents);
+        }
+
+        const deliveryFailed = Array.isArray(delivery?.failed) && delivery.failed.length > 0;
+        if (dataComplete && !deliveryFailed) {
+            activeAlertKeys = currentAlertKeys;
+        }
+
+        return {
+            delivery,
+            deliveredEvents: newEvents,
+            suppressedCount: normalizedEvents.length - newEvents.length
+        };
+    };
+}
+
+/**
  * Executa uma verificação completa de riscos nos municípios dentro do raio definido.
  * 
  * @param {object} [options]
  * @param {number} [options.radiusKm=50] - Raio de monitoramento em KM.
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.inmetMinSeverity='RED'] - Nível mínimo para alertas INMET.
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.defesaCivilMinSeverity='ORANGE'] - Nível mínimo para Defesa Civil RS.
- * @param {function} [options.alertCallback] - Callback customizado para alertas.
- * @returns {Promise<{ citiesCount: number, highRiskCount: number, events: Array<object> }>}
+ * @param {function|null} [options.alertCallback] - Callback customizado para alertas.
+ * @returns {Promise<{ citiesCount: number, highRiskCount: number, events: Array<object>, dataQuality: object }>}
  */
 export async function performRegionalRiskMonitoring({
     radiusKm = 50,
@@ -145,12 +188,56 @@ export async function performRegionalRiskMonitoring({
 
     try {
         const cities = await getSurroundingCities(radiusKm);
-        const [warningsResult, regionalForecasts, defesaCivilTelemetry] = await Promise.all([
+        const [warningsResult, forecastsResult, telemetryResult] = await Promise.allSettled([
             getRegionalRiskWarnings(cities),
             getRegionalForecasts(cities),
-            getDefesaCivilTelemetry().catch(() => [])
+            getDefesaCivilTelemetry(undefined, { throwOnError: true })
         ]);
-        const { regionalWarnings } = warningsResult;
+
+        const dataErrors = [];
+        let regionalWarnings = [];
+        let regionalForecasts = [];
+        let defesaCivilTelemetry = [];
+
+        const warningsAvailable = warningsResult.status === 'fulfilled' && Array.isArray(warningsResult.value?.regionalWarnings);
+        if (warningsAvailable) {
+            regionalWarnings = warningsResult.value.regionalWarnings;
+        } else {
+            dataErrors.push(`INMET warnings unavailable: ${warningsResult.reason?.message || 'invalid response'}`);
+        }
+
+        let forecastFailures = 0;
+        if (forecastsResult.status === 'fulfilled' && Array.isArray(forecastsResult.value)) {
+            regionalForecasts = forecastsResult.value;
+            const missingForecasts = Math.max(0, cities.length - regionalForecasts.length);
+            const unusableForecasts = regionalForecasts.filter(city => {
+                const forecast = city?.forecast;
+                return city?.error || !forecast || typeof forecast !== 'object' || Array.isArray(forecast) || Object.keys(forecast).length === 0;
+            }).length;
+            forecastFailures = missingForecasts + unusableForecasts;
+            if (forecastFailures > 0) {
+                dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities`);
+            }
+        } else {
+            forecastFailures = cities.length;
+            dataErrors.push(`INMET forecasts unavailable: ${forecastsResult.reason?.message || 'invalid response'}`);
+        }
+
+        if (telemetryResult.status === 'fulfilled' && Array.isArray(telemetryResult.value) && telemetryResult.value.length > 0) {
+            defesaCivilTelemetry = telemetryResult.value;
+        } else {
+            const telemetryError = telemetryResult.reason?.message || 'empty response';
+            dataErrors.push(`Defesa Civil telemetry unavailable: ${telemetryError}`);
+        }
+
+        const dataQuality = {
+            complete: dataErrors.length === 0,
+            warningsAvailable,
+            forecastsAvailable: forecastsResult.status === 'fulfilled' && forecastFailures === 0,
+            telemetryAvailable: telemetryResult.status === 'fulfilled' && defesaCivilTelemetry.length > 0,
+            forecastFailures,
+            errors: dataErrors
+        };
 
         const highRiskEvents = evaluateHighRisksIn24hWindow({
             regionalWarnings,
@@ -170,7 +257,8 @@ export async function performRegionalRiskMonitoring({
             citiesCount: cities.length,
             highRiskCount: highRiskEvents.length,
             durationMs,
-            success: 1
+            success: dataQuality.complete,
+            errorMessage: dataQuality.errors.join('; ') || null
         });
 
         // Persist each detected high-risk alert to SQLite
@@ -182,14 +270,17 @@ export async function performRegionalRiskMonitoring({
             if (typeof alertCallback === 'function') {
                 await alertCallback(highRiskEvents);
             }
-        } else {
+        } else if (dataQuality.complete) {
             console.log(`[${timestamp}] 🟢 Nenhum evento de alto risco detectado para as próximas 24 horas.`);
+        } else {
+            console.warn(`[${timestamp}] ⚠️ Dados incompletos; nenhum alerta de ausência de risco será emitido. ${dataQuality.errors.join(' | ')}`);
         }
 
         return {
             citiesCount: cities.length,
             highRiskCount: highRiskEvents.length,
-            events: highRiskEvents
+            events: highRiskEvents,
+            dataQuality
         };
     } catch (err) {
         const durationMs = Date.now() - startTime;
@@ -223,7 +314,10 @@ export function startMonitoringService(options = {}) {
     let currentIntervalMs = options.intervalMs || config.intervalMs;
     let currentInmetMinSeverity = options.inmetMinSeverity || config.inmetMinSeverity;
     let currentDefesaCivilMinSeverity = options.defesaCivilMinSeverity || config.defesaCivilMinSeverity;
-    const alertCallback = options.alertCallback || onHighRiskEventDetected;
+    const alertCallback = typeof options.alertCallback === 'function'
+        ? options.alertCallback
+        : onHighRiskEventDetected;
+    const dispatchAlerts = createAlertDispatcher(alertCallback);
     const registerSignalHandlers = options.registerSignalHandlers !== false;
     const intervalMins = Math.round((currentIntervalMs / (60 * 1000)) * 100) / 100;
 
@@ -247,11 +341,14 @@ export function startMonitoringService(options = {}) {
         if (isRunning) return;
         isRunning = true;
         try {
-            await performRegionalRiskMonitoring({
+            const result = await performRegionalRiskMonitoring({
                 radiusKm: currentRadiusKm,
                 inmetMinSeverity: currentInmetMinSeverity,
                 defesaCivilMinSeverity: currentDefesaCivilMinSeverity,
-                alertCallback
+                alertCallback: null
+            });
+            await dispatchAlerts(result.events, {
+                dataComplete: result.dataQuality?.complete !== false
             });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);

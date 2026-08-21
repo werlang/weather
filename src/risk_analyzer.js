@@ -35,6 +35,89 @@ export function normalizeSeverityTier(tier) {
 }
 
 /**
+ * Creates a Date for a calendar timestamp reported in São Paulo local time.
+ * INMET and Defesa Civil timestamps without an explicit offset use the
+ * municipality's local timezone, while the process may run in a UTC container.
+ *
+ * @param {number} year - Calendar year.
+ * @param {number} month - Calendar month, from 1 to 12.
+ * @param {number} day - Calendar day.
+ * @param {number} [hour=0] - Hour of day.
+ * @param {number} [minute=0] - Minute of hour.
+ * @param {number} [second=0] - Second of minute.
+ * @returns {Date|null} Parsed timestamp or null when the calendar value is invalid.
+ */
+function createSaoPauloDate(year, month, day, hour = 0, minute = 0, second = 0) {
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (
+        !Number.isInteger(year) || year < 1 ||
+        !Number.isInteger(month) || month < 1 || month > 12 ||
+        !Number.isInteger(day) || day < 1 || day > lastDay ||
+        !Number.isInteger(hour) || hour < 0 || hour > 23 ||
+        !Number.isInteger(minute) || minute < 0 || minute > 59 ||
+        !Number.isInteger(second) || second < 0 || second > 59
+    ) {
+        return null;
+    }
+
+    return new Date(
+        `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` +
+        `T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}-03:00`
+    );
+}
+
+/**
+ * Parses an INMET warning timestamp, accepting the documented ISO-like and
+ * Brazilian formats. Values without an offset are interpreted as São Paulo time.
+ *
+ * @param {string|Date|null|undefined} value - Warning timestamp.
+ * @returns {Date|null} Parsed timestamp or null when unavailable or invalid.
+ */
+export function parseWarningDate(value) {
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : new Date(value.getTime());
+    }
+    if (value === null || value === undefined) return null;
+
+    const text = String(value).trim();
+    if (!text) return null;
+
+    if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) {
+        const parsed = new Date(text);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+
+    const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    const brazilianMatch = text.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    const match = isoMatch || brazilianMatch;
+    if (!match) return null;
+
+    const year = Number(isoMatch ? match[1] : match[3]);
+    const month = Number(match[2]);
+    const day = Number(isoMatch ? match[3] : match[1]);
+    const hour = Number(match[4] || 0);
+    const minute = Number(match[5] || 0);
+    const second = Number(match[6] || 0);
+    return createSaoPauloDate(year, month, day, hour, minute, second);
+}
+
+/**
+ * Builds a stable identity for one risk event across monitoring cycles.
+ * Provider identifiers take precedence; otherwise the event's type, location,
+ * and timeframe distinguish separate hazards without using changing readings.
+ *
+ * @param {object} event - Normalized risk event.
+ * @returns {string} Stable event identity.
+ */
+export function getRiskEventKey(event = {}) {
+    const cities = Array.isArray(event.affectedCities)
+        ? event.affectedCities.join('|')
+        : String(event.affectedCities || '');
+    const fallbackIdentity = [event.type || '', cities, event.timeframe || ''].join('|');
+    return [event.source || '', event.eventId || fallbackIdentity].join('|');
+}
+
+/**
  * Processa argumentos da linha de comando e variáveis de ambiente para obter o raio regional em KM.
  * 
  * @param {number} [defaultRadius=50] - Raio padrão caso não informado.
@@ -78,7 +161,7 @@ export function parseForecastDate(dateStr) {
     const month = parseInt(parts[1], 10) - 1; // Mês base zero
     const year = parseInt(parts[2], 10);
     if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
-    return new Date(year, month, day, 0, 0, 0, 0);
+    return createSaoPauloDate(year, month + 1, day);
 }
 
 /**
@@ -227,6 +310,14 @@ export function evaluateHighRisksIn24hWindow({
     // 1. Filtrar Avisos Oficiais do INMET conforme inmetMinSeverity
     if (inmetRank > 0) {
         for (const warning of regionalWarnings) {
+            const warningStart = parseWarningDate(warning.inicio || warning.hora_inicio);
+            const warningEnd = parseWarningDate(warning.fim || warning.hora_fim);
+            const warningOverlapsWindow =
+                (!warningStart || warningStart.getTime() <= windowEnd) &&
+                (!warningEnd || warningEnd.getTime() >= windowStart);
+
+            if (!warningOverlapsWindow) continue;
+
             const severidade = String(warning.severidade || '').toLowerCase();
             const avisoCor = String(warning.aviso_cor || '').toUpperCase();
 
@@ -242,6 +333,7 @@ export function evaluateHighRisksIn24hWindow({
                 const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
                 highRiskEvents.push({
                     source: 'INMET_OFFICIAL_WARNING',
+                    eventId: warning.id_aviso || warning.codigo || null,
                     type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
                     severity: warning.severidade || (warningTier === 'RED' ? 'Grande Perigo' : (warningTier === 'ORANGE' ? 'Perigo' : 'Perigo Potencial')),
                     colorTier: warningTier,
@@ -278,12 +370,29 @@ export function evaluateHighRisksIn24hWindow({
 
                 const dayStart = forecastDate.getTime();
                 const dayEnd = dayStart + (24 * 60 * 60 * 1000) - 1;
-                const overlaps24hWindow = (dayStart <= windowEnd && dayEnd >= windowStart);
+                const periodDefinitions = [
+                    { key: 'manha', label: 'manhã', startHour: 6, endHour: 12 },
+                    { key: 'tarde', label: 'tarde', startHour: 12, endHour: 18 },
+                    { key: 'noite', label: 'noite', startHour: 18, endHour: 24 }
+                ];
+                const definedPeriods = periodDefinitions
+                    .filter(periodDefinition => dayData?.[periodDefinition.key])
+                    .map(periodDefinition => ({
+                        ...periodDefinition,
+                        data: dayData[periodDefinition.key]
+                    }));
+                const periods = definedPeriods.length > 0
+                    ? definedPeriods
+                    : [{ key: null, label: null, startHour: 0, endHour: 24, data: dayData }];
 
-                if (overlaps24hWindow) {
-                    const period = dayData.manha ? dayData.manha : dayData;
-                    const risks = analyzeForecastRisks(period);
+                for (const period of periods) {
+                    const periodStart = dayStart + (period.startHour * 60 * 60 * 1000);
+                    const periodEnd = dayStart + (period.endHour * 60 * 60 * 1000) - 1;
+                    const overlaps24hWindow = periodStart <= windowEnd && periodEnd >= windowStart;
 
+                    if (!overlaps24hWindow) continue;
+
+                    const risks = analyzeForecastRisks(period.data);
                     const matchingRisks = risks.filter(r => {
                         if (r.severity === 'HIGH') return inmetRank <= SEVERITY_LEVELS.RED;
                         if (r.severity === 'MODERATE') return inmetRank <= SEVERITY_LEVELS.ORANGE;
@@ -292,6 +401,7 @@ export function evaluateHighRisksIn24hWindow({
                     });
 
                     for (const r of matchingRisks) {
+                        const periodSuffix = period.label ? `, ${period.label}` : '';
                         highRiskEvents.push({
                             source: 'FORECAST_ANALYSIS',
                             type: r.type,
@@ -299,7 +409,7 @@ export function evaluateHighRisksIn24hWindow({
                             colorTier: r.severity === 'HIGH' ? 'RED' : (r.severity === 'MODERATE' ? 'ORANGE' : 'YELLOW'),
                             emoji: r.severity === 'HIGH' ? '🔴' : (r.severity === 'MODERATE' ? '🟠' : '🟡'),
                             affectedCities: [cityName],
-                            timeframe: `Janela de 24h (${dateStr})`,
+                            timeframe: `Janela de 24h (${dateStr}${periodSuffix})`,
                             details: `${r.detail} em ${cityName}`,
                             triggerReason: `Métrica da previsão meteorológica para ${cityName}: ${r.detail}`
                         });
@@ -313,7 +423,7 @@ export function evaluateHighRisksIn24hWindow({
     const uniqueEvents = [];
     const seenKeys = new Set();
     for (const event of highRiskEvents) {
-        const key = `${event.source}_${event.type}_${(event.affectedCities || []).join(',')}`;
+        const key = getRiskEventKey(event);
         if (!seenKeys.has(key)) {
             seenKeys.add(key);
             uniqueEvents.push(event);
