@@ -17,7 +17,7 @@ To deliver a top-tier user experience, this bot incorporates design patterns and
 | **System & Administration** | `@BotFather`, `@MissRose_bot`, `@Combot`, `@GroupHelpBot` | • **Breadcrumb Header Navigation** (`🏠 Início > ⚙️ Configurações > ⏱️ Intervalo`).<br>• **Stateful Inline Keyboards** with checkmark pills (`[ ✅ 15 min ]`, `[ ⏱️ 30 min ]`).<br>• **In-Place Updates** via `editMessageText` preventing chat clutter.<br>• **Toast Confirmations** via `answerCallbackQuery({ text: '...' })`. |
 | **FinTech & High-Frequency Operations** | `@Wallet`, `@CryptoBot`, `@TrojanBot`, `@Unibot` | • **Structured Visual Cards** using Unicode box dividers (`━━━━━━━━━━━━━━━━━━━━━━━━━` & `─────────────────────────`).<br>• **High-Contrast Status Badges** (`🟢 NORMAL`, `🟡 MODERADO`, `🟠 SEVERO`, `🔴 CRÍTICO`).<br>• **Compact Action Trays** (2x2 / 2x3 balanced button grids). |
 | **Weather & Environmental Telemetry** | `@WeathermanBot`, `@AirQualityBot`, Civil Protection Bots | • **High-Contrast Severity Color Coding** aligned with official INMET/Defesa Civil tiers.<br>• **Actionable Emergency Alert Headers** with clear municipal/school directives. |
-| **Telegram Platform Standards** | Native Telegram API | • **Native Command Autocomplete** via `setMyCommands` for instant `/` command palette.<br>• **Character Budget Guardrails** strictly chunking under 4096 UTF-8 characters. |
+| **Telegram Platform Standards** | Native Telegram API | • **Native Command Autocomplete** via `setMyCommands` for instant `/` command palette.<br>• **Character Budget Guardrails** strictly chunking under 4096 characters, preserving paragraph boundaries where possible and adding `[Parte X/Y]` pagination headers.<br>• **Severity-aware alert copy** that reserves suspension language for red events. |
 
 ---
 
@@ -98,8 +98,7 @@ Registration is configuration-based:
 
 | Module | Allowed Responsibilities |
 | :--- | :--- |
-| `src/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split messages (<4096 chars), register `setMyCommands`. |
+| `src/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split paginated messages (<4096 characters), register `setMyCommands`. |
 | `src/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting. |
 | `src/weather_bot.js` | Process composition, signal handling (`SIGINT`/`SIGTERM`), coordinating bot + monitor startup. |
 | `src/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |
-
