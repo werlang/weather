@@ -19,6 +19,8 @@ import {
     evaluateHighRisksIn24hWindow
 } from './risk_analyzer.js';
 
+import { logAlert, logMonitorCycle } from './log_database.js';
+
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
 
 /**
@@ -93,6 +95,7 @@ export function onHighRiskEventDetected(highRiskEvents) {
  * @returns {Promise<{ citiesCount: number, highRiskCount: number, events: Array<object> }>}
  */
 export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallback = onHighRiskEventDetected } = {}) {
+    const startTime = Date.now();
     const timestamp = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     console.log(`\n[${timestamp}] 🔍 Iniciando verificação de riscos regionais (Raio: ${radiusKm}km)...`);
 
@@ -107,7 +110,22 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
             now: new Date()
         });
 
+        const durationMs = Date.now() - startTime;
         console.log(`[${timestamp}] ✓ Monitoramento concluído. ${cities.length} municípios verificados.`);
+
+        // Persist monitoring cycle log to SQLite
+        logMonitorCycle({
+            radiusKm,
+            citiesCount: cities.length,
+            highRiskCount: highRiskEvents.length,
+            durationMs,
+            success: 1
+        });
+
+        // Persist each detected high-risk alert to SQLite
+        for (const event of highRiskEvents) {
+            logAlert(event);
+        }
 
         if (highRiskEvents.length > 0) {
             if (typeof alertCallback === 'function') {
@@ -123,6 +141,15 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
             events: highRiskEvents
         };
     } catch (err) {
+        const durationMs = Date.now() - startTime;
+        logMonitorCycle({
+            radiusKm,
+            citiesCount: null,
+            highRiskCount: 0,
+            durationMs,
+            success: 0,
+            errorMessage: err.message
+        });
         console.error(`❌ [${timestamp}] Erro durante o monitoramento regional:`, err.message);
         throw err;
     }

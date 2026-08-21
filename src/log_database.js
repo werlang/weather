@@ -1,9 +1,9 @@
 /**
- * SQLite Log Database for Weather API Fetch Requests.
- * Built using native Node.js 26 `node:sqlite` (DatabaseSync).
+ * SQLite Log Database for Weather API Fetch Requests, Alerts, and Telemetry.
+ * Built on the shared SQLite database driver (`src/database_driver.js`) and Node 26 `node:sqlite`.
  * 
  * Provides an audit and performance log of every HTTP fetch executed
- * by the weather monitoring service and CLI tools.
+ * by the weather monitoring service, CLI tools, and detected severe alerts.
  * 
  * @module logDatabase
  */
@@ -11,13 +11,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { resolve, dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { Sqlite } from './database_driver.js';
 
 export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db';
 
 let defaultDbInstance = null;
 
 /**
- * SQL Schema for the fetch_logs table and performance indexes.
+ * SQL Schema for fetch_logs, alert_logs, monitor_cycle_logs, and performance indexes.
  */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS fetch_logs (
@@ -33,9 +34,35 @@ CREATE TABLE IF NOT EXISTS fetch_logs (
     error_message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS alert_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    event_type TEXT NOT NULL,
+    severity TEXT,
+    source TEXT,
+    affected_cities TEXT,
+    trigger_reason TEXT,
+    timeframe TEXT,
+    details TEXT
+);
+
+CREATE TABLE IF NOT EXISTS monitor_cycle_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    radius_km INTEGER,
+    cities_count INTEGER,
+    high_risk_count INTEGER,
+    duration_ms INTEGER,
+    success INTEGER NOT NULL CHECK (success IN (0, 1)),
+    error_message TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_timestamp ON fetch_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_endpoint ON fetch_logs(endpoint);
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_success ON fetch_logs(success);
+CREATE INDEX IF NOT EXISTS idx_alert_logs_timestamp ON alert_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_alert_logs_severity ON alert_logs(severity);
+CREATE INDEX IF NOT EXISTS idx_monitor_cycle_logs_timestamp ON monitor_cycle_logs(timestamp);
 `;
 
 /**
@@ -65,7 +92,7 @@ export function getDatabase(dbPath = DEFAULT_DB_PATH) {
         db.exec('PRAGMA journal_mode = WAL;');
         db.exec('PRAGMA synchronous = NORMAL;');
     } catch {
-        // WAL mode may not apply to all environments (e.g. read-only)
+        // WAL mode may not apply in all environments (e.g. read-only)
     }
 
     db.exec(SCHEMA_SQL);
@@ -170,6 +197,144 @@ export function logFetch(logData, customDb = null) {
 }
 
 /**
+ * Logs a detected severe weather alert event into SQLite.
+ * 
+ * @param {object} alertData
+ * @param {string} alertData.type - Alert type / hazard name.
+ * @param {string} [alertData.severity] - Severity level.
+ * @param {string} [alertData.source] - Data origin (INMET, DEFESA_CIVIL).
+ * @param {Array<string>|string} [alertData.affectedCities] - Municipalities affected.
+ * @param {string} [alertData.triggerReason] - Reason for trigger.
+ * @param {string} [alertData.timeframe] - Event window.
+ * @param {string} [alertData.details] - Full event description.
+ * @param {string} [alertData.timestamp] - ISO timestamp.
+ * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @returns {object|null} The inserted alert record metadata.
+ */
+export function logAlert(alertData, customDb = null) {
+    if (!alertData || (!alertData.type && !alertData.event_type)) {
+        return null;
+    }
+
+    try {
+        const db = customDb || getDatabase();
+        const timestamp = alertData.timestamp || new Date().toISOString();
+        const eventType = alertData.type || alertData.event_type;
+        const severity = alertData.severity || null;
+        const source = alertData.source || null;
+        const affectedCities = Array.isArray(alertData.affectedCities)
+            ? alertData.affectedCities.join(', ')
+            : (alertData.affectedCities || null);
+        const triggerReason = alertData.triggerReason || alertData.trigger_reason || null;
+        const timeframe = alertData.timeframe || null;
+        const details = alertData.details || null;
+
+        const insertStmt = db.prepare(`
+            INSERT INTO alert_logs (
+                timestamp,
+                event_type,
+                severity,
+                source,
+                affected_cities,
+                trigger_reason,
+                timeframe,
+                details
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const result = insertStmt.run(
+            timestamp,
+            eventType,
+            severity,
+            source,
+            affectedCities,
+            triggerReason,
+            timeframe,
+            details
+        );
+
+        return {
+            id: Number(result.lastInsertRowid),
+            timestamp,
+            eventType,
+            severity,
+            source,
+            affectedCities,
+            triggerReason,
+            timeframe,
+            details
+        };
+    } catch (err) {
+        console.error('⚠️ [SQLite Alert Log Error] Failed to write alert log:', err.message);
+        return null;
+    }
+}
+
+/**
+ * Logs a completed regional monitoring cycle into SQLite.
+ * 
+ * @param {object} cycleData
+ * @param {number} [cycleData.radiusKm] - Coverage radius in km.
+ * @param {number} [cycleData.citiesCount] - Number of verified cities.
+ * @param {number} [cycleData.highRiskCount] - Number of high risk events detected.
+ * @param {number} [cycleData.durationMs] - Cycle latency in ms.
+ * @param {boolean|number} [cycleData.success=true] - Whether cycle completed without fatal error.
+ * @param {string} [cycleData.errorMessage] - Error details if failed.
+ * @param {DatabaseSync} [customDb] - Optional custom DB instance.
+ * @returns {object|null} Inserted cycle record metadata.
+ */
+export function logMonitorCycle(cycleData, customDb = null) {
+    if (!cycleData) return null;
+
+    try {
+        const db = customDb || getDatabase();
+        const timestamp = cycleData.timestamp || new Date().toISOString();
+        const radiusKm = typeof cycleData.radiusKm === 'number' ? cycleData.radiusKm : null;
+        const citiesCount = typeof cycleData.citiesCount === 'number' ? cycleData.citiesCount : null;
+        const highRiskCount = typeof cycleData.highRiskCount === 'number' ? cycleData.highRiskCount : 0;
+        const durationMs = typeof cycleData.durationMs === 'number' ? Math.round(cycleData.durationMs) : null;
+        const success = (cycleData.success === false || cycleData.success === 0) ? 0 : 1;
+        const errorMessage = cycleData.errorMessage ? String(cycleData.errorMessage) : null;
+
+        const insertStmt = db.prepare(`
+            INSERT INTO monitor_cycle_logs (
+                timestamp,
+                radius_km,
+                cities_count,
+                high_risk_count,
+                duration_ms,
+                success,
+                error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const result = insertStmt.run(
+            timestamp,
+            radiusKm,
+            citiesCount,
+            highRiskCount,
+            durationMs,
+            success,
+            errorMessage
+        );
+
+        return {
+            id: Number(result.lastInsertRowid),
+            timestamp,
+            radiusKm,
+            citiesCount,
+            highRiskCount,
+            durationMs,
+            success,
+            errorMessage
+        };
+    } catch (err) {
+        console.error('⚠️ [SQLite Monitor Cycle Log Error] Failed to write cycle log:', err.message);
+        return null;
+    }
+}
+
+/**
  * Queries recent fetch logs from SQLite with filtering and pagination.
  * 
  * @param {object} [options]
@@ -224,6 +389,39 @@ export function getRecentFetchLogs({ limit = 50, offset = 0, success = null, end
 }
 
 /**
+ * Queries recent alert logs from SQLite.
+ * 
+ * @param {object} [options]
+ * @param {number} [options.limit=20]
+ * @param {number} [options.offset=0]
+ * @param {DatabaseSync} [customDb]
+ * @returns {Array<object>}
+ */
+export function getRecentAlertLogs({ limit = 20, offset = 0 } = {}, customDb = null) {
+    try {
+        const db = customDb || getDatabase();
+        return db.prepare(`
+            SELECT 
+                id,
+                timestamp,
+                event_type AS eventType,
+                severity,
+                source,
+                affected_cities AS affectedCities,
+                trigger_reason AS triggerReason,
+                timeframe,
+                details
+            FROM alert_logs
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+        `).all(Math.max(1, limit), Math.max(0, offset));
+    } catch (err) {
+        console.error('⚠️ [SQLite Alert Query Error] Failed to fetch alert logs:', err.message);
+        return [];
+    }
+}
+
+/**
  * Returns aggregated statistics for all logged API fetch requests.
  * 
  * @param {DatabaseSync} [customDb] - Optional custom DB instance.
@@ -244,12 +442,17 @@ export function getFetchStats(customDb = null) {
             FROM fetch_logs
         `).get();
 
+        const alertCount = db.prepare('SELECT COUNT(*) AS totalAlerts FROM alert_logs').get()?.totalAlerts || 0;
+        const cycleCount = db.prepare('SELECT COUNT(*) AS totalCycles FROM monitor_cycle_logs').get()?.totalCycles || 0;
+
         return {
             totalFetches: Number(stats.totalFetches || 0),
             successfulFetches: Number(stats.successfulFetches || 0),
             failedFetches: Number(stats.failedFetches || 0),
             avgDurationMs: Number(stats.avgDurationMs || 0),
             totalResponseBytes: Number(stats.totalResponseBytes || 0),
+            totalAlertsRecorded: Number(alertCount),
+            totalCyclesRecorded: Number(cycleCount),
             firstFetchAt: stats.firstFetchAt || null,
             lastFetchAt: stats.lastFetchAt || null
         };
@@ -261,6 +464,8 @@ export function getFetchStats(customDb = null) {
             failedFetches: 0,
             avgDurationMs: 0,
             totalResponseBytes: 0,
+            totalAlertsRecorded: 0,
+            totalCyclesRecorded: 0,
             firstFetchAt: null,
             lastFetchAt: null
         };
@@ -287,7 +492,7 @@ export function closeDatabase(customDb = null) {
 if (import.meta.url === `file://${process.argv[1]}`) {
     const stats = getFetchStats();
     console.log('='.repeat(80));
-    console.log(' WEATHER API FETCH LOGS & STATISTICS (SQLITE)');
+    console.log(' WEATHER API FETCH LOGS & TELEMETRY (SQLITE)');
     console.log('='.repeat(80));
     console.log(` • Database File:      ${DEFAULT_DB_PATH}`);
     console.log(` • Total Fetches:      ${stats.totalFetches}`);
@@ -295,6 +500,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(` • Failed:             ${stats.failedFetches}`);
     console.log(` • Avg Latency:        ${stats.avgDurationMs} ms`);
     console.log(` • Total Bytes:        ${(stats.totalResponseBytes / 1024).toFixed(2)} KB`);
+    console.log(` • Alerts Recorded:    ${stats.totalAlertsRecorded}`);
+    console.log(` • Cycles Recorded:    ${stats.totalCyclesRecorded}`);
     console.log(` • First Log:          ${stats.firstFetchAt || 'N/A'}`);
     console.log(` • Latest Log:         ${stats.lastFetchAt || 'N/A'}`);
     console.log('='.repeat(80));
@@ -314,5 +521,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         })));
     } else {
         console.log('\nNenhum registro de fetch encontrado no banco.');
+    }
+
+    const recentAlerts = getRecentAlertLogs({ limit: 5 });
+    if (recentAlerts.length > 0) {
+        console.log('\nÚltimos 5 alertas severos registrados no banco:');
+        console.table(recentAlerts.map(a => ({
+            ID: a.id,
+            Hora: a.timestamp.substring(11, 19),
+            Evento: a.eventType,
+            Severidade: a.severity || 'N/A',
+            Origem: a.source || 'N/A',
+            Municípios: a.affectedCities || 'N/A'
+        })));
     }
 }

@@ -3,7 +3,10 @@ import assert from 'node:assert';
 import {
     getDatabase,
     logFetch,
+    logAlert,
+    logMonitorCycle,
     getRecentFetchLogs,
+    getRecentAlertLogs,
     getFetchStats,
     extractEndpoint,
     closeDatabase,
@@ -18,15 +21,21 @@ describe('SQLite Log Database Schema & Basics', () => {
         testDb = getDatabase(':memory:');
     });
 
-    it('creates fetch_logs table and performance indexes', () => {
-        const tableInfo = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fetch_logs'").get();
-        assert.ok(tableInfo, 'fetch_logs table must exist');
+    it('creates fetch_logs, alert_logs, and monitor_cycle_logs tables', () => {
+        const fetchTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='fetch_logs'").get();
+        assert.ok(fetchTable, 'fetch_logs table must exist');
 
-        const indexes = testDb.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='fetch_logs'").all();
+        const alertTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='alert_logs'").get();
+        assert.ok(alertTable, 'alert_logs table must exist');
+
+        const cycleTable = testDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='monitor_cycle_logs'").get();
+        assert.ok(cycleTable, 'monitor_cycle_logs table must exist');
+
+        const indexes = testDb.prepare("SELECT name FROM sqlite_master WHERE type='index'").all();
         const indexNames = indexes.map(idx => idx.name);
         assert.ok(indexNames.includes('idx_fetch_logs_timestamp'));
-        assert.ok(indexNames.includes('idx_fetch_logs_endpoint'));
-        assert.ok(indexNames.includes('idx_fetch_logs_success'));
+        assert.ok(indexNames.includes('idx_alert_logs_timestamp'));
+        assert.ok(indexNames.includes('idx_monitor_cycle_logs_timestamp'));
     });
 
     it('extracts endpoint pathname from full URLs', () => {
@@ -38,7 +47,7 @@ describe('SQLite Log Database Schema & Basics', () => {
     });
 });
 
-describe('SQLite Fetch Logging Operations', () => {
+describe('SQLite Fetch & Telemetry Logging Operations', () => {
     let testDb;
 
     beforeEach(() => {
@@ -87,10 +96,50 @@ describe('SQLite Fetch Logging Operations', () => {
         assert.strictEqual(entry.errorMessage, 'HTTP error 404 when fetching resource');
     });
 
+    it('records severe weather alerts in alert_logs', () => {
+        const alertEntry = logAlert({
+            type: 'Tempestade',
+            severity: 'Perigo',
+            source: 'INMET',
+            affectedCities: ['Charqueadas', 'São Jerônimo'],
+            triggerReason: 'Ventos intensos e queda de granizo',
+            timeframe: '2026-08-21 00:00 -> 23:59',
+            details: 'Chuva entre 30 e 60 mm/h'
+        }, testDb);
+
+        assert.ok(alertEntry);
+        assert.strictEqual(alertEntry.eventType, 'Tempestade');
+        assert.strictEqual(alertEntry.severity, 'Perigo');
+        assert.strictEqual(alertEntry.affectedCities, 'Charqueadas, São Jerônimo');
+
+        const recentAlerts = getRecentAlertLogs({ limit: 10 }, testDb);
+        assert.strictEqual(recentAlerts.length, 1);
+        assert.strictEqual(recentAlerts[0].eventType, 'Tempestade');
+    });
+
+    it('records monitoring cycle execution in monitor_cycle_logs', () => {
+        const cycle = logMonitorCycle({
+            radiusKm: 50,
+            citiesCount: 20,
+            highRiskCount: 2,
+            durationMs: 340,
+            success: true
+        }, testDb);
+
+        assert.ok(cycle);
+        assert.strictEqual(cycle.radiusKm, 50);
+        assert.strictEqual(cycle.citiesCount, 20);
+        assert.strictEqual(cycle.highRiskCount, 2);
+        assert.strictEqual(cycle.success, 1);
+    });
+
     it('handles invalid or empty log input gracefully without crashing', () => {
         assert.strictEqual(logFetch(null, testDb), null);
         assert.strictEqual(logFetch({}, testDb), null);
         assert.strictEqual(logFetch({ url: '' }, testDb), null);
+        assert.strictEqual(logAlert(null, testDb), null);
+        assert.strictEqual(logAlert({}, testDb), null);
+        assert.strictEqual(logMonitorCycle(null, testDb), null);
     });
 });
 
@@ -129,6 +178,13 @@ describe('SQLite Querying & Aggregated Statistics', () => {
             errorMessage: 'Internal Server Error',
             timestamp: '2026-08-20T10:10:00.000Z'
         }, testDb);
+
+        logAlert({
+            type: 'Vendaval',
+            severity: 'Perigo Potencial',
+            source: 'INMET',
+            affectedCities: ['Charqueadas']
+        }, testDb);
     });
 
     it('getRecentFetchLogs returns paginated records in reverse chronological order', () => {
@@ -162,6 +218,7 @@ describe('SQLite Querying & Aggregated Statistics', () => {
         assert.strictEqual(stats.failedFetches, 1);
         assert.strictEqual(stats.avgDurationMs, 200); // (100 + 200 + 300) / 3
         assert.strictEqual(stats.totalResponseBytes, 4000); // 1000 + 3000
+        assert.strictEqual(stats.totalAlertsRecorded, 1);
         assert.strictEqual(stats.firstFetchAt, '2026-08-20T10:00:00.000Z');
         assert.strictEqual(stats.lastFetchAt, '2026-08-20T10:10:00.000Z');
     });
