@@ -21,11 +21,13 @@ ifsul/weather/
 │   └── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
+│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
 │   ├── monitor_service.js            # Long-running service triggered by npm start for 24h risk monitoring
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
     ├── inmet_client.test.js          # Unit tests for INMET client
+    ├── log_database.test.js          # Unit tests for SQLite log database
     └── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
 ```
 
@@ -61,7 +63,13 @@ docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_
 docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
 ```
 
-### 4. Running Unit Tests
+### 4. Inspect SQLite API Fetch Logs & Telemetry
+```bash
+# View recent fetch logs, response times, payload sizes, and aggregate metrics:
+docker run --rm -v $(pwd):/app -w /app node:26-alpine npm run db:logs
+```
+
+### 5. Running Unit Tests
 ```bash
 docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 ```
