@@ -4,6 +4,8 @@
  * @module inmetClient
  */
 
+import { logFetch } from './log_database.js';
+
 export const CHARQUEADAS_IBGE_CODE = process.env.CHARQUEADAS_IBGE_CODE || '4305355';
 export const BASE_PREVMET_URL = process.env.INMET_PREVMET_URL || 'https://apiprevmet3.inmet.gov.br';
 export const BASE_TEMPO_URL = process.env.INMET_TEMPO_URL || 'https://apitempo.inmet.gov.br';
@@ -58,17 +60,76 @@ export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [
 export const CHARQUEADAS_SURROUNDING_CITIES = CHARQUEADAS_SURROUNDING_CITIES_100KM;
 
 /**
- * Performs an HTTP GET request with standard headers and returns parsed JSON.
+ * Performs an HTTP GET request with standard headers, logs request and response metadata
+ * to SQLite, and returns parsed JSON.
  * 
  * @param {string} url - The target URL to fetch.
+ * @param {object} [options]
+ * @param {boolean} [options.log=true] - Whether to record this fetch into SQLite.
+ * @param {object} [options.db] - Optional custom SQLite database instance.
  * @returns {Promise<any>} The parsed JSON payload.
  */
-export async function httpGet(url) {
-    const response = await fetch(url, { headers: HEADERS });
-    if (!response.ok) {
-        throw new Error(`HTTP error ${response.status} when fetching ${url}`);
+export async function httpGet(url, { log = true, db = null } = {}) {
+    const startTime = Date.now();
+    try {
+        const response = await fetch(url, { headers: HEADERS });
+        const durationMs = Date.now() - startTime;
+
+        if (!response.ok) {
+            const errorMsg = `HTTP error ${response.status} when fetching ${url}`;
+            if (log) {
+                logFetch({
+                    url,
+                    statusCode: response.status,
+                    durationMs,
+                    success: 0,
+                    errorMessage: errorMsg
+                }, db);
+            }
+            throw new Error(errorMsg);
+        }
+
+        const data = await response.json();
+
+        if (log) {
+            let responseSizeBytes = null;
+            try {
+                const jsonStr = JSON.stringify(data);
+                responseSizeBytes = Buffer.byteLength(jsonStr, 'utf8');
+            } catch {}
+
+            let itemCount = null;
+            if (Array.isArray(data)) {
+                itemCount = data.length;
+            } else if (data && typeof data === 'object') {
+                itemCount = Object.keys(data).length;
+            }
+
+            logFetch({
+                url,
+                statusCode: response.status,
+                durationMs,
+                success: 1,
+                responseSizeBytes,
+                itemCount,
+                errorMessage: null
+            }, db);
+        }
+
+        return data;
+    } catch (err) {
+        const durationMs = Date.now() - startTime;
+        if (log && !err.message?.startsWith('HTTP error')) {
+            logFetch({
+                url,
+                statusCode: null,
+                durationMs,
+                success: 0,
+                errorMessage: err.message
+            }, db);
+        }
+        throw err;
     }
-    return await response.json();
 }
 
 /**
