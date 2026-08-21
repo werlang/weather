@@ -174,18 +174,19 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
  */
 export function startMonitoringService(options = {}) {
     const config = parseMonitorConfig();
-    const radiusKm = options.radiusKm || config.radiusKm;
-    const intervalMs = options.intervalMs || config.intervalMs;
+    let currentRadiusKm = options.radiusKm || config.radiusKm;
+    let currentIntervalMs = options.intervalMs || config.intervalMs;
     const alertCallback = options.alertCallback || onHighRiskEventDetected;
     const registerSignalHandlers = options.registerSignalHandlers !== false;
-    const intervalMins = Math.round((intervalMs / (60 * 1000)) * 100) / 100;
+    let alertPolicy = options.alertPolicy || 'SCHOOL_DEFESA_ORANGE_INMET_RED';
+    const intervalMins = Math.round((currentIntervalMs / (60 * 1000)) * 100) / 100;
 
     console.log('='.repeat(80));
     console.log(' SERVIÇO CONTINUO DE MONITORAMENTO DE RISCOS METEOROLÓGICOS (NODE 26)');
     console.log('='.repeat(80));
     console.log(` • Ponto Central:           Charqueadas - RS`);
-    console.log(` • Raio Regional:           ${radiusKm} km`);
-    console.log(` • Intervalo de Verificação: A cada ${intervalMins} min (${intervalMs} ms)`);
+    console.log(` • Raio Regional:           ${currentRadiusKm} km`);
+    console.log(` • Intervalo de Verificação: A cada ${intervalMins} min (${currentIntervalMs} ms)`);
     console.log(` • Janela de Alerta:        Próximas 24 Horas`);
     console.log(` • Status:                  ATIVO E AGUARDANDO CICLOS`);
     console.log('='.repeat(80));
@@ -197,7 +198,7 @@ export function startMonitoringService(options = {}) {
         if (isRunning) return;
         isRunning = true;
         try {
-            await performRegionalRiskMonitoring({ radiusKm, alertCallback });
+            await performRegionalRiskMonitoring({ radiusKm: currentRadiusKm, alertCallback });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);
         } finally {
@@ -205,16 +206,43 @@ export function startMonitoringService(options = {}) {
         }
     }
 
+    function rescheduleTimer() {
+        if (timerId) clearInterval(timerId);
+        timerId = setInterval(cycle, currentIntervalMs);
+    }
+
     // Primeira execução imediata
     cycle();
-
-    // Agendamento periódico contínuo
-    timerId = setInterval(cycle, intervalMs);
+    rescheduleTimer();
 
     // Encerramento gracioso para contêineres Docker e sinais de processo.
     const stop = () => {
         if (timerId) clearInterval(timerId);
     };
+
+    const updateConfig = ({ radiusKm, intervalMinutes, intervalMs, policy }) => {
+        if (typeof radiusKm === 'number' && radiusKm > 0) {
+            currentRadiusKm = radiusKm;
+        }
+        if (typeof intervalMinutes === 'number' && intervalMinutes > 0) {
+            currentIntervalMs = Math.round(intervalMinutes * 60 * 1000);
+            rescheduleTimer();
+        } else if (typeof intervalMs === 'number' && intervalMs >= 1000) {
+            currentIntervalMs = intervalMs;
+            rescheduleTimer();
+        }
+        if (policy) {
+            alertPolicy = policy;
+        }
+        return getConfig();
+    };
+
+    const getConfig = () => ({
+        radiusKm: currentRadiusKm,
+        intervalMs: currentIntervalMs,
+        intervalMinutes: Math.round((currentIntervalMs / (60 * 1000)) * 100) / 100,
+        alertPolicy
+    });
 
     if (registerSignalHandlers) {
         const cleanup = () => {
@@ -226,7 +254,7 @@ export function startMonitoringService(options = {}) {
         process.on('SIGTERM', cleanup);
     }
 
-    return { timerId, stop };
+    return { timerId, stop, updateConfig, getConfig, cycle };
 }
 
 // Executa o serviço diretamente se o script for chamado como módulo principal

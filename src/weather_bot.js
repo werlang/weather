@@ -27,11 +27,15 @@ export async function startWeatherBot({ env = process.env, logger = console, tel
         logger
     });
 
-    createWeatherTelegramBot({ telegram: telegramClient, logger });
-
     const monitor = startMonitoringService({
         alertCallback: createTelegramAlertCallback({ telegram: telegramClient, logger }),
         registerSignalHandlers: false
+    });
+
+    createWeatherTelegramBot({
+        telegram: telegramClient,
+        monitorService: monitor,
+        logger
     });
 
     const stop = signal => {

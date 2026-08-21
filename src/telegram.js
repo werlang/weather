@@ -1,4 +1,6 @@
-import { Bot } from 'grammy';
+import { Bot, InlineKeyboard } from 'grammy';
+
+export { InlineKeyboard };
 
 /** Telegram's documented maximum text-message size. */
 export const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
@@ -132,6 +134,24 @@ export class TelegramBotClient {
      */
     onText(handler) {
         this.bot.on('message:text', handler);
+        return this;
+    }
+
+    /**
+     * Registers a callback query (inline button click) handler on the wrapped bot.
+     *
+     * @param {string|RegExp|Function} [filter] - Pattern or handler function.
+     * @param {Function} [handler] - Handler function when filter is a pattern.
+     * @returns {TelegramBotClient} This client for composition.
+     */
+    onCallbackQuery(filter, handler) {
+        if (typeof filter === 'function') {
+            this.bot.on('callback_query:data', filter);
+        } else if (typeof this.bot.callbackQuery === 'function') {
+            this.bot.callbackQuery(filter, handler);
+        } else {
+            this.bot.on('callback_query:data', handler || filter);
+        }
         return this;
     }
 
