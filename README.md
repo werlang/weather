@@ -112,8 +112,18 @@ GET https://apitempo.inmet.gov.br/estacoes/T
 
 ---
 
-## 📚 Documentation Links
+## 📚 Documentation & Agent Links
+* [Master Agent Guide (AGENTS.md)](AGENTS.md)
+* [Gemini / Antigravity Agent Rules (GEMINI.md)](GEMINI.md)
 * [INMET API Technical Documentation](docs/INMET_API_DOCUMENTATION.md)
 * [Defesa Civil RS Hydrometeorological Network API Documentation](docs/DEFESA_CIVIL_RS_API_DOCUMENTATION.md)
 * [Meteorological Risk Situations Guide](docs/METEOROLOGICAL_RISKS_GUIDE.md)
 * [Telegram Bot Capabilities and Scope](docs/TELEGRAM_BOT_SCOPE.md)
+
+### 🧰 Specialized Agent Skills
+* [`inmet-weather-monitor`](.agents/skills/inmet-weather-monitor/SKILL.md) — INMET API, 5-day forecasts, severe alerts & 24h risk engine
+* [`defesa-civil-rs-telemetry`](.agents/skills/defesa-civil-rs-telemetry/SKILL.md) — Defesa Civil RS GraphQL telemetry & river monitoring
+* [`telegram-weather-bot`](.agents/skills/telegram-weather-bot/SKILL.md) — grammY bot lifecycle, message chunking & admin delivery
+* [`weather-test-delivery`](.agents/skills/weather-test-delivery/SKILL.md) — Localized TDD & unit testing (Node 26 + Docker)
+* [`weather-code-quality-and-ops`](.agents/skills/weather-code-quality-and-ops/SKILL.md) — Docker Compose runbooks & KISS/YAGNI architecture
+
