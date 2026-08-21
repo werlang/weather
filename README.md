@@ -18,34 +18,49 @@ ifsul/weather/
 ├── docs/
 │   ├── INMET_API_DOCUMENTATION.md          # Detailed API reference for INMET endpoints
 │   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # Detailed GraphQL & WebSocket API reference for Defesa Civil RS
-│   └── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
+│   ├── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
+│   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
 │   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
-│   ├── monitor_service.js            # Long-running service triggered by npm start for 24h risk monitoring
+│   ├── monitor_service.js            # Long-running 24h risk monitoring service
+│   ├── telegram.js                   # grammY wrapper and administrator delivery client
+│   ├── telegram_bot.js                # Telegram commands, authorization, and alert formatting
+│   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
     ├── inmet_client.test.js          # Unit tests for INMET client
-    └── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
+    ├── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
+    └── telegram.test.js               # Unit tests for Telegram config, delivery, and commands
 ```
 
 ---
 
 ## 🚀 Quick Start (Running via Docker Compose & Node 26)
 
-### 1. Run Continuous Regional Monitoring Service (`npm start`)
+### 1. Run the canonical Telegram monitoring service (`npm start`)
 ```bash
-# Starts long-running service with continuous regional risk monitoring
+# Copy the template and provide TELEGRAM_BOT_TOKEN plus TELEGRAM_ADMIN_CHAT_ID.
+cp .env.example .env
+
+# Starts long-running regional monitoring with Telegram alert delivery.
 npm start
 # or via Docker Compose
 docker compose up --build
 ```
 
 Configurable via `.env`:
+- `TELEGRAM_BOT_TOKEN`: Token issued by Telegram's BotFather.
+- `TELEGRAM_ADMIN_CHAT_ID`: One or more authorized chat IDs, comma-separated.
 - `MONITOR_INTERVAL_MINUTES`: Interval between checks (default: `15` minutes)
 - `RADIUS_KM`: Regional monitoring radius in kilometers (default: `50` km)
 
-When a high-risk meteorological event is detected in the next 24h window, it executes the placeholder function `onHighRiskEventDetected(highRiskEvents)` in `src/monitor_service.js`.
+When a high-risk meteorological event is detected in the next 24h window, the
+service logs it and sends the formatted alert to every configured administrator.
+See [Telegram Bot Capabilities and Scope](docs/TELEGRAM_BOT_SCOPE.md) for the
+registration flow and explicit non-goals.
+
+For console-only diagnostics, use `npm run monitor:console`.
 
 ### 2. Run Development Stack
 ```bash
@@ -101,4 +116,4 @@ GET https://apitempo.inmet.gov.br/estacoes/T
 * [INMET API Technical Documentation](docs/INMET_API_DOCUMENTATION.md)
 * [Defesa Civil RS Hydrometeorological Network API Documentation](docs/DEFESA_CIVIL_RS_API_DOCUMENTATION.md)
 * [Meteorological Risk Situations Guide](docs/METEOROLOGICAL_RISKS_GUIDE.md)
-
+* [Telegram Bot Capabilities and Scope](docs/TELEGRAM_BOT_SCOPE.md)
