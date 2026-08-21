@@ -13,7 +13,7 @@ import { onHighRiskEventDetected, parseMonitorConfig } from './monitor_service.j
 import { getDefesaCivilTelemetry, REGIONAL_STATIONS } from './defesa_civil_client.js';
 import { getSurroundingCities, getRegionalRiskWarnings, getAlertEmoji } from './inmet_client.js';
 import { getFetchStats } from './log_database.js';
-import { normalizeSeverityTier } from './risk_analyzer.js';
+
 
 /**
  * Unicode visual divider constants for high-contrast card UI.
@@ -70,12 +70,13 @@ export const DEFESA_CIVIL_SEVERITY_OPTIONS = [
  * @returns {string}
  */
 export function getTierBadge(tier) {
-    const normalized = normalizeSeverityTier(tier);
+    const normalized = String(tier || '').toUpperCase();
     if (normalized === 'RED') return '🔴 Vermelho (Grande Perigo)';
     if (normalized === 'ORANGE') return '🟠 Laranja (Alerta / Perigo)';
     if (normalized === 'YELLOW') return '🟡 Amarelo (Atenção / Potencial)';
     return '🚫 Desativado';
 }
+
 
 /**
  * Standard Telegram Bot command menu definition for autocomplete.
@@ -1089,11 +1090,9 @@ export const buildMainMenuKeyboard = WeatherTelegramBot.buildMainMenuKeyboard;
 export const buildSettingsKeyboard = WeatherTelegramBot.buildSettingsKeyboard;
 export const buildIntervalKeyboard = WeatherTelegramBot.buildIntervalKeyboard;
 export const buildRadiusKeyboard = WeatherTelegramBot.buildRadiusKeyboard;
-export const buildAlertLevelKeyboard = WeatherTelegramBot.buildAlertLevelKeyboard;
 export const buildInmetLevelKeyboard = WeatherTelegramBot.buildInmetLevelKeyboard;
 export const buildDefesaCivilLevelKeyboard = WeatherTelegramBot.buildDefesaCivilLevelKeyboard;
 export const buildAlertActionKeyboard = WeatherTelegramBot.buildAlertActionKeyboard;
-
 
 export const renderMainMenu = (config) => {
     const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
@@ -1113,3 +1112,4 @@ export const renderInmetWarningsReport = (radiusKm) => {
     const bot = new WeatherTelegramBot({ telegram: { isAdminChat: () => true, onCommand() {}, onCallbackQuery() {}, onText() {}, onError() {} } });
     return bot.renderInmetWarningsReport(radiusKm);
 };
+
