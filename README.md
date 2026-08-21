@@ -21,6 +21,8 @@ ifsul/weather/
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
 │   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
 ├── database/
+│   ├── driver.js                     # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│   ├── index.js                      # Database module public exports
 │   └── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
 ├── src/
 │   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
@@ -31,6 +33,7 @@ ifsul/weather/
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/
+    ├── database_driver.test.js       # Unit tests for SQLite query-builder & CRUD driver
     ├── inmet_client.test.js          # Unit tests for INMET client
     ├── log_database.test.js          # Unit tests for SQLite log database
     ├── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
