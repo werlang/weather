@@ -57,8 +57,8 @@ export function parseMonitorConfig() {
 }
 
 /**
- * Função de Gatilho / Placeholder para Eventos de Alto Risco nas Próximas 24 Horas.
- * Chamada automaticamente quando um evento severo é detectado na janela de monitoramento.
+ * Relata no console os eventos de alto risco detectados nas próximas 24 horas.
+ * A entrega em Telegram é adicionada pelo callback composto do bot.
  * 
  * @param {Array<object>} highRiskEvents - Lista de eventos de alto risco detectados.
  */
@@ -82,18 +82,6 @@ export function onHighRiskEventDetected(highRiskEvents) {
         console.log('-'.repeat(80));
     });
 
-    /**
-     * =========================================================================
-     * PLACEHOLDER DE ALERTA E INTEGRAÇÕES FUTURAS
-     * =========================================================================
-     * Esta função pode ser estendida para disparar notificações em tempo real:
-     * 
-     *  - Webhooks de comunicação (Slack, Discord, Microsoft Teams)
-     *  - Serviços de SMS e Notificações Push (Twilio, Firebase SNS)
-     *  - Mensagens diretas via WhatsApp API ou Telegram Bot
-     *  - Disparo de sirenes ou comunicação direta com Defesa Civil local
-     * =========================================================================
-     */
 }
 
 /**
@@ -123,7 +111,7 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
 
         if (highRiskEvents.length > 0) {
             if (typeof alertCallback === 'function') {
-                alertCallback(highRiskEvents);
+                await alertCallback(highRiskEvents);
             }
         } else {
             console.log(`[${timestamp}] 🟢 Nenhum evento de alto risco detectado para as próximas 24 horas.`);
@@ -146,11 +134,16 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
  * @param {object} options
  * @param {number} [options.intervalMs] - Intervalo em milissegundos.
  * @param {number} [options.radiusKm] - Raio regional em KM.
+ * @param {function} [options.alertCallback] - Callback customizado para alertas.
+ * @param {boolean} [options.registerSignalHandlers=true] - Registra encerramento
+ *   gracioso no processo atual.
  */
 export function startMonitoringService(options = {}) {
     const config = parseMonitorConfig();
     const radiusKm = options.radiusKm || config.radiusKm;
     const intervalMs = options.intervalMs || config.intervalMs;
+    const alertCallback = options.alertCallback || onHighRiskEventDetected;
+    const registerSignalHandlers = options.registerSignalHandlers !== false;
     const intervalMins = Math.round((intervalMs / (60 * 1000)) * 100) / 100;
 
     console.log('='.repeat(80));
@@ -170,7 +163,7 @@ export function startMonitoringService(options = {}) {
         if (isRunning) return;
         isRunning = true;
         try {
-            await performRegionalRiskMonitoring({ radiusKm });
+            await performRegionalRiskMonitoring({ radiusKm, alertCallback });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);
         } finally {
@@ -184,17 +177,22 @@ export function startMonitoringService(options = {}) {
     // Agendamento periódico contínuo
     timerId = setInterval(cycle, intervalMs);
 
-    // Encerramento gracioso para contêineres Docker e sinais de processo
-    const cleanup = () => {
-        console.log('\n🛑 Encerrando serviço de monitoramento...');
+    // Encerramento gracioso para contêineres Docker e sinais de processo.
+    const stop = () => {
         if (timerId) clearInterval(timerId);
-        process.exit(0);
     };
 
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
+    if (registerSignalHandlers) {
+        const cleanup = () => {
+            console.log('\n🛑 Encerrando serviço de monitoramento...');
+            stop();
+            process.exit(0);
+        };
+        process.on('SIGINT', cleanup);
+        process.on('SIGTERM', cleanup);
+    }
 
-    return { timerId, stop: cleanup };
+    return { timerId, stop };
 }
 
 // Executa o serviço diretamente se o script for chamado como módulo principal
