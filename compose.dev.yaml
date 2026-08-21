@@ -9,7 +9,8 @@ services:
         volumes:
             - .:/app
             - node_modules_app:/app/node_modules
-        command: sleep infinity
+        command: npm start
+        # command: sleep infinity
         networks:
             - weather
 
