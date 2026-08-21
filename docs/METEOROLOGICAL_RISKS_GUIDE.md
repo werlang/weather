@@ -25,16 +25,13 @@ INMET classifies meteorological risk situations into three primary severity leve
 
 ---
 
-## 3. Calibrated Thresholds for School Cancellation Advisory
+## 3. High-Priority Alert Policy: Orange for Defesa Civil OR Red with INMET
 
-To prevent alert fatigue and false positives from routine winter weather, the automated monitoring engine filters and reports high-priority alerts based on physical safety and school transport disruption criteria:
+To ensure school administrators receive actionable notifications strictly when class cancellation or remote operations are warranted, the system enforces:
 
-* **⚡ Severe Storms & Torrents:** Forecasts or warnings for `"tempestade"`, `"temporal"`, `"trovoadas com pancadas"` or hail + heavy rain.
-* **💨 Destructive Wind & Cyclones:** Winds $\ge 80\text{--}100\text{ km/h}$, extratropical cyclones, or `"vendaval"`.
-* **❄️ Catastrophic Freezing & Snow:** Sub-zero temperatures ($T_{\min} \le 0^\circ\text{C}$), black ice, or freezing rain. *(Routine winter frost at $2^\circ\text{C}\text{--}4^\circ\text{C}$ is classified as Moderate/Informative and does not trigger class suspension alarms)*.
-* **🔥 Extreme Heatwave:** Maximum temperatures $T_{\max} \ge 40^\circ\text{C}$ posing thermal exhaustion risks in unconditioned classrooms.
-* **🏜️ Critical Low Humidity:** Minimum relative humidity $RH_{\min} \le 12\%$ (Civil Defense health emergency level).
-* **🌊 Hydrometric Flood Warning:** Rapid Jacuí river level surges or flash flood warnings.
+1. **🔴 INMET Warnings:** Triggered strictly on **`Grande Perigo` (`#FF0000` / Red)**. *(INMET Orange and Yellow are treated as advisory and do not dispatch high-priority alarms alone)*.
+2. **🟠 Defesa Civil RS Telemetry & Warnings:** Triggered on **`Alerta` (Orange)** and **`Alerta Máximo` (Red)** (Rain $\ge 20\text{ mm/15min}$ or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or rapid Jacuí river rise $\ge 0.25\text{ m/h}$).
+3. **🔴 24h Extreme Forecasts:** Triggered on extreme conditions ($T_{\min} \le 0^\circ\text{C}$ sub-zero freezing/black ice, $T_{\max} \ge 40^\circ\text{C}$, severe storms with cyclone/hail, or $RH_{\min} \le 12\%$).
 
 ---
 

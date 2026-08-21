@@ -13,6 +13,8 @@ import {
     getRegionalForecasts
 } from './inmet_client.js';
 
+import { getDefesaCivilTelemetry } from './defesa_civil_client.js';
+
 import {
     parseRadiusArg,
     parseForecastDate,
@@ -101,12 +103,17 @@ export async function performRegionalRiskMonitoring({ radiusKm = 50, alertCallba
 
     try {
         const cities = await getSurroundingCities(radiusKm);
-        const { regionalWarnings } = await getRegionalRiskWarnings(cities);
-        const regionalForecasts = await getRegionalForecasts(cities);
+        const [warningsResult, regionalForecasts, defesaCivilTelemetry] = await Promise.all([
+            getRegionalRiskWarnings(cities),
+            getRegionalForecasts(cities),
+            getDefesaCivilTelemetry().catch(() => [])
+        ]);
+        const { regionalWarnings } = warningsResult;
 
         const highRiskEvents = evaluateHighRisksIn24hWindow({
             regionalWarnings,
             regionalForecasts,
+            defesaCivilTelemetry,
             now: new Date()
         });
 
