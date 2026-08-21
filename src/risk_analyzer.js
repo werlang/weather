@@ -1,15 +1,38 @@
 /**
  * Módulo Compartilhado de Análise de Riscos Meteorológicos.
  * Fornece métodos calibrados para identificação de eventos meteorológicos severos
- * com base na regra de disparo:
- * - 🔴 VERMELHO (Grande Perigo) para INMET
- * - 🟠 LARANJA (Alerta / Risco Severo) ou 🔴 VERMELHO (Alerta Máximo) para DEFESA CIVIL RS
+ * com suporte a níveis de severidade independentes para cada instituto (INMET e DEFESA CIVIL RS).
  * 
  * @module riskAnalyzer
  */
 
 import { getAlertEmoji } from './inmet_client.js';
 import { evaluateDefesaCivilRisks } from './defesa_civil_client.js';
+
+/**
+ * Severity ranking map for comparison.
+ * OFF: 0, YELLOW: 1, ORANGE: 2, RED: 3
+ */
+export const SEVERITY_LEVELS = {
+    OFF: 0,
+    YELLOW: 1,
+    ORANGE: 2,
+    RED: 3
+};
+
+/**
+ * Normalizes input severity strings to canonical uppercase tiers.
+ * 
+ * @param {string|number} tier - Input tier representation.
+ * @returns {'OFF' | 'YELLOW' | 'ORANGE' | 'RED'}
+ */
+export function normalizeSeverityTier(tier) {
+    const upper = String(tier || '').toUpperCase().trim();
+    if (upper === 'RED' || upper === 'VERMELHO' || upper === 'GRANDE PERIGO' || upper === 'EXTREMO') return 'RED';
+    if (upper === 'ORANGE' || upper === 'LARANJA' || upper === 'PERIGO' || upper === 'ALERTA') return 'ORANGE';
+    if (upper === 'YELLOW' || upper === 'AMARELO' || upper === 'PERIGO POTENCIAL' || upper === 'ATENCAO' || upper === 'ATENÇÃO') return 'YELLOW';
+    return 'OFF';
+}
 
 /**
  * Processa argumentos da linha de comando e variáveis de ambiente para obter o raio regional em KM.
@@ -60,7 +83,6 @@ export function parseForecastDate(dateStr) {
 
 /**
  * Analisa os parâmetros de previsão meteorológica de um período/dia.
- * Classifica os riscos com base no limiar de eventos de alto impacto.
  * 
  * @param {Record<string, any>} forecastDay - Dados de previsão.
  * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string }>}
@@ -90,7 +112,7 @@ export function analyzeForecastRisks(forecastDay) {
         });
     }
 
-    // 2. Frio Extremo / Congelamento / Neve (Critério Vermelho: Tmin <= 0°C com congelamento)
+    // 2. Frio Extremo / Congelamento / Neve
     if (summary.includes('neve') || summary.includes('chuva congelada') || (tempMin !== undefined && tempMin <= 0)) {
         risks.push({
             type: 'Frio Extremo / Risco de Congelamento',
@@ -111,7 +133,7 @@ export function analyzeForecastRisks(forecastDay) {
         });
     }
 
-    // 3. Onda de Calor Extrema (Critério Vermelho: Tmax >= 40°C)
+    // 3. Onda de Calor Extrema
     if (tempMax !== undefined && tempMax >= 40) {
         risks.push({
             type: 'Onda de Calor Extrema / Risco à Saúde',
@@ -160,122 +182,128 @@ export function analyzeForecastRisks(forecastDay) {
 }
 
 /**
- * Avalia fontes de risco meteorológico (INMET e Defesa Civil RS) na janela de 24 horas.
- * 
- * Regra de Disparo:
- * - 🔴 INMET: Apenas avisos VERMELHOS (Grande Perigo / #FF0000 / Extremo).
- * - 🟠 DEFESA CIVIL RS: Avisos e telemetria LARANJA (Alerta / Risco Severo) ou VERMELHO (Alerta Máximo).
- * - 🔴 PREVISÕES DIÁRIAS: Apenas anomalias extremas (Tmin <= 0°C com congelamento, Tmax >= 40°C, ciclone).
+ * Avalia fontes de risco meteorológico com níveis de severidade independentes para cada instituto.
  * 
  * @param {object} params
  * @param {Array<object>} [params.regionalWarnings] - Avisos ativos do INMET.
  * @param {Array<object>} [params.regionalForecasts] - Previsões por município.
  * @param {Array<object>} [params.defesaCivilTelemetry] - Dados de telemetria da Defesa Civil RS.
+ * @param {'RED' | 'ORANGE' | 'YELLOW' | 'OFF'} [params.inmetMinSeverity='RED'] - Nível mínimo para alertas INMET.
+ * @param {'RED' | 'ORANGE' | 'YELLOW' | 'OFF'} [params.defesaCivilMinSeverity='ORANGE'] - Nível mínimo para Defesa Civil RS.
+ * @param {string} [params.alertPolicy] - Preset de compatibilidade ('school', 'red_only', 'all').
  * @param {Date} [params.now] - Data/hora de referência.
- * @returns {Array<object>} Lista de eventos de alto risco que disparam alertas.
+ * @returns {Array<object>} Lista de eventos de risco que atingiram o limiar configurado.
  */
 export function evaluateHighRisksIn24hWindow({
     regionalWarnings = [],
     regionalForecasts = [],
     defesaCivilTelemetry = [],
-    alertPolicy = 'school',
+    inmetMinSeverity = 'RED',
+    defesaCivilMinSeverity = 'ORANGE',
+    alertPolicy = null,
     now = new Date()
 }) {
+    // Se preset legado informado, mapeia para os níveis independentes
+    let inmetLevel = inmetMinSeverity;
+    let dcLevel = defesaCivilMinSeverity;
+    if (alertPolicy === 'school') {
+        inmetLevel = 'RED';
+        dcLevel = 'ORANGE';
+    } else if (alertPolicy === 'red_only') {
+        inmetLevel = 'RED';
+        dcLevel = 'RED';
+    } else if (alertPolicy === 'all') {
+        inmetLevel = 'YELLOW';
+        dcLevel = 'YELLOW';
+    }
+
+    const inmetRank = SEVERITY_LEVELS[normalizeSeverityTier(inmetLevel)] ?? SEVERITY_LEVELS.RED;
+    const dcRank = SEVERITY_LEVELS[normalizeSeverityTier(dcLevel)] ?? SEVERITY_LEVELS.ORANGE;
+
     const highRiskEvents = [];
     const windowStart = now.getTime();
     const windowEnd = now.getTime() + (24 * 60 * 60 * 1000); // 24 horas
 
-    // 1. Filtrar Avisos Oficiais do INMET com base na política configurada
-    for (const warning of regionalWarnings) {
-        const severidade = String(warning.severidade || '').toLowerCase();
-        const avisoCor = String(warning.aviso_cor || '').toUpperCase();
+    // 1. Filtrar Avisos Oficiais do INMET conforme inmetMinSeverity
+    if (inmetRank > 0) {
+        for (const warning of regionalWarnings) {
+            const severidade = String(warning.severidade || '').toLowerCase();
+            const avisoCor = String(warning.aviso_cor || '').toUpperCase();
 
-        const isRedAlert = avisoCor === '#FF0000' ||
-            severidade.includes('grande perigo') ||
-            severidade.includes('extremo') ||
-            severidade.includes('vermelho');
+            let warningTier = 'YELLOW';
+            if (avisoCor === '#FF0000' || severidade.includes('grande perigo') || severidade.includes('extremo')) {
+                warningTier = 'RED';
+            } else if (avisoCor === '#F96602' || (severidade.includes('perigo') && !severidade.includes('potencial'))) {
+                warningTier = 'ORANGE';
+            }
 
-        const isOrangeAlert = avisoCor === '#F96602' ||
-            (severidade.includes('perigo') && !severidade.includes('potencial'));
-
-        const isYellowAlert = avisoCor === '#FFFE00' ||
-            severidade.includes('potencial') ||
-            severidade.includes('moderado');
-
-        let matchesPolicy = false;
-        if (alertPolicy === 'all') {
-            matchesPolicy = isRedAlert || isOrangeAlert || isYellowAlert;
-        } else {
-            // 'school' e 'red_only' exigem estritamente VERMELHO no INMET
-            matchesPolicy = isRedAlert;
-        }
-
-        if (matchesPolicy) {
-            const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
-            highRiskEvents.push({
-                source: 'INMET_OFFICIAL_WARNING',
-                type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
-                severity: warning.severidade || (isRedAlert ? 'Grande Perigo' : (isOrangeAlert ? 'Perigo' : 'Perigo Potencial')),
-                colorTier: isRedAlert ? 'RED' : (isOrangeAlert ? 'ORANGE' : 'YELLOW'),
-                emoji: getAlertEmoji(warning),
-                affectedCities: warning.affectedRegionalCities || [],
-                timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
-                details: risksText || 'Aviso oficial emitido pelo INMET.',
-                triggerReason: `INMET ${isRedAlert ? '🔴 Grande Perigo' : (isOrangeAlert ? '🟠 Perigo' : '🟡 Perigo Potencial')} emitido para a região.`
-            });
-        }
-    }
-
-    // 2. Avaliar Telemetria e Alertas da DEFESA CIVIL RS
-    if (Array.isArray(defesaCivilTelemetry) && defesaCivilTelemetry.length > 0) {
-        const dcRisks = evaluateDefesaCivilRisks(defesaCivilTelemetry);
-        for (const dcr of dcRisks) {
-            if (alertPolicy === 'all') {
-                highRiskEvents.push(dcr);
-            } else if (alertPolicy === 'school') {
-                // 'school' aceita Laranja (Alerta) e Vermelho (Alerta Máximo)
-                if (dcr.colorTier === 'ORANGE' || dcr.colorTier === 'RED') {
-                    highRiskEvents.push(dcr);
-                }
-            } else if (alertPolicy === 'red_only') {
-                // 'red_only' aceita estritamente Vermelho
-                if (dcr.colorTier === 'RED') {
-                    highRiskEvents.push(dcr);
-                }
+            const warningRank = SEVERITY_LEVELS[warningTier] || 1;
+            if (warningRank >= inmetRank) {
+                const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
+                highRiskEvents.push({
+                    source: 'INMET_OFFICIAL_WARNING',
+                    type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
+                    severity: warning.severidade || (warningTier === 'RED' ? 'Grande Perigo' : (warningTier === 'ORANGE' ? 'Perigo' : 'Perigo Potencial')),
+                    colorTier: warningTier,
+                    emoji: getAlertEmoji(warning),
+                    affectedCities: warning.affectedRegionalCities || [],
+                    timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
+                    details: risksText || 'Aviso oficial emitido pelo INMET.',
+                    triggerReason: `INMET (${warning.severidade || warningTier}) ativo na região.`
+                });
             }
         }
     }
 
-    // 3. Analisar Previsões nos Municípios para a janela de 24h (Critérios Severos de Aulas)
-    for (const cityData of regionalForecasts) {
-        const cityName = cityData.name;
-        const forecast = cityData.forecast || {};
+    // 2. Avaliar Telemetria e Alertas da DEFESA CIVIL RS conforme defesaCivilMinSeverity
+    if (dcRank > 0 && Array.isArray(defesaCivilTelemetry) && defesaCivilTelemetry.length > 0) {
+        const dcRisks = evaluateDefesaCivilRisks(defesaCivilTelemetry);
+        for (const dcr of dcRisks) {
+            const dcrRank = SEVERITY_LEVELS[dcr.colorTier] || 2;
+            if (dcrRank >= dcRank) {
+                highRiskEvents.push(dcr);
+            }
+        }
+    }
 
-        for (const [dateStr, dayData] of Object.entries(forecast)) {
-            const forecastDate = parseForecastDate(dateStr);
-            if (!forecastDate) continue;
+    // 3. Analisar Previsões nos Municípios para a janela de 24h
+    if (inmetRank > 0) {
+        for (const cityData of regionalForecasts) {
+            const cityName = cityData.name;
+            const forecast = cityData.forecast || {};
 
-            const dayStart = forecastDate.getTime();
-            const dayEnd = dayStart + (24 * 60 * 60 * 1000) - 1;
-            const overlaps24hWindow = (dayStart <= windowEnd && dayEnd >= windowStart);
+            for (const [dateStr, dayData] of Object.entries(forecast)) {
+                const forecastDate = parseForecastDate(dateStr);
+                if (!forecastDate) continue;
 
-            if (overlaps24hWindow) {
-                const period = dayData.manha ? dayData.manha : dayData;
-                const risks = analyzeForecastRisks(period);
-                const highRisks = risks.filter(r => r.severity === 'HIGH');
+                const dayStart = forecastDate.getTime();
+                const dayEnd = dayStart + (24 * 60 * 60 * 1000) - 1;
+                const overlaps24hWindow = (dayStart <= windowEnd && dayEnd >= windowStart);
 
-                for (const r of highRisks) {
-                    highRiskEvents.push({
-                        source: 'FORECAST_ANALYSIS',
-                        type: r.type,
-                        severity: 'HIGH (Red Equivalent)',
-                        colorTier: 'RED',
-                        emoji: '🔴',
-                        affectedCities: [cityName],
-                        timeframe: `Janela de 24h (${dateStr})`,
-                        details: `${r.detail} em ${cityName}`,
-                        triggerReason: `Métrica da previsão meteorológica para ${cityName} atingiu o limiar crítico de suspensão de aulas (${r.detail}).`
+                if (overlaps24hWindow) {
+                    const period = dayData.manha ? dayData.manha : dayData;
+                    const risks = analyzeForecastRisks(period);
+
+                    const matchingRisks = risks.filter(r => {
+                        if (r.severity === 'HIGH') return inmetRank <= SEVERITY_LEVELS.RED;
+                        if (r.severity === 'MODERATE') return inmetRank <= SEVERITY_LEVELS.ORANGE;
+                        if (r.severity === 'LOW') return inmetRank <= SEVERITY_LEVELS.YELLOW;
+                        return false;
                     });
+
+                    for (const r of matchingRisks) {
+                        highRiskEvents.push({
+                            source: 'FORECAST_ANALYSIS',
+                            type: r.type,
+                            severity: r.severity === 'HIGH' ? 'HIGH (Red Equivalent)' : r.severity,
+                            colorTier: r.severity === 'HIGH' ? 'RED' : (r.severity === 'MODERATE' ? 'ORANGE' : 'YELLOW'),
+                            emoji: r.severity === 'HIGH' ? '🔴' : (r.severity === 'MODERATE' ? '🟠' : '🟡'),
+                            affectedCities: [cityName],
+                            timeframe: `Janela de 24h (${dateStr})`,
+                            details: `${r.detail} em ${cityName}`,
+                            triggerReason: `Métrica da previsão meteorológica para ${cityName}: ${r.detail}`
+                        });
+                    }
                 }
             }
         }
