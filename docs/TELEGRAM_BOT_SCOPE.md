@@ -16,7 +16,7 @@ To deliver a top-tier user experience, this bot incorporates design patterns and
 | :--- | :--- | :--- |
 | **System & Administration** | `@BotFather`, `@MissRose_bot`, `@Combot`, `@GroupHelpBot` | • **Breadcrumb Header Navigation** (`🏠 Início > ⚙️ Configurações > ⏱️ Intervalo`).<br>• **Stateful Inline Keyboards** with checkmark pills (`[ ✅ 15 min ]`, `[ ⏱️ 30 min ]`).<br>• **In-Place Updates** via `editMessageText` preventing chat clutter.<br>• **Toast Confirmations** via `answerCallbackQuery({ text: '...' })`. |
 | **FinTech & High-Frequency Operations** | `@Wallet`, `@CryptoBot`, `@TrojanBot`, `@Unibot` | • **Structured Visual Cards** using Unicode box dividers (`━━━━━━━━━━━━━━━━━━━━━━━━━` & `─────────────────────────`).<br>• **High-Contrast Status Badges** (`🟢 NORMAL`, `🟡 MODERADO`, `🟠 SEVERO`, `🔴 CRÍTICO`).<br>• **Compact Action Trays** (2x2 / 2x3 balanced button grids). |
-| **Weather & Environmental Telemetry** | `@WeathermanBot`, `@AirQualityBot`, Civil Protection Bots | • **Visual Unicode Gauges & Meters** (e.g. River Level: `2.45m [██████░░░░] 61%`).<br>• **Dynamic Trend Badges** (`📈 Subindo (+0.12 m/h)`, `🔺 Subida Crítica`).<br>• **Actionable Emergency Alert Headers** with clear municipal/school directives. |
+| **Weather & Environmental Telemetry** | `@WeathermanBot`, `@AirQualityBot`, Civil Protection Bots | • **High-Contrast Severity Color Coding** aligned with official INMET/Defesa Civil tiers.<br>• **Actionable Emergency Alert Headers** with clear municipal/school directives. |
 | **Telegram Platform Standards** | Native Telegram API | • **Native Command Autocomplete** via `setMyCommands` for instant `/` command palette.<br>• **Character Budget Guardrails** strictly chunking under 4096 UTF-8 characters. |
 
 ---
@@ -28,32 +28,30 @@ Messages use standardized Unicode borders to structure sections cleanly:
 - `CARD_HEADER = '━━━━━━━━━━━━━━━━━━━━━━━━━'` — Used for outer message boundaries and category headers.
 - `CARD_DIVIDER = '─────────────────────────'` — Used between list items, stations, and warnings.
 
-### B. Visual Telemetry Gauges & Meters (`renderProgressBar`)
-Continuous numerical metrics (such as river water levels relative to overflow thresholds or rain accumulations) are rendered with Unicode progress meters:
-```text
-🌊 Rio Jacuí: 2.45 m [██████░░░░] 61%
-   ↳ Tendência: 📈 Subindo (+0.12 m/h)
-```
-
-### C. Severity Status Badges (`renderSeverityBadge`)
+### B. Severity Status Badges (`renderSeverityBadge`)
 Official alerts and risk levels are mapped to standardized color badges:
 - `🔴 GRANDE PERIGO (CRÍTICO)` — INMET Red / Defesa Civil Max Alert. Immediate class suspension advisory.
 - `🟠 PERIGO (SEVERO)` — Defesa Civil Orange / Heavy storm / Flood risk.
 - `🟡 PERIGO POTENCIAL (MODERADO)` — Yellow advisory.
 - `🟢 NORMAL / MONITORAMENTO` — Nominal conditions.
 
-### D. Stateful Inline Keyboards & Radio Selectors
+### C. Stateful Inline Keyboards & Radio Selectors
 Settings menus show the active choice directly on the inline button with `✅` and provide direct one-tap switching:
 ```text
 [ ⏱️ 5 min ]   [ ✅ 15 min ]
 [ ⏱️ 30 min ]  [ ⏱️ 60 min ]
 [ ⬅️ Voltar às Configurações ]
 ```
+Provider threshold buttons in the settings menu also display the current color circle of each institute's minimum alert level:
+```text
+[ 🏛️ Limiar INMET: 🔴 Vermelho ]
+[ 🛡️ Limiar Defesa Civil: 🟠 Laranja ]
+```
 
-### E. Alert Action Trays (`buildAlertActionKeyboard`)
+### D. Alert Action Trays (`buildAlertActionKeyboard`)
 Broadcast emergency alerts include quick jump action buttons attached directly to the alert message:
 ```text
-[ 🌊 Ver Jacuí & Chuva ] [ ⚡ Avisos INMET ]
+[ ⚡ Avisos INMET ]
 [ 🏠 Abrir Painel Principal ]
 ```
 
@@ -67,11 +65,9 @@ Broadcast emergency alerts include quick jump action buttons attached directly t
 | :--- | :--- | :--- |
 | `/start` or `/menu` | Opens the main interactive dashboard with button navigation. | Administrator |
 | `/status` | Returns system operational health, SQLite fetch stats, and active parameters. | Administrator |
-| `/jacui` | Displays real-time river level gauge and rainfall telemetry from Defesa Civil RS. | Administrator |
 | `/inmet` | Displays active official severe weather warnings for the monitored radius. | Administrator |
 | `/config` | Opens the interactive settings menu (interval, radius, alert policy). | Administrator |
 | `/help` | Shows operational help, command cheat sheet, and interactive shortcuts. | All (Public) |
-| `/chatid` | Returns the numeric Telegram Chat ID for authorization verification. | All (Public) |
 
 ---
 
@@ -79,10 +75,10 @@ Broadcast emergency alerts include quick jump action buttons attached directly t
 
 Registration is configuration-based:
 1. Create the bot with Telegram's BotFather and obtain `TELEGRAM_BOT_TOKEN`.
-2. Retrieve the authorized Telegram Chat ID using `/chatid`.
+2. Retrieve the authorized Telegram Chat ID (e.g., by messaging `@userinfobot` or checking the service logs on first contact).
 3. Set `TELEGRAM_ADMIN_CHAT_ID` in `.env` (comma-separated for multiple admins).
-4. Protected commands, telemetry views, settings modifications, and alert broadcasts are strictly restricted to allow-listed IDs.
-5. Unauthorized users receive a polite access restriction card with their Chat ID and guidance.
+4. Protected commands, settings modifications, and alert broadcasts are strictly restricted to allow-listed IDs.
+5. Unauthorized users receive a polite access restriction card.
 
 ---
 
@@ -103,7 +99,7 @@ Registration is configuration-based:
 | Module | Allowed Responsibilities |
 | :--- | :--- |
 | `src/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split messages (<4096 chars), register `setMyCommands`. |
-| `src/telegram_bot.js` | UI rendering, Unicode cards, progress gauges, inline keyboards, callback query routing, alert formatting. |
+| `src/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting. |
 | `src/weather_bot.js` | Process composition, signal handling (`SIGINT`/`SIGTERM`), coordinating bot + monitor startup. |
 | `src/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |
 

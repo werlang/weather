@@ -105,7 +105,7 @@ ifsul/weather/
 | `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback. | Direct Telegram API calls, command handling. |
 | `src/telegram.js` | grammY client lifecycle, allowlist parsing, `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
-| `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/chatid`, formatting plain-text alert templates. | Socket handling, low-level grammY polling. |
+| `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/config`, formatting plain-text alert templates. | Socket handling, low-level grammY polling. |
 | `src/weather_bot.js` | Composing Telegram bot and monitor service, handling `SIGINT`/`SIGTERM` graceful stop. | Domain logic, low-level HTTP requests. |
 
 
