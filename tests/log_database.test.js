@@ -9,6 +9,9 @@ import {
     getRecentAlertLogs,
     getFetchStats,
     extractEndpoint,
+    saveSystemSetting,
+    getSystemSetting,
+    loadAllSettings,
     closeDatabase,
     SCHEMA_SQL
 } from '../src/log_database.js';
@@ -247,3 +250,44 @@ describe('SQLite Querying & Aggregated Statistics', () => {
         assert.strictEqual(stats.lastFetchAt, '2026-08-20T10:10:00.000Z');
     });
 });
+
+describe('SQLite System Settings & Config Persistence', () => {
+    let testDb;
+
+    beforeEach(() => {
+        testDb = getDatabase(':memory:');
+    });
+
+    afterEach(() => {
+        closeDatabase(testDb);
+    });
+
+    it('saves and retrieves system settings by key', () => {
+        saveSystemSetting('inmet_min_severity', 'ORANGE', testDb);
+        saveSystemSetting('defesa_civil_min_severity', 'RED', testDb);
+        saveSystemSetting('radius_km', '75', testDb);
+
+        assert.strictEqual(getSystemSetting('inmet_min_severity', null, testDb), 'ORANGE');
+        assert.strictEqual(getSystemSetting('defesa_civil_min_severity', null, testDb), 'RED');
+        assert.strictEqual(getSystemSetting('radius_km', null, testDb), '75');
+        assert.strictEqual(getSystemSetting('unknown_key', 'DEFAULT', testDb), 'DEFAULT');
+    });
+
+    it('updates existing settings via upsert', () => {
+        saveSystemSetting('radius_km', '25', testDb);
+        assert.strictEqual(getSystemSetting('radius_km', null, testDb), '25');
+
+        saveSystemSetting('radius_km', '100', testDb);
+        assert.strictEqual(getSystemSetting('radius_km', null, testDb), '100');
+    });
+
+    it('loads all saved settings as a dictionary', () => {
+        saveSystemSetting('inmet_min_severity', 'YELLOW', testDb);
+        saveSystemSetting('defesa_civil_min_severity', 'OFF', testDb);
+
+        const all = loadAllSettings(testDb);
+        assert.strictEqual(all.inmet_min_severity, 'YELLOW');
+        assert.strictEqual(all.defesa_civil_min_severity, 'OFF');
+    });
+});
+

@@ -12,7 +12,8 @@ import { InlineKeyboard } from './telegram.js';
 import { onHighRiskEventDetected, parseMonitorConfig } from './monitor_service.js';
 import { getDefesaCivilTelemetry, REGIONAL_STATIONS } from './defesa_civil_client.js';
 import { getSurroundingCities, getRegionalRiskWarnings, getAlertEmoji } from './inmet_client.js';
-import { getFetchStats } from './log_database.js';
+import { getFetchStats, saveSystemSetting } from './log_database.js';
+import { normalizeSeverityTier } from './risk_analyzer.js';
 
 
 /**
@@ -222,13 +223,23 @@ export class WeatherTelegramBot {
         if (this.monitorService?.updateConfig) {
             return this.monitorService.updateConfig(update);
         }
-        if (update.radiusKm) this.localState.radiusKm = update.radiusKm;
+        if (update.radiusKm) {
+            this.localState.radiusKm = update.radiusKm;
+            try { saveSystemSetting('radius_km', update.radiusKm); } catch {}
+        }
         if (update.intervalMinutes) {
             this.localState.intervalMinutes = update.intervalMinutes;
             this.localState.intervalMs = update.intervalMinutes * 60 * 1000;
+            try { saveSystemSetting('interval_minutes', update.intervalMinutes); } catch {}
         }
-        if (update.inmetMinSeverity) this.localState.inmetMinSeverity = normalizeSeverityTier(update.inmetMinSeverity);
-        if (update.defesaCivilMinSeverity) this.localState.defesaCivilMinSeverity = normalizeSeverityTier(update.defesaCivilMinSeverity);
+        if (update.inmetMinSeverity) {
+            this.localState.inmetMinSeverity = normalizeSeverityTier(update.inmetMinSeverity);
+            try { saveSystemSetting('inmet_min_severity', this.localState.inmetMinSeverity); } catch {}
+        }
+        if (update.defesaCivilMinSeverity) {
+            this.localState.defesaCivilMinSeverity = normalizeSeverityTier(update.defesaCivilMinSeverity);
+            try { saveSystemSetting('defesa_civil_min_severity', this.localState.defesaCivilMinSeverity); } catch {}
+        }
         return this.getConfig();
     }
 

@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS monitor_cycle_logs (
     error_message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_timestamp ON fetch_logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_endpoint ON fetch_logs(endpoint);
 CREATE INDEX IF NOT EXISTS idx_fetch_logs_success ON fetch_logs(success);
@@ -441,6 +447,78 @@ export function getFetchStats(customDriver = null) {
  * 
  * @param {typeof Sqlite} [customDriver] - Driver instance to close.
  */
+/**
+ * Saves or updates a system setting in the SQLite database.
+ * 
+ * @param {string} key - Setting key (e.g. 'inmet_min_severity', 'defesa_civil_min_severity', 'radius_km', 'interval_minutes').
+ * @param {string|number} value - Setting value.
+ * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
+ * @returns {boolean} True if saved.
+ */
+export function saveSystemSetting(key, value, customDriver = null) {
+    if (!key) return false;
+    try {
+        const db = customDriver || getDatabase();
+        const valueStr = String(value);
+        const updatedAt = new Date().toISOString();
+
+        db.upsert('system_settings', {
+            key,
+            value: valueStr,
+            updated_at: updatedAt
+        }, { conflictFields: ['key'] });
+
+        return true;
+    } catch (err) {
+        console.error(`⚠️ [SQLite Settings Error] Failed to save setting "${key}":`, err.message);
+        return false;
+    }
+}
+
+/**
+ * Retrieves a single system setting by key from SQLite.
+ * 
+ * @param {string} key
+ * @param {string|null} [defaultValue=null]
+ * @param {typeof Sqlite} [customDriver]
+ * @returns {string|null}
+ */
+export function getSystemSetting(key, defaultValue = null, customDriver = null) {
+    if (!key) return defaultValue;
+    try {
+        const db = customDriver || getDatabase();
+        const row = db.findOne('system_settings', {
+            filter: { key },
+            view: ['value']
+        });
+        return row ? row.value : defaultValue;
+    } catch {
+        return defaultValue;
+    }
+}
+
+/**
+ * Loads all system settings from SQLite as a key-value dictionary.
+ * 
+ * @param {typeof Sqlite} [customDriver]
+ * @returns {Record<string, string>}
+ */
+export function loadAllSettings(customDriver = null) {
+    try {
+        const db = customDriver || getDatabase();
+        const rows = db.find('system_settings', {
+            view: ['key', 'value']
+        });
+        const result = {};
+        for (const row of rows) {
+            result[row.key] = row.value;
+        }
+        return result;
+    } catch {
+        return {};
+    }
+}
+
 export function closeDatabase(customDriver = null) {
     if (customDriver && typeof customDriver.close === 'function') {
         try { customDriver.close(); } catch {}

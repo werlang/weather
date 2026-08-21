@@ -101,13 +101,15 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
     assert.ok(cities25.some(c => c.name === 'Charqueadas' && c.distKm === 0));
   });
 
-  it('startMonitoringService dynamically updates radius, interval timer, and policy at runtime', () => {
+  it('startMonitoringService dynamically updates radius, interval timer, and independent threat levels at runtime', () => {
     delete process.env.RADIUS_KM;
     delete process.env.MONITOR_INTERVAL_MINUTES;
 
     const monitor = startMonitoringService({
       radiusKm: 50,
       intervalMs: 15 * 60 * 1000,
+      inmetMinSeverity: 'RED',
+      defesaCivilMinSeverity: 'ORANGE',
       registerSignalHandlers: false
     });
 
@@ -116,6 +118,8 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       assert.strictEqual(initialConfig.radiusKm, 50);
       assert.strictEqual(initialConfig.intervalMinutes, 15);
       assert.strictEqual(initialConfig.intervalMs, 900000);
+      assert.strictEqual(initialConfig.inmetMinSeverity, 'RED');
+      assert.strictEqual(initialConfig.defesaCivilMinSeverity, 'ORANGE');
 
       // Change interval to 5 min -> timer rescheduled to 300,000 ms
       const updatedInterval = monitor.updateConfig({ intervalMinutes: 5 });
@@ -126,14 +130,19 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       const updatedRadius = monitor.updateConfig({ radiusKm: 100 });
       assert.strictEqual(updatedRadius.radiusKm, 100);
 
-      // Change policy to 'all' -> alert policy updated
-      const updatedPolicy = monitor.updateConfig({ policy: 'all' });
-      assert.strictEqual(updatedPolicy.alertPolicy, 'all');
+      // Change independent threat levels
+      const updatedLevels = monitor.updateConfig({
+        inmetMinSeverity: 'ORANGE',
+        defesaCivilMinSeverity: 'RED'
+      });
+      assert.strictEqual(updatedLevels.inmetMinSeverity, 'ORANGE');
+      assert.strictEqual(updatedLevels.defesaCivilMinSeverity, 'RED');
 
       const finalConfig = monitor.getConfig();
       assert.strictEqual(finalConfig.radiusKm, 100);
       assert.strictEqual(finalConfig.intervalMinutes, 5);
-      assert.strictEqual(finalConfig.alertPolicy, 'all');
+      assert.strictEqual(finalConfig.inmetMinSeverity, 'ORANGE');
+      assert.strictEqual(finalConfig.defesaCivilMinSeverity, 'RED');
     } finally {
       monitor.stop();
     }
