@@ -25,17 +25,25 @@ describe('Shared Risk Analyzer Utilities', () => {
     const stormRisks = analyzeForecastRisks(stormForecast);
     assert.strictEqual(stormRisks.some(r => r.severity === 'HIGH' && r.type.includes('Tempestade')), true);
 
-    const frostForecast = { resumo: 'Céu limpo', temp_min: 2, temp_max: 12 };
-    const frostRisks = analyzeForecastRisks(frostForecast);
-    assert.strictEqual(frostRisks.some(r => r.severity === 'HIGH' && r.type.includes('Geada')), true);
+    const subZeroForecast = { resumo: 'Céu limpo com risco de congelamento', temp_min: -1, temp_max: 10 };
+    const subZeroRisks = analyzeForecastRisks(subZeroForecast);
+    assert.strictEqual(subZeroRisks.some(r => r.severity === 'HIGH' && r.type.includes('Frio Extremo')), true);
 
-    const heatForecast = { resumo: 'Ensolarado', temp_min: 22, temp_max: 37 };
+    const normalWinterFrost = { resumo: 'Céu limpo com geada', temp_min: 3, temp_max: 12 };
+    const normalFrostRisks = analyzeForecastRisks(normalWinterFrost);
+    assert.strictEqual(normalFrostRisks.some(r => r.severity === 'MODERATE' && r.type.includes('Geada')), true);
+
+    const heatForecast = { resumo: 'Ensolarado', temp_min: 24, temp_max: 41 };
     const heatRisks = analyzeForecastRisks(heatForecast);
     assert.strictEqual(heatRisks.some(r => r.severity === 'HIGH' && r.type.includes('Calor')), true);
 
-    const humidityForecast = { resumo: 'Seco', umidade_min: 18 };
+    const humidityForecast = { resumo: 'Seco', umidade_min: 10 };
     const humidityRisks = analyzeForecastRisks(humidityForecast);
     assert.strictEqual(humidityRisks.some(r => r.severity === 'HIGH' && r.type.includes('Umidade')), true);
+
+    const windForecast = { resumo: 'Ventos severos', int_vento: 'Muito forte' };
+    const windRisks = analyzeForecastRisks(windForecast);
+    assert.strictEqual(windRisks.some(r => r.severity === 'HIGH' && r.type.includes('Vendaval')), true);
   });
 });
 
@@ -126,7 +134,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
         name: 'Charqueadas',
         forecast: {
           '15/08/2026': {
-            temp_min: 2,
+            temp_min: -1,
             temp_max: 18,
             resumo: 'Tempestade com pancadas de chuva fortes',
             umidade_min: 50
@@ -137,10 +145,10 @@ describe('24-Hour Window High-Risk Evaluation', () => {
         name: 'São Jerônimo',
         forecast: {
           '15/08/2026': {
-            temp_min: 15,
-            temp_max: 38,
-            resumo: 'Ensolarado',
-            umidade_min: 15
+            temp_min: 24,
+            temp_max: 42,
+            resumo: 'Ensolarado com calor extremo',
+            umidade_min: 10
           }
         }
       }
@@ -152,16 +160,16 @@ describe('24-Hour Window High-Risk Evaluation', () => {
       now
     });
 
-    assert.ok(highRisks.length >= 3, 'Should detect storm, severe frost, heatwave, or low humidity');
+    assert.ok(highRisks.length >= 3, 'Should detect storm, sub-zero cold, and extreme heatwave');
     const stormEvent = highRisks.find(e => e.type.includes('Tempestade'));
     assert.ok(stormEvent, 'Must detect storm in forecast');
     assert.strictEqual(stormEvent.affectedCities[0], 'Charqueadas');
 
-    const frostEvent = highRisks.find(e => e.type.includes('Geada'));
-    assert.ok(frostEvent, 'Must detect severe frost (temp_min <= 3°C)');
+    const frostEvent = highRisks.find(e => e.type.includes('Frio Extremo'));
+    assert.ok(frostEvent, 'Must detect sub-zero severe cold (temp_min <= 0°C)');
 
     const heatEvent = highRisks.find(e => e.type.includes('Calor'));
-    assert.ok(heatEvent, 'Must detect heatwave (temp_max >= 36°C)');
+    assert.ok(heatEvent, 'Must detect extreme heatwave (temp_max >= 40°C)');
   });
 
   it('invokes onHighRiskEventDetected callback without errors', () => {

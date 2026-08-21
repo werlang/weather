@@ -1,7 +1,7 @@
 /**
  * Módulo Compartilhado de Análise de Riscos Meteorológicos.
- * Fornece métodos compartilhados para a ferramenta CLI sob demanda (monitor_regional_risks.js)
- * e para o serviço de monitoramento continuo (monitor_service.js).
+ * Fornece métodos calibrados para identificação de eventos meteorológicos severos
+ * com impacto na mobilidade urbana e na tomada de decisão sobre suspensão de aulas.
  * 
  * @module riskAnalyzer
  */
@@ -56,7 +56,8 @@ export function parseForecastDate(dateStr) {
 }
 
 /**
- * Analisa os parâmetros de previsão meteorológica de um período/dia e retorna lista de riscos.
+ * Analisa os parâmetros de previsão meteorológica de um período/dia.
+ * Classifica os riscos com base no potencial de interrupção de transporte escolar e risco à segurança física.
  * 
  * @param {Record<string, any>} forecastDay - Dados de previsão.
  * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string }>}
@@ -71,12 +72,12 @@ export function analyzeForecastRisks(forecastDay) {
     const humidityMin = forecastDay.umidade_min;
     const windInt = (forecastDay.int_vento || '').toLowerCase();
 
-    // Risco de Tempestade / Chuva Intensa
-    if (summary.includes('tempestade') || summary.includes('trovoadas com pancadas')) {
+    // 1. Tempestades Severas / Chuvas Torrenciais (Critério: Risco direto ao deslocamento e estrutura)
+    if (summary.includes('tempestade') || summary.includes('temporal') || summary.includes('trovoadas com pancadas') || (summary.includes('granizo') && summary.includes('chuva'))) {
         risks.push({
-            type: 'Risco de Tempestade / Trovoadas',
+            type: 'Tempestade Severa / Temporal',
             severity: 'HIGH',
-            detail: `Condição prevista: "${forecastDay.resumo}"`
+            detail: `Condição prevista: "${forecastDay.resumo}" (Risco a transporte escolar e segurança)`
         });
     } else if (summary.includes('chuva') || summary.includes('pancadas') || summary.includes('chuvoso')) {
         risks.push({
@@ -86,12 +87,19 @@ export function analyzeForecastRisks(forecastDay) {
         });
     }
 
-    // Risco de Geada / Frio Severo
-    if (summary.includes('geada') || (tempMin !== undefined && tempMin <= 4)) {
+    // 2. Frio Extremo / Congelamento / Neve
+    // No RS, 2°C a 4°C é rotina de inverno (MODERATE). HIGH apenas com congelamento, neve ou Tmin <= 0°C.
+    if (summary.includes('neve') || summary.includes('chuva congelada') || (tempMin !== undefined && tempMin <= 0)) {
         risks.push({
-            type: 'Alerta de Geada / Frio Severo',
-            severity: tempMin <= 3 ? 'HIGH' : 'MODERATE',
-            detail: `Temp. Mínima: ${tempMin}°C (${forecastDay.resumo || 'Temperatura baixa'})`
+            type: 'Frio Extremo / Risco de Congelamento',
+            severity: 'HIGH',
+            detail: `Temp. Mínima Extrema: ${tempMin}°C (${forecastDay.resumo || 'Frio com risco de congelamento'})`
+        });
+    } else if (summary.includes('geada') || (tempMin !== undefined && tempMin <= 4)) {
+        risks.push({
+            type: 'Geada / Frio Típico de Inverno',
+            severity: 'MODERATE',
+            detail: `Temp. Mínima: ${tempMin}°C (${forecastDay.resumo || 'Temperatura baixa típica'})`
         });
     } else if (tempMin !== undefined && tempMin <= 8) {
         risks.push({
@@ -101,26 +109,44 @@ export function analyzeForecastRisks(forecastDay) {
         });
     }
 
-    // Risco de Onda de Calor
-    if (tempMax !== undefined && tempMax >= 33) {
+    // 3. Onda de Calor Extrema (Critério de Suspensão de Aulas: Tmax >= 40°C)
+    if (tempMax !== undefined && tempMax >= 40) {
         risks.push({
-            type: 'Risco de Onda de Calor / Calor Extremo',
-            severity: tempMax >= 36 ? 'HIGH' : 'MODERATE',
+            type: 'Onda de Calor Extrema / Risco à Saúde',
+            severity: 'HIGH',
+            detail: `Temp. Máxima Extrema: ${tempMax}°C (Risco de estresse térmico em salas de aula)`
+        });
+    } else if (tempMax !== undefined && tempMax >= 34) {
+        risks.push({
+            type: 'Calor Intenso',
+            severity: 'MODERATE',
             detail: `Temp. Máxima: ${tempMax}°C`
         });
     }
 
-    // Risco de Baixa Umidade Relativa do Ar
-    if (humidityMin !== undefined && humidityMin <= 30) {
+    // 4. Baixa Umidade do Ar (Emergência de Saúde: <= 12%)
+    if (humidityMin !== undefined && humidityMin <= 12) {
         risks.push({
-            type: 'Risco de Baixa Umidade Relativa do Ar',
-            severity: humidityMin <= 20 ? 'HIGH' : 'MODERATE',
+            type: 'Emergência de Baixa Umidade do Ar',
+            severity: 'HIGH',
+            detail: `Umidade Mínima Crítica: ${humidityMin}% (Suspensão de atividades físicas)`
+        });
+    } else if (humidityMin !== undefined && humidityMin <= 25) {
+        risks.push({
+            type: 'Aviso de Baixa Umidade Relativa do Ar',
+            severity: 'MODERATE',
             detail: `Umidade Mínima: ${humidityMin}%`
         });
     }
 
-    // Risco de Ventos Fortes / Rajadas
-    if (windInt.includes('forte') || windInt.includes('rajadas')) {
+    // 5. Ventos Destrutivos / Vendaval / Ciclone (Critério: Ventos fortes com risco a vias e telhados)
+    if (summary.includes('ciclone') || summary.includes('vendaval') || windInt.includes('muito forte') || (windInt.includes('forte') && summary.includes('vento'))) {
+        risks.push({
+            type: 'Vendaval / Rajadas Destrutivas de Vento',
+            severity: 'HIGH',
+            detail: `Intensidade do vento: ${forecastDay.int_vento || forecastDay.resumo}`
+        });
+    } else if (windInt.includes('forte') || windInt.includes('rajadas')) {
         risks.push({
             type: 'Ventos Fortes / Rajadas de Vento',
             severity: 'MODERATE',
@@ -133,7 +159,7 @@ export function analyzeForecastRisks(forecastDay) {
 
 /**
  * Avalia avisos oficiais do INMET e previsões diárias para filtrar eventos de ALTO RISCO
- * previstos para ocorrer na janela das próximas 24 horas.
+ * com impacto direto na segurança física e recomendação de suspensão de aulas presenciais.
  * 
  * @param {object} params
  * @param {Array<object>} [params.regionalWarnings] - Avisos ativos do INMET na região.
@@ -146,32 +172,45 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
     const windowStart = now.getTime();
     const windowEnd = now.getTime() + (24 * 60 * 60 * 1000); // 24 horas
 
-    // 1. Filtrar Avisos Oficiais do INMET (Grande Perigo / Perigo)
+    // 1. Filtrar Avisos Oficiais do INMET com potencial de interrupção de aulas / transporte
     for (const warning of regionalWarnings) {
         const severidade = String(warning.severidade || '').toLowerCase();
         const avisoCor = String(warning.aviso_cor || '').toUpperCase();
+        const descricao = String(warning.descricao || warning.tipo || '').toLowerCase();
 
-        const isHighSeverity = avisoCor === '#FF0000' ||
-            avisoCor === '#F96602' ||
-            severidade.includes('grande perigo') ||
-            (severidade.includes('perigo') && !severidade.includes('potencial'));
+        // 🔴 Grande Perigo (Sempre prioritário / Recomendação Imediata de Suspensão de Aulas)
+        const isRedAlert = avisoCor === '#FF0000' || severidade.includes('grande perigo') || severidade.includes('extremo');
 
-        if (isHighSeverity) {
+        // 🟠 Perigo (Avisos de perigo que afetam transporte e integridade: tempestade, chuvas intensas, vendaval, ciclone, inundações, granizo)
+        const isOrangeDisruptive = (avisoCor === '#F96602' || (severidade.includes('perigo') && !severidade.includes('potencial'))) &&
+            (descricao.includes('tempestade') ||
+             descricao.includes('chuva') ||
+             descricao.includes('vendaval') ||
+             descricao.includes('vento') ||
+             descricao.includes('ciclone') ||
+             descricao.includes('granizo') ||
+             descricao.includes('inunda') ||
+             descricao.includes('alagamento') ||
+             descricao.includes('enxurrada') ||
+             descricao.includes('frio') ||
+             descricao.includes('calor'));
+
+        if (isRedAlert || isOrangeDisruptive) {
             const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
             highRiskEvents.push({
                 source: 'INMET_OFFICIAL_WARNING',
                 type: warning.descricao || warning.tipo || 'Aviso de Evento Meteorológico Severo',
-                severity: warning.severidade || 'Alto Risco',
+                severity: warning.severidade || (isRedAlert ? 'Grande Perigo' : 'Perigo'),
                 emoji: getAlertEmoji(warning),
                 affectedCities: warning.affectedRegionalCities || [],
                 timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
                 details: risksText || 'Aviso oficial do INMET emitido com severidade elevada.',
-                triggerReason: `Alerta oficial do INMET (Severidade: ${warning.severidade || 'Perigo/Grande Perigo'}) ativo na região.`
+                triggerReason: `Alerta oficial do INMET (${warning.severidade || 'Perigo/Grande Perigo'}) com risco à mobilidade escolar e segurança física.`
             });
         }
     }
 
-    // 2. Analisar Previsões nos Municípios para a janela de 24h
+    // 2. Analisar Previsões nos Municípios para a janela de 24h (Critérios Severos de Aulas)
     for (const cityData of regionalForecasts) {
         const cityName = cityData.name;
         const forecast = cityData.forecast || {};
@@ -198,7 +237,7 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
                         affectedCities: [cityName],
                         timeframe: `Janela de 24h (${dateStr})`,
                         details: `${r.detail} em ${cityName}`,
-                        triggerReason: `Métrica da previsão meteorológica para ${cityName} atingiu o limiar de alto risco (${r.detail}).`
+                        triggerReason: `Métrica da previsão para ${cityName} atingiu o limiar de suspensão de aulas (${r.detail}).`
                     });
                 }
             }

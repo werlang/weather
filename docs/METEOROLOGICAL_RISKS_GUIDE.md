@@ -17,11 +17,24 @@ This document outlines how to programmatically identify, parse, and handle sever
 
 INMET classifies meteorological risk situations into three primary severity levels:
 
-| Severity (`severidade`) | Color Code (`aviso_cor`) | Risk Level | Description |
-| :--- | :--- | :--- | :--- |
-| **Perigo Potencial** | `#FFFE00` (Yellow) | Moderate Risk | Rain 20-30 mm/h, winds 40-60 km/h, light hail. Low threat to life and property. |
-| **Perigo** | `#F96602` (Orange) | Severe Risk | Rain 30-60 mm/h or 50-100 mm/day, winds 60-100 km/h, hail, flash floods, power outage risk. |
-| **Grande Perigo** | `#FF0000` (Red) | Extreme Risk | Rain > 60 mm/h or > 100 mm/day, winds > 100 km/h, major flooding, landslide hazard, severe damage. |
+| Severity (`severidade`) | Color Code (`aviso_cor`) | Risk Level | Description | School Advisory Impact |
+| :--- | :--- | :--- | :--- | :--- |
+| **Perigo Potencial** | `#FFFE00` (Yellow) | Moderate Risk | Rain 20-30 mm/h, winds 40-60 km/h. | Normal operations. |
+| **Perigo** | `#F96602` (Orange) | Severe Risk | Rain 30-60 mm/h, winds 60-100 km/h, hail, flash floods. | **Alert Triggered**: Assess transport & local road conditions. |
+| **Grande Perigo** | `#FF0000` (Red) | Extreme Risk | Rain > 60 mm/h, winds > 100 km/h, major flooding, landslides. | **Immediate Advisory**: Suspend in-person classes. |
+
+---
+
+## 3. Calibrated Thresholds for School Cancellation Advisory
+
+To prevent alert fatigue and false positives from routine winter weather, the automated monitoring engine filters and reports high-priority alerts based on physical safety and school transport disruption criteria:
+
+* **⚡ Severe Storms & Torrents:** Forecasts or warnings for `"tempestade"`, `"temporal"`, `"trovoadas com pancadas"` or hail + heavy rain.
+* **💨 Destructive Wind & Cyclones:** Winds $\ge 80\text{--}100\text{ km/h}$, extratropical cyclones, or `"vendaval"`.
+* **❄️ Catastrophic Freezing & Snow:** Sub-zero temperatures ($T_{\min} \le 0^\circ\text{C}$), black ice, or freezing rain. *(Routine winter frost at $2^\circ\text{C}\text{--}4^\circ\text{C}$ is classified as Moderate/Informative and does not trigger class suspension alarms)*.
+* **🔥 Extreme Heatwave:** Maximum temperatures $T_{\max} \ge 40^\circ\text{C}$ posing thermal exhaustion risks in unconditioned classrooms.
+* **🏜️ Critical Low Humidity:** Minimum relative humidity $RH_{\min} \le 12\%$ (Civil Defense health emergency level).
+* **🌊 Hydrometric Flood Warning:** Rapid Jacuí river level surges or flash flood warnings.
 
 ---
 
