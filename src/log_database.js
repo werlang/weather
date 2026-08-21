@@ -453,8 +453,42 @@ export function getSystemSetting(key, defaultValue = null, customDriver = null) 
  * @param {typeof Sqlite} [customDriver]
  * @returns {Record<string, string>}
  */
-export function loadAllSettings(customDriver = null) {
+/**
+ * Registers an unrecognized alert source (color code, severity word, or
+ * forecast summary) so future analysis can harden the classification rules.
+ * Duplicate dedupe keys are ignored.
+ *
+ * @param {object} payload
+ * @param {string} payload.dedupeKey - Stable identity for this unknown source.
+ * @param {string} payload.sourceType - 'inmet_warning' | 'inmet_forecast'.
+ * @param {string} [payload.externalId] - Provider id when available (e.g. id_aviso).
+ * @param {string} [payload.rawColor] - Raw color hex as received.
+ * @param {string} [payload.rawSeverity] - Raw severity string as received.
+ * @param {string} [payload.rawText] - Raw summary/description text as received.
+ * @param {string} [payload.city] - City name when applicable.
+ */
+export function logUnknownAlert(payload = {}) {
     try {
+        const db = getDatabase();
+        const existing = db.find('unknown_alert_sources', {
+            filter: { dedupe_key: String(payload.dedupeKey || '') },
+            view: ['id'],
+            limit: 1
+        });
+        if (existing && existing.length > 0) return;
+        db.insert('unknown_alert_sources', {
+            dedupe_key: String(payload.dedupeKey || ''),
+            source_type: String(payload.sourceType || 'unknown'),
+            external_id: payload.externalId ?? null,
+            raw_color: payload.rawColor ?? null,
+            raw_severity: payload.rawSeverity ?? null,
+            raw_text: payload.rawText ?? null,
+            city: payload.city ?? null
+        });
+    } catch {}
+}
+
+export function loadAllSettings(customDriver = null) {    try {
         const db = customDriver || getDatabase();
         const rows = db.find('system_settings', {
             view: ['key', 'value']

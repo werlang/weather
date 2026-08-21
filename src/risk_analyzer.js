@@ -8,16 +8,20 @@
 
 import { getAlertEmoji } from './inmet_client.js';
 import { evaluateDefesaCivilRisks } from './defesa_civil_client.js';
+import { logUnknownAlert } from './log_database.js';
 
 /**
  * Severity ranking map for comparison.
- * OFF: 0, YELLOW: 1, ORANGE: 2, RED: 3
+ * OFF: 0, YELLOW: 1, ORANGE: 2, RED: 3, UNKNOWN: 4.
+ * UNKNOWN outranks RED so unrecognized sources always alert (treated as
+ * red-equivalent) regardless of the configured minimum severity.
  */
 export const SEVERITY_LEVELS = {
     OFF: 0,
     YELLOW: 1,
     ORANGE: 2,
-    RED: 3
+    RED: 3,
+    UNKNOWN: 4
 };
 
 /**
@@ -150,17 +154,14 @@ export function getRiskEventKey(event = {}) {
 }
 
 /**
- * Processa argumentos da linha de comando e variáveis de ambiente para obter o raio regional em KM.
+ * Processa argumentos da linha de comando para obter o raio regional em KM.
+ * O raio do serviço contínuo é gerenciado pelo banco de dados (system_settings);
+ * esta função atende apenas à ferramenta CLI sob demanda.
  * 
  * @param {number} [defaultRadius=50] - Raio padrão caso não informado.
  * @returns {number} Raio em KM.
  */
 export function parseRadiusArg(defaultRadius = 50) {
-    if (process.env.RADIUS_KM || process.env.RADIUS) {
-        const envVal = parseInt(process.env.RADIUS_KM || process.env.RADIUS, 10);
-        if (!isNaN(envVal) && envVal > 0) return envVal;
-    }
-
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -198,11 +199,15 @@ export function parseForecastDate(dateStr) {
 
 /**
  * Analisa os parâmetros de previsão meteorológica de um período/dia.
- * 
+ *
  * @param {Record<string, any>} forecastDay - Dados de previsão.
- * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string }>}
+ * @param {object} [context] - Contexto opcional para registro de desconhecidos.
+ * @param {string} [context.city] - Nome do município.
+ * @param {string} [context.dateStr] - Data da previsão (DD/MM/YYYY).
+ * @param {string} [context.periodKey] - Chave do período (manha/tarde/noite).
+ * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string, unknown?: boolean }>}
  */
-export function analyzeForecastRisks(forecastDay) {
+export function analyzeForecastRisks(forecastDay, context = {}) {
     const risks = [];
     if (!forecastDay) return risks;
 
@@ -293,12 +298,34 @@ export function analyzeForecastRisks(forecastDay) {
         });
     }
 
+    // 6. Vocabulário não reconhecido: registra e escala para revisão manual.
+    // Resumos claramente benignos (sol/nuvens/claro) são registrados, mas não alertam.
+    if (risks.length === 0 && summary) {
+        // Resumos claramente benignos são registrados mas não alertam.
+        const benign = /sol|céu|ceu|claro|limpo|nuvem|nublado/.test(summary);
+        risks.push({
+            type: 'Condição Não Classificada',
+            severity: 'HIGH',
+            detail: `Resumo de previsão fora do vocabulário de análise: "${forecastDay.resumo}"`,
+            unknown: !benign
+        });
+        try {
+            logUnknownAlert({
+                dedupeKey: `inmet_forecast:${context.city || forecastDay.ibgeCode || 'desconhecida'}:${context.dateStr || ''}:${context.periodKey || 'dia'}:${summary}`,
+                sourceType: 'inmet_forecast',
+                externalId: String(forecastDay.ibgeCode || ''),
+                rawText: String(forecastDay.resumo || ''),
+                city: context.city || null
+            });
+        } catch {}
+    }
+
     return risks;
 }
 
 /**
  * Avalia fontes de risco meteorológico com níveis de severidade independentes para cada instituto.
- * 
+ *
  * @param {object} params
  * @param {Array<object>} [params.regionalWarnings] - Avisos ativos do INMET.
  * @param {Array<object>} [params.regionalForecasts] - Previsões por município.
@@ -353,27 +380,47 @@ export function evaluateHighRisksIn24hWindow({
             const severidade = String(warning.severidade || '').toLowerCase();
             const avisoCor = String(warning.aviso_cor || '').toUpperCase();
 
-            let warningTier = 'YELLOW';
+            let warningTier;
             if (avisoCor === '#FF0000' || severidade.includes('grande perigo') || severidade.includes('extremo')) {
                 warningTier = 'RED';
             } else if (avisoCor === '#F96602' || (severidade.includes('perigo') && !severidade.includes('potencial'))) {
                 warningTier = 'ORANGE';
+            } else if (avisoCor === '#FFFE00' || severidade.includes('potencial') || severidade.includes('moderado')) {
+                warningTier = 'YELLOW';
+            } else {
+                // Real fallback: unrecognized color AND severity vocabulary.
+                warningTier = 'UNKNOWN';
+                try {
+                    logUnknownAlert({
+                        dedupeKey: `inmet_warning:${warning.id_aviso || warning.codigo || `${avisoCor}|${severidade}|${warning.descricao || warning.tipo || ''}`}`,
+                        sourceType: 'inmet_warning',
+                        externalId: String(warning.id_aviso || warning.codigo || ''),
+                        rawColor: avisoCor,
+                        rawSeverity: String(warning.severidade || ''),
+                        rawText: String(warning.descricao || warning.tipo || '')
+                    });
+                } catch {}
             }
 
             const warningRank = SEVERITY_LEVELS[warningTier] || 1;
             if (warningRank >= inmetRank) {
                 const risksText = Array.isArray(warning.riscos) ? warning.riscos.join(' | ') : (warning.riscos || '');
+                const severityFallback = warningTier === 'RED'
+                    ? 'Grande Perigo'
+                    : (warningTier === 'ORANGE' ? 'Perigo' : (warningTier === 'YELLOW' ? 'Perigo Potencial' : 'Unknown'));
                 highRiskEvents.push({
                     source: 'INMET_OFFICIAL_WARNING',
                     eventId: warning.id_aviso || warning.codigo || null,
                     type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
-                    severity: warning.severidade || (warningTier === 'RED' ? 'Grande Perigo' : (warningTier === 'ORANGE' ? 'Perigo' : 'Perigo Potencial')),
+                    severity: warning.severidade || severityFallback,
                     colorTier: warningTier,
-                    emoji: getAlertEmoji(warning),
+                    emoji: warningTier === 'UNKNOWN' ? '❓' : getAlertEmoji(warning),
                     affectedCities: warning.affectedRegionalCities || [],
                     timeframe: `${warning.inicio || warning.hora_inicio || 'Agora'} -> ${warning.fim || warning.hora_fim || 'Próximas horas'}`,
                     details: risksText || 'Aviso oficial emitido pelo INMET.',
-                    triggerReason: `INMET (${warning.severidade || warningTier}) ativo na região.`
+                    triggerReason: warningTier === 'UNKNOWN'
+                        ? `INMET emitiu um aviso com cor/severidade não reconhecida pelo classificador — revisar manualmente.`
+                        : `INMET (${warning.severidade || warningTier}) ativo na região.`
                 });
             }
         }
@@ -424,8 +471,13 @@ export function evaluateHighRisksIn24hWindow({
 
                     if (!overlaps24hWindow) continue;
 
-                    const risks = analyzeForecastRisks(period.data);
+                    const risks = analyzeForecastRisks(period.data, {
+                        city: cityName,
+                        dateStr,
+                        periodKey: period.key
+                    });
                     const matchingRisks = risks.filter(r => {
+                        if (r.unknown !== undefined) return r.unknown === true;
                         if (r.severity === 'HIGH') return inmetRank <= SEVERITY_LEVELS.RED;
                         if (r.severity === 'MODERATE') return inmetRank <= SEVERITY_LEVELS.ORANGE;
                         if (r.severity === 'LOW') return inmetRank <= SEVERITY_LEVELS.YELLOW;
@@ -434,6 +486,20 @@ export function evaluateHighRisksIn24hWindow({
 
                     for (const r of matchingRisks) {
                         const periodSuffix = period.label ? `, ${period.label}` : '';
+                        if (r.unknown) {
+                            highRiskEvents.push({
+                                source: 'FORECAST_ANALYSIS',
+                                type: r.type,
+                                severity: 'Unknown (Não classificada)',
+                                colorTier: 'UNKNOWN',
+                                emoji: '❓',
+                                affectedCities: [cityName],
+                                timeframe: `Janela de 24h (${dateStr}${periodSuffix})`,
+                                details: `${r.detail} em ${cityName}`,
+                                triggerReason: `Resumo de previsão não reconhecido pelo vocabulário de análise para ${cityName} — revisar manualmente.`
+                            });
+                            continue;
+                        }
                         highRiskEvents.push({
                             source: 'FORECAST_ANALYSIS',
                             type: r.type,

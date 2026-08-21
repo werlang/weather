@@ -229,6 +229,26 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.doesNotMatch(text, /🟢 NORMAL/);
     });
 
+    it('treats UNKNOWN-tier events as red-level alerts flagged for manual review', () => {
+        const text = WeatherTelegramBot.formatHighRiskAlert([{
+            type: 'Condição Não Classificada',
+            severity: 'Unknown (Não classificada)',
+            colorTier: 'UNKNOWN',
+            emoji: '❓',
+            source: 'FORECAST_ANALYSIS',
+            affectedCities: ['Charqueadas'],
+            timeframe: 'Janela de 24h (21/08/2026)',
+            triggerReason: 'Resumo de previsão não reconhecido'
+        }]);
+
+        // Red-equivalent alerting...
+        assert.match(text, /ALERTA METEOROLÓGICO SEVERO/);
+        assert.match(text, /CRITÉRIO: AVALIAÇÃO DE SUSPENSÃO DE AULAS/);
+        // ...but explicitly flagged for manual review
+        assert.match(text, /NÃO CLASSIFICADO — revisar manualmente/);
+        assert.doesNotMatch(text, /🟢 NORMAL/);
+    });
+
     it('builds alert action tray and renders UI visual components properly', async () => {
         const { renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
 

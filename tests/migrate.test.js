@@ -75,6 +75,7 @@ describe('Database Migration Workflow & SQL Parser', () => {
             assert.ok(tables.includes('alert_logs'));
             assert.ok(tables.includes('monitor_cycle_logs'));
             assert.ok(tables.includes('system_settings'));
+            assert.ok(tables.includes('unknown_alert_sources'));
         });
 
         it('seeds default monitor settings into system_settings on first application', async () => {

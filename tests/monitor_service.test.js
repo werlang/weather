@@ -15,15 +15,17 @@ import { Sqlite } from '../src/database_driver.js';
 import { getDatabase } from '../src/log_database.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
-  it('parseRadiusArg extracts distance from CLI args and env vars', () => {
-    delete process.env.RADIUS_KM;
-    delete process.env.RADIUS;
-
-    assert.strictEqual(parseRadiusArg(50), 50);
-
+  it('parseRadiusArg uses CLI args or the default and ignores environment variables', () => {
     process.env.RADIUS_KM = '80';
-    assert.strictEqual(parseRadiusArg(50), 80);
-    delete process.env.RADIUS_KM;
+    process.env.RADIUS = '90';
+
+    try {
+      // Radius is bound to the database; environment variables must be ignored.
+      assert.strictEqual(parseRadiusArg(50), 50);
+    } finally {
+      delete process.env.RADIUS_KM;
+      delete process.env.RADIUS;
+    }
   });
 
   it('analyzeForecastRisks classifies storm, frost, heatwave, low humidity and wind risks', () => {
@@ -54,32 +56,25 @@ describe('Shared Risk Analyzer Utilities', () => {
 });
 
 describe('Monitor Service Configuration, Dynamic Updates & Radius Verification', () => {
-  it('parseMonitorConfig parses default values correctly when env vars are absent', () => {
-    const origRadius = process.env.RADIUS_KM;
-    const origInterval = process.env.MONITOR_INTERVAL_MINUTES;
+  it('parseMonitorConfig returns seeded database defaults without environment variables', () => {
     const origDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
-    delete process.env.RADIUS_KM;
-    delete process.env.RADIUS;
-    delete process.env.MONITOR_INTERVAL_MINUTES;
-    delete process.env.MONITOR_INTERVAL_MS;
 
     try {
+      // Fresh database is seeded by migration 002: 50 km / 15 minutes.
       const config = parseMonitorConfig();
       assert.strictEqual(config.radiusKm, 50);
       assert.strictEqual(config.intervalMs, 15 * 60 * 1000);
       assert.strictEqual(config.intervalMinutes, 15);
     } finally {
       Sqlite.close();
-      if (origRadius) process.env.RADIUS_KM = origRadius;
-      if (origInterval) process.env.MONITOR_INTERVAL_MINUTES = origInterval;
       if (origDbPath) process.env.DB_PATH = origDbPath;
       else delete process.env.DB_PATH;
     }
   });
 
-  it('parseMonitorConfig prefers database settings over environment variables', () => {
+  it('parseMonitorConfig ignores legacy environment variables in favor of database settings', () => {
     const origDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
@@ -89,6 +84,8 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
 
     try {
       // Fresh database is seeded with defaults (migration 002): 50 km / 15 min / RED / ORANGE.
+      // Radius and interval no longer read environment variables; severity tiers still do
+      // but lose to database values.
       const config = parseMonitorConfig();
       assert.strictEqual(config.radiusKm, 50);
       assert.strictEqual(config.intervalMinutes, 15);
@@ -104,7 +101,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
     }
   });
 
-  it('parseMonitorConfig falls back to environment variables when the database key is absent', () => {
+  it('parseMonitorConfig falls back to safe defaults when database keys are absent', () => {
     const origDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
@@ -113,25 +110,100 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       db.delete('system_settings', { key });
     }
 
-    process.env.RADIUS_KM = '75';
-    process.env.MONITOR_INTERVAL_MINUTES = '10';
-    process.env.INMET_MIN_SEVERITY = 'YELLOW';
-    process.env.DEFESA_CIVIL_MIN_SEVERITY = 'ORANGE';
+    delete process.env.INMET_MIN_SEVERITY;
+    delete process.env.DEFESA_CIVIL_MIN_SEVERITY;
 
     try {
       const config = parseMonitorConfig();
-      assert.strictEqual(config.radiusKm, 75);
-      assert.strictEqual(config.intervalMinutes, 10);
-      assert.strictEqual(config.inmetMinSeverity, 'YELLOW');
+      assert.strictEqual(config.radiusKm, 50);
+      assert.strictEqual(config.intervalMinutes, 15);
+      assert.strictEqual(config.inmetMinSeverity, 'RED');
       assert.strictEqual(config.defesaCivilMinSeverity, 'ORANGE');
     } finally {
       Sqlite.close();
-      delete process.env.RADIUS_KM;
-      delete process.env.MONITOR_INTERVAL_MINUTES;
       delete process.env.INMET_MIN_SEVERITY;
       delete process.env.DEFESA_CIVIL_MIN_SEVERITY;
       if (origDbPath) process.env.DB_PATH = origDbPath;
       else delete process.env.DB_PATH;
+    }
+  });
+
+  it('escalates unrecognized INMET colors and forecast summaries as UNKNOWN', async () => {
+    const { evaluateHighRisksIn24hWindow, analyzeForecastRisks } = await import('../src/risk_analyzer.js');
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+    const now = new Date('2026-08-21T12:00:00Z');
+    const start = '2026-08-21 13:00';
+    const end = '2026-08-21 20:00';
+
+    try {
+      // 1. Warning with unrecognized color AND severity -> UNKNOWN tier, still delivered at RED threshold
+      const events = evaluateHighRisksIn24hWindow({
+        regionalWarnings: [{
+          id_aviso: 'unknown-1',
+          aviso_cor: '#ABCDEF',
+          severidade: 'Observação Especial da Defesa',
+          descricao: 'Fenômeno atmosférico atípico',
+          inicio: start,
+          fim: end,
+          affectedRegionalCities: ['Charqueadas']
+        }],
+        inmetMinSeverity: 'RED',
+        now
+      });
+      assert.strictEqual(events.length, 1);
+      assert.strictEqual(events[0].colorTier, 'UNKNOWN');
+      assert.match(events[0].triggerReason, /não reconhecida/);
+
+      // 2. Unmatched forecast summary -> UNKNOWN event (non-benign wording)
+      const unknownForecast = analyzeForecastRisks(
+        { resumo: 'Nebulosidade variável com ventania costeira' },
+        { city: 'Charqueadas', dateStr: '21/08/2026', periodKey: 'manha' }
+      );
+      assert.strictEqual(unknownForecast.length, 1);
+      assert.strictEqual(unknownForecast[0].unknown, true);
+
+      const unknownEvents = evaluateHighRisksIn24hWindow({
+        regionalForecasts: [{
+          name: 'Charqueadas',
+          ibgeCode: '4305355',
+          forecast: { '21/08/2026': { manha: { resumo: 'Nebulosidade variável com ventania costeira' } } }
+        }],
+        inmetMinSeverity: 'RED',
+        now
+      });
+      assert.ok(unknownEvents.some(e => e.colorTier === 'UNKNOWN' && e.type.includes('Não Classificada')));
+
+      // 3. Benign unmatched summary is recorded but does not alert
+      const benignForecast = analyzeForecastRisks({ resumo: 'Sol com muitas nuvens' });
+      assert.strictEqual(benignForecast[0].unknown, false);
+
+      const benignEvents = evaluateHighRisksIn24hWindow({
+        regionalForecasts: [{
+          name: 'Charqueadas',
+          ibgeCode: '4305355',
+          forecast: { '21/08/2026': { manha: { resumo: 'Sol com muitas nuvens' } } }
+        }],
+        inmetMinSeverity: 'RED',
+        now
+      });
+      assert.strictEqual(benignEvents.length, 0);
+
+      // 4. Both sources were registered for future analysis
+      const { getDatabase } = await import('../src/log_database.js');
+      const rows = getDatabase().find('unknown_alert_sources');
+      const texts = rows.map(row => row.raw_text).join(' | ');
+      const severities = rows.map(row => row.raw_severity).join(' | ');
+      assert.match(texts, /Fenômeno atmosférico atípico/);
+      assert.match(severities, /Observação Especial da Defesa/);
+      assert.match(rows.map(r => r.raw_color).join(' | '), /#ABCDEF/);
+      assert.match(texts, /Nebulosidade variável/);
+      assert.match(texts, /Sol com muitas nuvens/);
+    } finally {
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
     }
   });
 
@@ -185,9 +257,6 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
   });
 
   it('startMonitoringService dynamically updates radius, interval timer, and independent threat levels at runtime', () => {
-    delete process.env.RADIUS_KM;
-    delete process.env.MONITOR_INTERVAL_MINUTES;
-
     const monitor = startMonitoringService({
       radiusKm: 50,
       intervalMs: 15 * 60 * 1000,

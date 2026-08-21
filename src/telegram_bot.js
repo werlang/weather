@@ -115,6 +115,9 @@ export const BOT_COMMANDS = [
 export function renderSeverityBadge(severity = '') {
     const lower = String(severity).toLowerCase();
     const upper = String(severity).toUpperCase();
+    if (upper === 'UNKNOWN' || lower.includes('não classificad')) {
+        return '❓ DESCONHECIDO — REVISAR';
+    }
     if (upper === 'RED' || lower.includes('grande perigo') || lower.includes('máximo') || lower.includes('extremo') || lower.includes('red') || lower.includes('high')) {
         return '🔴 GRANDE PERIGO (CRÍTICO)';
     }
@@ -134,10 +137,12 @@ export function renderSeverityBadge(severity = '') {
  * @returns {'OFF'|'YELLOW'|'ORANGE'|'RED'} Canonical tier.
  */
 function getEventAlertTier(event = {}) {
+    if (String(event.colorTier || '').toUpperCase() === 'UNKNOWN') return 'RED';
     const normalizedTier = normalizeSeverityTier(event.colorTier);
     if (normalizedTier !== 'OFF') return normalizedTier;
 
     const severity = String(event.severity || '').toLowerCase();
+    if (severity.includes('unknown') || severity.includes('não classificada')) return 'RED';
     if (severity.includes('high') || severity.includes('red') || severity.includes('grande perigo') || severity.includes('extremo')) {
         return 'RED';
     }
@@ -715,6 +720,9 @@ export class WeatherTelegramBot {
             lines.push(`   Municípios Impactados: ${(event.affectedCities || []).join(', ') || 'Não informados'}`);
             lines.push(`   Janela: ${event.timeframe || 'Não informada'}`);
             lines.push(`   💡 Motivo do Disparo: ${event.triggerReason || 'Não informado'}`);
+            if (String(event.colorTier || '').toUpperCase() === 'UNKNOWN') {
+                lines.push('   ⚠️ NÃO CLASSIFICADO — revisar manualmente (fonte registrada no banco para análise).');
+            }
 
             if (event.details && event.details !== event.triggerReason) {
                 lines.push(`   📝 Detalhes: ${event.details}`);

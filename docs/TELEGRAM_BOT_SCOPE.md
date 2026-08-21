@@ -34,6 +34,7 @@ Official alerts and risk levels are mapped to standardized color badges:
 - `🟠 PERIGO (SEVERO)` — Defesa Civil Orange / Heavy storm / Flood risk.
 - `🟡 PERIGO POTENCIAL (MODERADO)` — Yellow advisory.
 - `🟢 NORMAL / MONITORAMENTO` — Nominal conditions.
+- `❓ DESCONHECIDO — REVISAR` — Unrecognized color/severity vocabulary. UNKNOWN-tier events alert as red-equivalent, are flagged "NÃO CLASSIFICADO" for manual review, and their raw payload is recorded in the `unknown_alert_sources` SQLite table for future vocabulary hardening.
 
 ### C. Stateful Inline Keyboards & Radio Selectors
 Settings menus show the active choice directly on the inline button with `✅` and provide direct one-tap switching:
@@ -88,11 +89,9 @@ Registration is configuration-based:
 | :--- | :--- | :--- | :--- |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
 | `TELEGRAM_ADMIN_CHAT_ID` | Yes | — | Comma-separated allowlist of Telegram chat IDs. |
-| `RADIUS_KM` | No | `50` | Fallback regional radius — used only when `radius_km` is absent from the database (bot `/config` writes take precedence). |
-| `MONITOR_INTERVAL_MINUTES` | No | `15` | Fallback cycle interval — used only when `interval_minutes` is absent from the database. |
 | `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, and runtime settings. |
 
-Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002). The database always takes precedence over environment variables; `/config` changes persist across restarts.
+Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002): monitoring radius (`radius_km`, default `50` km) and cycle interval (`interval_minutes`, default `15` minutes) are configured exclusively through the database (bot `/config` or CLI), never through environment variables. `/config` changes persist across restarts.
 
 ---
 
