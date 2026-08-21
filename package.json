@@ -6,6 +6,7 @@
   "main": "src/weather_bot.js",
   "scripts": {
     "start": "node src/weather_bot.js",
+    "migrate": "node src/migrate.js",
     "monitor:console": "node src/monitor_service.js",
     "monitor:regional": "node src/monitor_regional_risks.js",
     "db:logs": "node src/log_database.js",

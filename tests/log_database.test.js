@@ -12,8 +12,7 @@ import {
     saveSystemSetting,
     getSystemSetting,
     loadAllSettings,
-    closeDatabase,
-    SCHEMA_SQL
+    closeDatabase
 } from '../src/log_database.js';
 import { httpGet } from '../src/inmet_client.js';
 

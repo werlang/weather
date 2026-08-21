@@ -9,6 +9,7 @@ import {
 } from '../src/monitor_service.js';
 import { analyzeForecastRisks, parseRadiusArg } from '../src/risk_analyzer.js';
 import { getSurroundingCities } from '../src/inmet_client.js';
+import { Sqlite } from '../src/database_driver.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
   it('parseRadiusArg extracts distance from CLI args and env vars', () => {
@@ -53,31 +54,47 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
   it('parseMonitorConfig parses default values correctly when env vars are absent', () => {
     const origRadius = process.env.RADIUS_KM;
     const origInterval = process.env.MONITOR_INTERVAL_MINUTES;
+    const origDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
     delete process.env.RADIUS_KM;
     delete process.env.RADIUS;
     delete process.env.MONITOR_INTERVAL_MINUTES;
     delete process.env.MONITOR_INTERVAL_MS;
 
-    const config = parseMonitorConfig();
-    assert.strictEqual(config.radiusKm, 50);
-    assert.strictEqual(config.intervalMs, 15 * 60 * 1000);
-    assert.strictEqual(config.intervalMinutes, 15);
-
-    if (origRadius) process.env.RADIUS_KM = origRadius;
-    if (origInterval) process.env.MONITOR_INTERVAL_MINUTES = origInterval;
+    try {
+      const config = parseMonitorConfig();
+      assert.strictEqual(config.radiusKm, 50);
+      assert.strictEqual(config.intervalMs, 15 * 60 * 1000);
+      assert.strictEqual(config.intervalMinutes, 15);
+    } finally {
+      Sqlite.close();
+      if (origRadius) process.env.RADIUS_KM = origRadius;
+      if (origInterval) process.env.MONITOR_INTERVAL_MINUTES = origInterval;
+      if (origDbPath) process.env.DB_PATH = origDbPath;
+      else delete process.env.DB_PATH;
+    }
   });
 
   it('parseMonitorConfig respects MONITOR_INTERVAL_MINUTES and RADIUS_KM env vars', () => {
+    const origDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
     process.env.RADIUS_KM = '75';
     process.env.MONITOR_INTERVAL_MINUTES = '10';
 
-    const config = parseMonitorConfig();
-    assert.strictEqual(config.radiusKm, 75);
-    assert.strictEqual(config.intervalMs, 10 * 60 * 1000);
-    assert.strictEqual(config.intervalMinutes, 10);
-
-    delete process.env.RADIUS_KM;
-    delete process.env.MONITOR_INTERVAL_MINUTES;
+    try {
+      const config = parseMonitorConfig();
+      assert.strictEqual(config.radiusKm, 75);
+      assert.strictEqual(config.intervalMs, 10 * 60 * 1000);
+      assert.strictEqual(config.intervalMinutes, 10);
+    } finally {
+      Sqlite.close();
+      delete process.env.RADIUS_KM;
+      delete process.env.MONITOR_INTERVAL_MINUTES;
+      if (origDbPath) process.env.DB_PATH = origDbPath;
+      else delete process.env.DB_PATH;
+    }
   });
 
   it('getSurroundingCities strictly filters tracked cities by radius (25km vs 50km vs 75km vs 100km)', async () => {

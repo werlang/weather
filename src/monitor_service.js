@@ -50,7 +50,9 @@ export function parseMonitorConfig() {
 
     // 1. Raio Regional em KM
     let radiusKm = 50;
-    if (saved.radius_km) {
+    if (process.env.RADIUS_KM || process.env.RADIUS) {
+        radiusKm = parseRadiusArg(50);
+    } else if (saved.radius_km) {
         const parsed = parseInt(saved.radius_km, 10);
         if (!isNaN(parsed) && parsed > 0) radiusKm = parsed;
     } else {
@@ -59,10 +61,7 @@ export function parseMonitorConfig() {
 
     // 2. Intervalo de execução
     let intervalMs = 15 * 60 * 1000; // Padrão: 15 minutos
-    if (saved.interval_minutes) {
-        const mins = parseFloat(saved.interval_minutes);
-        if (!isNaN(mins) && mins > 0) intervalMs = Math.round(mins * 60 * 1000);
-    } else if (process.env.MONITOR_INTERVAL_MS) {
+    if (process.env.MONITOR_INTERVAL_MS) {
         const ms = parseInt(process.env.MONITOR_INTERVAL_MS, 10);
         if (!isNaN(ms) && ms >= 1000) intervalMs = ms;
     } else if (process.env.MONITOR_INTERVAL_MINUTES) {
@@ -74,6 +73,9 @@ export function parseMonitorConfig() {
     } else if (process.env.MONITOR_INTERVAL) {
         const val = parseFloat(process.env.MONITOR_INTERVAL);
         if (!isNaN(val) && val > 0) intervalMs = Math.round(val * 60 * 1000);
+    } else if (saved.interval_minutes) {
+        const mins = parseFloat(saved.interval_minutes);
+        if (!isNaN(mins) && mins > 0) intervalMs = Math.round(mins * 60 * 1000);
     }
 
     // Trava de segurança: mínimo 1 segundo de intervalo
