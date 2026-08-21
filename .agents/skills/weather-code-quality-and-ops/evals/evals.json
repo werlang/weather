@@ -1,0 +1,31 @@
+{
+  "skill_name": "weather-code-quality-and-ops",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "How do I run the regional risk analysis report for Charqueadas with a 100km radius using Docker without installing Node on my host machine?",
+      "expected_output": "The agent provides the containerized command 'docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100' and explains how arguments and volumes are mapped.",
+      "files": [
+        "src/monitor_regional_risks.js"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Review src/monitor_service.js to ensure that an unhandled 503 error from INMET API does not crash the long-running 24/7 monitoring daemon. Implement error containment if needed.",
+      "expected_output": "The agent inspects error boundaries in monitor_service.js, verifies that fetch rejections are caught and fall back to empty warning/forecast sets, adds JSDoc comments to touched functions, and tests the resilience with a unit test in Docker.",
+      "files": [
+        "src/monitor_service.js",
+        "tests/monitor_service.test.js"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "What is the difference between compose.yaml and compose.dev.yaml in this project, and how do I spin up the development container for live debugging?",
+      "expected_output": "The agent explains that compose.yaml targets production with 'npm start' and restart policies, while compose.dev.yaml targets development with 'sleep infinity' and a live bind mount (.:/app). The agent provides 'docker compose -f compose.dev.yaml up -d --build' and 'docker compose -f compose.dev.yaml exec app node src/...' commands.",
+      "files": [
+        "compose.yaml",
+        "compose.dev.yaml"
+      ]
+    }
+  ]
+}

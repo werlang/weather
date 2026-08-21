@@ -1,0 +1,29 @@
+{
+  "skill_name": "weather-test-delivery",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to add a unit test for a new severe risk condition (hail alert with temp_max >= 35°C and severe thunderstorm summary) in tests/monitor_service.test.js. Make sure to run it using Docker and verify it passes.",
+      "expected_output": "The agent writes a unit test in tests/monitor_service.test.js following TDD, mocks the forecast object deterministically, runs the test suite via 'docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/monitor_service.test.js', and reports the test pass.",
+      "files": [
+        "tests/monitor_service.test.js"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Implement a deterministic mock for Defesa Civil RS river level telemetry in a unit test to verify that a warning is triggered when Jacuí river level exceeds 7.0 meters.",
+      "expected_output": "The agent creates a unit test using native Node 26 test runner, mocks globalThis.fetch in a try/finally block returning simulated GraphQL station data for DCRS-00032 with rio_nivel=7.2, verifies the risk condition, and runs the test inside node:26-alpine.",
+      "files": [
+        "tests/monitor_service.test.js"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "We need to verify that TelegramBotClient splits messages exceeding 4096 characters properly and delivers all parts to all configured admin chat IDs without making real Telegram network calls.",
+      "expected_output": "The agent tests the message splitting and delivery using createFakeBot test double without real network access, executing 'docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/telegram.test.js'.",
+      "files": [
+        "tests/telegram.test.js"
+      ]
+    }
+  ]
+}
