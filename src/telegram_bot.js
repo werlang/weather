@@ -11,7 +11,7 @@
 import { InlineKeyboard, splitTelegramMessage } from './telegram.js';
 import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring } from './monitor_service.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
-import { aggregateRiskEvents, normalizeSeverityTier } from './risk_analyzer.js';
+import { aggregateRiskEvents, normalizeSeverityTier, ALERT_CATEGORIES } from './risk_analyzer.js';
 
 
 /**
@@ -267,6 +267,14 @@ export class WeatherTelegramBot {
             this.localState.defesaCivilMinSeverity = normalizeSeverityTier(update.defesaCivilMinSeverity);
             try { saveSystemSetting('defesa_civil_min_severity', this.localState.defesaCivilMinSeverity); } catch {}
         }
+        if (Array.isArray(update.enabledCategories)) {
+            this.localState.enabledCategories = Object.keys(ALERT_CATEGORIES)
+                .filter(categoryId => update.enabledCategories.includes(categoryId));
+            for (const categoryId of Object.keys(ALERT_CATEGORIES)) {
+                const enabled = this.localState.enabledCategories.includes(categoryId);
+                try { saveSystemSetting(`alert_cat_${categoryId}`, enabled ? '1' : '0'); } catch {}
+            }
+        }
         return this.getConfig();
     }
 
@@ -339,15 +347,57 @@ export class WeatherTelegramBot {
      * @returns {InlineKeyboard}
      */
     static buildSettingsKeyboard(config = {}) {
+        const enabledCategories = Array.isArray(config.enabledCategories)
+            ? config.enabledCategories
+            : Object.keys(ALERT_CATEGORIES);
         return new InlineKeyboard()
             .text('⏱️ Alterar Intervalo', 'menu:interval')
             .text('📍 Alterar Raio Regional', 'menu:radius')
+            .row()
+            .text(`🚨 Categorias de Alerta: ${enabledCategories.length}/${Object.keys(ALERT_CATEGORIES).length}`, 'menu:categories')
             .row()
             .text(`🏛️ Limiar INMET: ${getTierShortBadge(config.inmetMinSeverity)}`, 'menu:inmet_level')
             .row()
             .text(`🛡️ Limiar Defesa Civil: ${getTierShortBadge(config.defesaCivilMinSeverity)}`, 'menu:defesa_civil_level')
             .row()
             .text('⬅️ Voltar ao Menu Principal', 'menu:main');
+    }
+
+    /**
+     * Builds the alert-category selection keyboard with on/off state per category.
+     *
+     * @param {string[]} [enabledCategories] - Ids of categories currently enabled.
+     * @returns {InlineKeyboard}
+     */
+    static buildCategoriesKeyboard(enabledCategories = []) {
+        const kb = new InlineKeyboard();
+        for (const [categoryId, definition] of Object.entries(ALERT_CATEGORIES)) {
+            const isOn = enabledCategories.includes(categoryId);
+            kb.text(`${definition.emoji} ${definition.label}: ${isOn ? '✅' : '❌'}`, `toggle_cat:${categoryId}`).row();
+        }
+        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
+        return kb;
+    }
+
+    /**
+     * Renders the alert-categories management text.
+     *
+     * @param {string[]} [enabledCategories] - Ids of categories currently enabled.
+     * @returns {string}
+     */
+    renderCategoriesMenu(enabledCategories = []) {
+        const lines = [
+            '🚨 CATEGORIAS DE ALERTA',
+            CARD_HEADER,
+            'Escolha quais grupos de eventos podem gerar envio de alertas:',
+            ''
+        ];
+        for (const [categoryId, definition] of Object.entries(ALERT_CATEGORIES)) {
+            lines.push(`${definition.emoji} ${definition.label}: ${enabledCategories.includes(categoryId) ? '✅ Ativo' : '❌ Silenciado'}`);
+        }
+        lines.push('', CARD_DIVIDER);
+        lines.push('💡 Toque em uma categoria para ativar ou silenciar. Os limiares de severidade continuam sendo aplicados.');
+        return lines.join('\n');
     }
 
     /**
@@ -503,6 +553,7 @@ export class WeatherTelegramBot {
             `• Intervalo de Varredura:  A cada ${config.intervalMinutes} minutos`,
             `• Limiar Alerta INMET:     ${getTierBadge(config.inmetMinSeverity)}`,
             `• Limiar Defesa Civil RS:  ${getTierBadge(config.defesaCivilMinSeverity)}`,
+            `• Categorias Ativas:       ${(Array.isArray(config.enabledCategories) ? config.enabledCategories.length : Object.keys(ALERT_CATEGORIES).length)} de ${Object.keys(ALERT_CATEGORIES).length}`,
             CARD_DIVIDER,
             'Escolha o parâmetro que deseja ajustar de forma independente:'
         ].join('\n');
@@ -558,6 +609,7 @@ export class WeatherTelegramBot {
                 radiusKm: config.radiusKm,
                 inmetMinSeverity: config.inmetMinSeverity,
                 defesaCivilMinSeverity: config.defesaCivilMinSeverity,
+                enabledCategories: Array.isArray(config.enabledCategories) ? config.enabledCategories : null,
                 alertCallback: null
             });
 
@@ -762,7 +814,7 @@ export class WeatherTelegramBot {
                 '',
                 '• /start ou /menu — Abre o painel interativo com botões de navegação',
                 '• /status — Exibe o status da varredura e métricas do banco SQLite',
-                '• /config — Ajusta raio, intervalo e limiares independentes por instituto',
+                '• /config — Ajusta raio, intervalo, limiares e categorias de alerta',
                 '• /alertas — Consulta avisos e alertas ativos (INMET + Defesa Civil RS)',
                 '',
                 CARD_DIVIDER,
@@ -893,6 +945,34 @@ export class WeatherTelegramBot {
                 });
             }
 
+            if (data === 'menu:categories') {
+                await answer();
+                return ctx.editMessageText?.(this.renderCategoriesMenu(config.enabledCategories), {
+                    reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.enabledCategories)
+                });
+            }
+
+            if (data.startsWith('toggle_cat:')) {
+                const categoryId = data.split(':')[1];
+                if (ALERT_CATEGORIES[categoryId]) {
+                    const current = Array.isArray(config.enabledCategories)
+                        ? [...config.enabledCategories]
+                        : Object.keys(ALERT_CATEGORIES);
+                    const next = current.includes(categoryId)
+                        ? current.filter(id => id !== categoryId)
+                        : [...current, categoryId];
+                    this.updateConfig({ enabledCategories: next });
+                    const definition = ALERT_CATEGORIES[categoryId];
+                    await answer(`${definition.emoji} ${definition.label}: ${next.includes(categoryId) ? 'ativado' : 'silenciado'}`);
+                    const fresh = this.getConfig();
+                    return ctx.editMessageText?.(this.renderCategoriesMenu(fresh.enabledCategories), {
+                        reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(fresh.enabledCategories)
+                    });
+                }
+                await answer();
+                return;
+            }
+
             // 2. Settings Modifiers
             if (data.startsWith('set_interval:')) {
                 const minutes = parseInt(data.split(':')[1], 10);
@@ -1000,7 +1080,7 @@ export class WeatherTelegramBot {
                     CARD_HEADER,
                     '• Status & Varredura: Diagnóstico em tempo real das métricas do serviço.',
                     '• Alertas Ativos: Varredura imediata dos avisos do INMET e alertas da Defesa Civil RS.',
-                    '• Configurações: Altere raio, intervalo e limiares independentes por instituto.'
+                    '• Configurações: Altere raio, intervalo, limiares e categorias de alerta por tipo de evento.'
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {

@@ -21,6 +21,38 @@ export const SEVERITY_LEVELS = {
 };
 
 /**
+ * Alert category definitions used for granular delivery preferences.
+ * Every mapped event type groups into exactly one of these categories;
+ * unmatched INMET warning descriptions fall back to 'chuva'.
+ */
+export const ALERT_CATEGORIES = {
+    chuva: { emoji: '🌧️', label: 'Chuva e Alagamentos' },
+    temperatura: { emoji: '🌡️', label: 'Temperatura (Frio e Calor)' },
+    vento: { emoji: '💨', label: 'Ventos' },
+    umidade: { emoji: '💧', label: 'Umidade do Ar' },
+    rio: { emoji: '🌊', label: 'Nível dos Rios' }
+};
+
+/**
+ * Resolves the alert category of a normalized risk event by matching
+ * keywords in its type/details. Defesa Civil river rules are checked
+ * first, followed by temperature, humidity, wind, and rain keywords.
+ *
+ * @param {object} event - Normalized risk event.
+ * @returns {string} Category id (see ALERT_CATEGORIES).
+ */
+export function getEventCategory(event = {}) {
+    const text = `${event.type || ''} ${event.details || ''} ${event.triggerReason || ''}`.toLowerCase();
+
+    if (/elevaç|elevac|\brio\b/.test(text)) return 'rio';
+    if (/geada|frio|calor|temperatura|neve|congelamento/.test(text)) return 'temperatura';
+    if (text.includes('umidade')) return 'umidade';
+    if (/vento|vendaval|rajad/.test(text)) return 'vento';
+    if (/chuva|tempestade|temporal|instabilidade|alagament|granizo/.test(text)) return 'chuva';
+    return 'chuva';
+}
+
+/**
  * Normalizes input severity strings to canonical uppercase tiers.
  * 
  * @param {string|number} tier - Input tier representation.

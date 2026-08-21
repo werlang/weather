@@ -9,7 +9,7 @@ import {
   createAlertDispatcher,
   performRegionalRiskMonitoring
 } from '../src/monitor_service.js';
-import { analyzeForecastRisks, parseRadiusArg } from '../src/risk_analyzer.js';
+import { analyzeForecastRisks, parseRadiusArg, getEventCategory } from '../src/risk_analyzer.js';
 import { getSurroundingCities } from '../src/inmet_client.js';
 import { Sqlite } from '../src/database_driver.js';
 import { getDatabase } from '../src/log_database.js';
@@ -154,6 +154,34 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
 
     // Verify Charqueadas is always center in every ring
     assert.ok(cities25.some(c => c.name === 'Charqueadas' && c.distKm === 0));
+  });
+
+  it('classifies every mapped event type into its alert category', () => {
+    const cases = [
+      [{ type: 'Tempestade Severa / Temporal Extremo' }, 'chuva'],
+      [{ type: 'Chuva / Instabilidade' }, 'chuva'],
+      [{ type: 'Frio Extremo / Risco de Congelamento' }, 'temperatura'],
+      [{ type: 'Geada / Frio Típico de Inverno', details: 'Temp. Mínima: 3°C' }, 'temperatura'],
+      [{ type: 'Aviso de Baixa Temperatura' }, 'temperatura'],
+      [{ type: 'Onda de Calor Extrema / Risco à Saúde' }, 'temperatura'],
+      [{ type: 'Calor Intenso' }, 'temperatura'],
+      [{ type: 'Emergência de Baixa Umidade do Ar' }, 'umidade'],
+      [{ type: 'Aviso de Baixa Umidade Relativa do Ar' }, 'umidade'],
+      [{ type: 'Vendaval / Rajadas Destrutivas de Vento' }, 'vento'],
+      [{ type: 'Ventos Fortes / Rajadas de Vento' }, 'vento'],
+      [{ type: 'Chuva Torrencial Extrema (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'chuva'],
+      [{ type: 'Chuva Intensa / Risco de Alagamento (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'chuva'],
+      [{ type: 'Vendaval / Rajada Extrema (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'vento'],
+      [{ type: 'Vendaval / Rajadas Fortes (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'vento'],
+      [{ type: 'Elevação Crítica do Rio Jacuí (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'rio'],
+      [{ type: 'Elevação do Rio Lago Guaíba (Telemetria)', source: 'DEFESA_CIVIL_RS' }, 'rio'],
+      // INMET passthrough warnings are classified by their description
+      [{ type: 'Possibilidade de Chuva Intensa com Vendavais' }, 'chuva'],
+      [{ type: 'Aviso de Onda de Calor' }, 'temperatura'],
+    ];
+    for (const [event, expected] of cases) {
+      assert.strictEqual(getEventCategory(event), expected, `category for ${event.type}`);
+    }
   });
 
   it('startMonitoringService dynamically updates radius, interval timer, and independent threat levels at runtime', () => {
@@ -445,6 +473,60 @@ describe('Alert dispatch state', () => {
 });
 
 describe('Monitoring data quality', () => {
+  it('filters high-risk events by the enabled alert categories', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+
+    // Telemetry station simultaneously exceeding the orange rain rule and the red river rule
+    globalThis.fetch = async url => {
+      if (String(url).includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
+      if (String(url).includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            tags_data: {
+              qualle_meteorologia: [{
+                codigo: 'DCRS-00032',
+                data: {
+                  chuva: { acumulado: { min015: { value: 25 } } },
+                  vento: { velocidade_maxima: { value: 0 } },
+                  rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
+                }
+              }]
+            }
+          }
+        })
+      };
+    };
+
+    try {
+      const unfiltered = await performRegionalRiskMonitoring({
+        radiusKm: 25,
+        defesaCivilMinSeverity: 'ORANGE',
+        alertCallback: null
+      });
+      assert.strictEqual(unfiltered.highRiskCount, 2);
+
+      const riversOnly = await performRegionalRiskMonitoring({
+        radiusKm: 25,
+        defesaCivilMinSeverity: 'ORANGE',
+        enabledCategories: ['rio'],
+        alertCallback: null
+      });
+      assert.strictEqual(riversOnly.highRiskCount, 1);
+      assert.match(riversOnly.events[0].type, /Elevação Crítica/);
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  });
+
   it('does not report no-risk when forecasts fail or return empty payloads', async () => {
     const originalFetch = globalThis.fetch;
     const originalDbPath = process.env.DB_PATH;

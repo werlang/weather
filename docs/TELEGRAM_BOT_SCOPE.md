@@ -66,7 +66,7 @@ Broadcast emergency alerts include quick jump action buttons attached directly t
 | `/start` or `/menu` | Opens the main interactive dashboard with button navigation. | Administrator |
 | `/status` | Returns system operational health, SQLite fetch stats, and active parameters. | Administrator |
 | `/alertas` | Displays active warnings and alerts from all sources (INMET + Defesa Civil RS). | Administrator |
-| `/config` | Opens the interactive settings menu (interval, radius, alert policy). | Administrator |
+| `/config` | Opens the interactive settings menu (interval, radius, alert categories, thresholds). | Administrator |
 | `/help` | Shows operational help, command cheat sheet, and interactive shortcuts. | All (Public) |
 
 ---

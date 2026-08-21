@@ -23,7 +23,9 @@ import {
     parseForecastDate,
     evaluateHighRisksIn24hWindow,
     normalizeSeverityTier,
-    getRiskEventKey
+    getRiskEventKey,
+    ALERT_CATEGORIES,
+    getEventCategory
 } from './risk_analyzer.js';
 
 import {
@@ -89,12 +91,17 @@ export function parseMonitorConfig() {
         saved.defesa_civil_min_severity || process.env.DEFESA_CIVIL_MIN_SEVERITY || 'ORANGE'
     );
 
+    // 4. Categorias de alerta habilitadas (ausente no banco = habilitada)
+    const enabledCategories = Object.keys(ALERT_CATEGORIES)
+        .filter(categoryId => saved[`alert_cat_${categoryId}`] !== '0');
+
     return {
         radiusKm,
         intervalMs,
         intervalMinutes: Math.round((intervalMs / (60 * 1000)) * 100) / 100,
         inmetMinSeverity,
-        defesaCivilMinSeverity
+        defesaCivilMinSeverity,
+        enabledCategories
     };
 }
 
@@ -172,6 +179,7 @@ export function createAlertDispatcher(alertCallback) {
  * @param {number} [options.radiusKm=50] - Raio de monitoramento em KM.
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.inmetMinSeverity='RED'] - Nível mínimo para alertas INMET.
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.defesaCivilMinSeverity='ORANGE'] - Nível mínimo para Defesa Civil RS.
+ * @param {string[]|null} [options.enabledCategories=null] - Categorias habilitadas (null = todas).
  * @param {function|null} [options.alertCallback] - Callback customizado para alertas.
  * @returns {Promise<{ citiesCount: number, highRiskCount: number, events: Array<object>, dataQuality: object }>}
  */
@@ -179,6 +187,7 @@ export async function performRegionalRiskMonitoring({
     radiusKm = 50,
     inmetMinSeverity = 'RED',
     defesaCivilMinSeverity = 'ORANGE',
+    enabledCategories = null,
     alertCallback = onHighRiskEventDetected
 } = {}) {
     const startTime = Date.now();
@@ -245,7 +254,9 @@ export async function performRegionalRiskMonitoring({
             inmetMinSeverity,
             defesaCivilMinSeverity,
             now: new Date()
-        });
+        }).filter(event =>
+            !Array.isArray(enabledCategories) || enabledCategories.includes(getEventCategory(event))
+        );
 
         const durationMs = Date.now() - startTime;
         console.log(`[${timestamp}] ✓ Monitoramento concluído. ${cities.length} municípios verificados.`);
@@ -313,6 +324,7 @@ export function startMonitoringService(options = {}) {
     let currentIntervalMs = options.intervalMs || config.intervalMs;
     let currentInmetMinSeverity = options.inmetMinSeverity || config.inmetMinSeverity;
     let currentDefesaCivilMinSeverity = options.defesaCivilMinSeverity || config.defesaCivilMinSeverity;
+    let currentEnabledCategories = options.enabledCategories || config.enabledCategories;
     const alertCallback = typeof options.alertCallback === 'function'
         ? options.alertCallback
         : onHighRiskEventDetected;
@@ -344,6 +356,7 @@ export function startMonitoringService(options = {}) {
                 radiusKm: currentRadiusKm,
                 inmetMinSeverity: currentInmetMinSeverity,
                 defesaCivilMinSeverity: currentDefesaCivilMinSeverity,
+                enabledCategories: currentEnabledCategories,
                 alertCallback: null
             });
             await dispatchAlerts(result.events, {
@@ -370,7 +383,7 @@ export function startMonitoringService(options = {}) {
         if (timerId) clearInterval(timerId);
     };
 
-    const updateConfig = ({ radiusKm, intervalMinutes, intervalMs, inmetMinSeverity, defesaCivilMinSeverity }) => {
+    const updateConfig = ({ radiusKm, intervalMinutes, intervalMs, inmetMinSeverity, defesaCivilMinSeverity, enabledCategories }) => {
         if (typeof radiusKm === 'number' && radiusKm > 0) {
             currentRadiusKm = radiusKm;
             try { saveSystemSetting('radius_km', radiusKm); } catch {}
@@ -393,6 +406,14 @@ export function startMonitoringService(options = {}) {
             currentDefesaCivilMinSeverity = normalizeSeverityTier(defesaCivilMinSeverity);
             try { saveSystemSetting('defesa_civil_min_severity', currentDefesaCivilMinSeverity); } catch {}
         }
+        if (Array.isArray(enabledCategories)) {
+            for (const categoryId of Object.keys(ALERT_CATEGORIES)) {
+                const enabled = enabledCategories.includes(categoryId);
+                try { saveSystemSetting(`alert_cat_${categoryId}`, enabled ? '1' : '0'); } catch {}
+            }
+            currentEnabledCategories = Object.keys(ALERT_CATEGORIES)
+                .filter(categoryId => enabledCategories.includes(categoryId));
+        }
         return getConfig();
     };
 
@@ -401,7 +422,8 @@ export function startMonitoringService(options = {}) {
         intervalMs: currentIntervalMs,
         intervalMinutes: Math.round((currentIntervalMs / (60 * 1000)) * 100) / 100,
         inmetMinSeverity: currentInmetMinSeverity,
-        defesaCivilMinSeverity: currentDefesaCivilMinSeverity
+        defesaCivilMinSeverity: currentDefesaCivilMinSeverity,
+        enabledCategories: [...(currentEnabledCategories || [])]
     });
 
     if (registerSignalHandlers) {
