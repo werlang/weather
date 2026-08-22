@@ -150,6 +150,128 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks.some(risk => risk.type.includes('Elevação Crítica') && risk.colorTier === 'RED'));
     });
 
+    it('declares official river quotas (alertLevelM / floodLevelM) for every regional station', () => {
+        for (const station of REGIONAL_STATIONS) {
+            assert.ok(
+                typeof station.alertLevelM === 'number' && station.alertLevelM > 0,
+                `${station.code} must declare a positive alertLevelM`
+            );
+            assert.ok(
+                typeof station.floodLevelM === 'number' && station.floodLevelM > station.alertLevelM,
+                `${station.code} must declare floodLevelM greater than alertLevelM`
+            );
+        }
+
+        // Official values: Charqueadas cota de inundação = 4.6m (Defesa Civil RS,
+        // July 2026 flood); São Jerônimo ANA gauge flood cota = 4.64m; Guaíba
+        // reference (Cais Mauá C6) flood cota = 3.0m.
+        const charqueadas = REGIONAL_STATIONS.find(s => s.code === CHARQUEADAS_STATION_CODE);
+        assert.strictEqual(charqueadas.floodLevelM, 4.6);
+        assert.strictEqual(charqueadas.alertLevelM, 4.05);
+
+        const saoJeronimo = REGIONAL_STATIONS.find(s => s.code === 'DCRS-00093');
+        assert.strictEqual(saoJeronimo.floodLevelM, 4.64);
+
+        const eldorado = REGIONAL_STATIONS.find(s => s.code === 'DCRS-00076');
+        assert.strictEqual(eldorado.floodLevelM, 3);
+        assert.strictEqual(eldorado.alertLevelM, 2.55);
+    });
+
+    it('raises Red at the official Charqueadas flood cota even with a stable rise', () => {
+        // Regression for the July 2026 event: the river reached 4.05m under an
+        // active red-alert bulletin with flooding starting at 4.6m, while the old
+        // global thresholds (>5.5m / >=6.5m) stayed silent forever.
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00032',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 4.7 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+
+        assert.strictEqual(risks.length, 1);
+        assert.strictEqual(risks[0].colorTier, 'RED');
+        assert.ok(risks[0].type.includes('Elevação Crítica'));
+    });
+
+    it('raises Orange above the official Charqueadas alert cota with a stable rise', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00032',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 4.2 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+
+        assert.strictEqual(risks.length, 1);
+        assert.strictEqual(risks[0].colorTier, 'ORANGE');
+        assert.ok(risks[0].type.includes('Elevação do Rio Baixo Jacuí'));
+    });
+
+    it('stays silent below the alert cota when the river level is stable', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00032',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 3.9 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+
+        assert.strictEqual(risks.length, 0);
+    });
+
+    it('applies the Guaíba lake quotas to downstream stations independently of Jacuí quotas', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00076',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 3.1 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            },
+            {
+                codigo: 'DCRS-00054',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 2.8 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+
+        assert.strictEqual(risks.length, 2); // 3.1m floods (RED); 2.8m is alerta (ORANGE)
+        assert.ok(risks.some(risk => risk.colorTier === 'RED' && risk.type.includes('Elevação Crítica')));
+        assert.ok(risks.some(risk => risk.colorTier === 'ORANGE' && risk.type.includes('Elevação do Rio Lago Guaíba')));
+    });
+
+    it('falls back to trend-only river detection for unknown stations without registered quotas', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-99999',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 0 } },
+                    rio: { rio_nivel: { value: 9.5 }, rio_nivel_tendencia: { value: 0.3 } }
+                }
+            }
+        ]);
+
+        // Absolute level must NOT fire (no quotas registered); moderate trend fires Orange.
+        assert.strictEqual(risks.length, 1);
+        assert.strictEqual(risks[0].colorTier, 'ORANGE');
+        assert.ok(risks[0].type.includes('Elevação do Rio Jacuí')); // default river name
+    });
+
     it('can propagate telemetry failures to the monitoring coordinator', async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = async () => ({
