@@ -20,8 +20,10 @@ export const REGIONAL_STATIONS = [
     // (2026-07-23/24), ANA telemetry via nivelguaiba.com.br, estado.rs.gov.br (2024-05-28).
     // Charqueadas cota de alerta is an upper bound: water had already surpassed it at 4.05m.
     // São Jerônimo alert value is provisional (flood - 0.5m); official figure unverified.
-    // Guaíba lake stations use the Cais Mauá C6 reference quotas (alerta 2.55m / inundação 3.0m);
-    // verify each station's local datum against its reference gauge before trusting absolutes.
+    // Guaíba lake stations use the Cais Mauá C6 reference gauge (ANA 87450004):
+    // inundação 3.0m is the only formally registered ANA quota; the 2.55m alerta
+    // is the Defesa Civil RS operational trigger (2026 press often cites 2.50m).
+    // Verify each station's local datum against its reference gauge before trusting absolutes.
     { code: 'DCRS-00032', name: 'Charqueadas', river: 'Rio Baixo Jacuí', basin: 'RS - Baixo Jacuí', alertLevelM: 4.05, floodLevelM: 4.6 },
     { code: 'DCRS-00093', name: 'General Câmara / São Jerônimo', river: 'Rio Baixo Jacuí', basin: 'RS - Baixo Jacuí', alertLevelM: 4.14, floodLevelM: 4.64 },
     { code: 'DCRS-00076', name: 'Eldorado do Sul', river: 'Rio Lago Guaíba', basin: 'RS - Lago Guaíba', alertLevelM: 2.55, floodLevelM: 3 },

@@ -341,9 +341,9 @@ flood.
 
 | Station (`alertLevelM` → `floodLevelM`) | Values (m) | Source |
 | :--- | :--- | :--- |
-| `DCRS-00032` Charqueadas | 4.05 → 4.6 | Cota de inundação 4,6 m per Defesa Civil RS bulletin reported by Correio do Povo / Rádio Guaíba (2026-07-23/24); 4.05 m is an upper bound for the cota de alerta (water had already surpassed it at that reading) |
-| `DCRS-00093` General Câmara / São Jerônimo | 4.14 → 4.64 | Flood cota 4,64 m from ANA telemetry (nivelguaiba.com.br); alert value provisional (flood − 0.5 m), official figure unverified |
-| Guaíba stations: `DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122` | 2.55 → 3.0 | Cais Mauá C6 reference quotas (alerta 2,55 m / inundação 3,0 m), estado.rs.gov.br 2024-05-28; 2026 press cites alerta 2,50 m |
+| `DCRS-00032` Charqueadas | 4.05 → 4.6 | Cota de inundação 4,6 m per Defesa Civil RS bulletin reported by Correio do Povo / Rádio Guaíba (2026-07-23/24); 4.05 m is an upper bound for the cota de alerta (water had already surpassed it at that reading). No exact published alert value found in Defesa Civil RS bulletins, ANA HIDROWEB, ClimaRS or 2026 press as of 2026-08 |
+| `DCRS-00093` General Câmara / São Jerônimo | 4.14 → 4.64 | Flood cota 4,64 m from ANA telemetry (nivelguaiba.com.br); alert value provisional (flood − 0.5 m), no published official figure found |
+| Guaíba stations: `DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122` | 2.55 → 3.0 | Cais Mauá C6 reference gauge (ANA code `87450004`): inundação 3,00 m is the only formally registered ANA quota; the 2,55 m alerta is the Defesa Civil RS / Porto Alegre operational trigger (estado.rs.gov.br, 2024-05-28), commonly cited as 2,50 m in 2026 press (G1, Agora RS, SGB simulations) |
 
 Caveats:
 
@@ -351,6 +351,9 @@ Caveats:
   specific gauge they were defined on; cross-check each station's live
   `rio_nivel` against its reference gauge before trusting absolute-level
   triggers (especially for the Lago Guaíba stations mapped to Cais Mauá C6).
+- Independent monitors such as nivelguaiba.com.br calibrate only the *cota de
+  inundação* per city and derive "alerta" status from trend — consistent with
+  this project keeping trend-based rules alongside absolute quotas.
 - Rain/wind thresholds intentionally align with INMET's published warning
   criteria (rain: Yellow 20–30 mm/h / ≤ 50 mm/day, Orange 30–60 mm/h /
   50–100 mm/day, Red > 60 mm/h / > 100 mm/day; wind: Yellow 40–60 km/h,

@@ -80,7 +80,7 @@ estado.rs.gov.br 2024-05-28):
 | :--- | :--- | :--- | :--- | :--- |
 | `DCRS-00032` Charqueadas (Rio Jacuí) | municipal gauge | — | 4.05 m *(upper bound: water had already surpassed the cota de alerta at 4.05 m)* | **4.6 m** |
 | `DCRS-00093` General Câmara / São Jerônimo (Rio Jacuí) | ANA São Jerônimo gauge | — | 4.14 m *(provisional = flood − 0.5 m; official value unverified)* | **4.64 m** |
-| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) | Cais Mauá C6 reference | 2.0 m | 2.55 m | **3.0 m** |
+| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) | Cais Mauá C6 reference (ANA `87450004`) | 2.0 m | 2.55 m *(DC operational trigger; ANA registers no alert cota — 2026 press cites 2.50 m)* | **3.0 m** |
 
 > **⚠️ Local datum caveat:** SGB/ANA warn that quota values are *"referências de nível
 > local e arbitrária"* valid only for the specific ruler/gauge they were defined for.

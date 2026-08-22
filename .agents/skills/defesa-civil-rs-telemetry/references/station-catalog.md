@@ -42,9 +42,17 @@ Verified values with sources:
 | `DCRS-00032` Charqueadas — Rio Jacuí (municipal gauge) | — | 4.05 m *(upper bound; see note)* | **4.6 m** | Defesa Civil RS red-alert bulletin, 2026-07-23/24 (Correio do Povo, Rádio Guaíba) |
 | `DCRS-00093` General Câmara / São Jerônimo — Rio Jacuí (ANA São Jerônimo gauge) | — | 4.14 m *(provisional = flood − 0.5 m)* | **4.64 m** | ANA telemetry via nivelguaiba.com.br; 2026-07 press coverage |
 | Triunfo — Rio Jacuí (context only, not a monitored DCRS station) | — | ~4.65 m | 4.67 m | Correio do Povo, 2026-07 |
-| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) — Cais Mauá C6 reference gauge | 2.0 m | 2.55 m (2026 press cites 2.50 m) | **3.0 m** | estado.rs.gov.br, 2024-05-28; G1 / Agora RS, 2026-07 |
+| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) — Cais Mauá C6 reference gauge (ANA code `87450004`) | 2.0 m | 2.55 m *(operational trigger; see note)* | **3.0 m** | estado.rs.gov.br, 2024-05-28; G1 / Agora RS / GZH, 2026-07 |
 | Usina do Gasômetro emergency gauge (Guaíba context, installed 2024-05-03) | — | 3.15 m | 3.60 m | estado.rs.gov.br, 2024-05-28 |
 | Porto Alegre Ilhas district (community-level quotas) | — | 2.0 m | 2.20 m | Agora RS, 2026-07 |
+
+> **Guaíba alert-cota provenance:** ANA's official quota registry (ABRHidro
+> IV-END0138 paper, Table 1, May 2024 flood mapping) records **no cota de alerta**
+> for Cais Mauá C6 (`87450004`) nor Ilha Pintada (`87450005`) — only the cota de
+> inundação of 3.00 m. The 2.55 m alert value is the Defesa Civil RS / Porto Alegre
+> operational trigger published by estado.rs.gov.br; 2026 press coverage (G1,
+> Agora RS, SGB simulations) commonly cites 2.50 m instead. Treat 2.50–2.55 m as an
+> operational band, not a formally registered ANA quota.
 
 > **⚠️ Local datum caveat:** SGB/ANA bulletins warn that quota values are
 > *"referências de nível local e arbitrária"*, valid only for the specific
@@ -54,9 +62,12 @@ Verified values with sources:
 
 > **Charqueadas cota de alerta note:** during the 2026-07-23 event the river was
 > already above the cota de alerta when measured at 4.05 m, so the true quota is
-> *lower* than 4.05 m. The exact published value has not been located yet — treat
+> *lower* than 4.05 m. Targeted searches of Defesa Civil RS bulletins, ANA HIDROWEB,
+> ClimaRS and July–August 2026 press found **no published exact value** — treat
 > 4.05 m as a conservative upper bound and replace it once the official figure is
-> confirmed by Defesa Civil Municipal de Charqueadas / ANA HIDROWEB.
+> confirmed by Defesa Civil Municipal de Charqueadas / ANA HIDROWEB. The same search
+> found no published cota de alerta for the São Jerônimo gauge either (hence the
+> provisional flood − 0.5 m value).
 
 ---
 
