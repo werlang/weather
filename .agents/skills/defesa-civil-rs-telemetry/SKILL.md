@@ -61,13 +61,32 @@ Station `DCRS-00032` (Charqueadas) provides real-time sensor metrics updated at 
 
 | Indicator Category | Field Path | Unit | Alert Trigger Threshold | Operational Risk Meaning |
 | :--- | :--- | :--- | :--- | :--- |
-| **River Level** | `rio.rio_nivel.value` | meters (`m`) | Rising above baseline (e.g. > 5.5m alert, > 6.5m flood) | Flooding of riverside communities in Charqueadas |
-| **River Trend** | `rio.rio_nivel_tendencia.value` | rate / hr | Positive rapid rise (`> +0.10 m/h`) | Rapid flood wave propagation down Baixo Jacuí |
-| **Flash Rain (15m)** | `chuva.acumulado.min015.value` | `mm` | `≥ 15.0 mm` in 15 minutes | Flash flood / urban drainage overflow |
-| **Intense Rain (1h)** | `chuva.acumulado.h001.value` | `mm` | `≥ 30.0 mm` in 1 hour | Severe downpour / localized flooding |
-| **Daily Rain (24h)** | `chuva.acumulado.h024.value` | `mm` | `≥ 80.0 mm` in 24 hours | Basin saturation / major river level surge |
-| **Wind Gust Max** | `vento.velocidade_maxima.value` | `km/h` | `≥ 60 km/h` (Mod), `≥ 80 km/h` (Severe) | Destructive winds, falling trees, power grid outages |
-| **Pressure Trend** | `pressaoatmos.tendencia.value` | rate | Sharp drop (`< -2.0 hPa/3h`) | Imminent squall line / cold front passage |
+| **River Level** | `rio.rio_nivel.value` | meters (`m`) | Above the station's official quotas (see §3.1): Charqueadas cota de alerta 4.05 m, **cota de inundação 4.6 m** | Flooding of riverside communities in Charqueadas |
+| **River Trend** | `rio.rio_nivel_tendencia.value` | rate / hr | `>= +0.25 m/h` (Orange), `>= +0.50 m/h` (Red) | Rapid flood wave propagation down Baixo Jacuí |
+| **Flash Rain (15m)** | `chuva.acumulado.min015.value` | `mm` | `>= 20 mm` in 15 minutes | Flash flood / urban drainage overflow |
+| **Intense Rain (1h)** | `chuva.acumulado.h001.value` | `mm` | `>= 30 mm` in 1 hour (Orange); `>= 50 mm` or `>= 80 mm` in 3h (Red) | Severe downpour / localized flooding |
+| **Daily Rain (24h)** | `chuva.acumulado.h024.value` | `mm` | `>= 80 mm` in 24 hours | Basin saturation / major river level surge |
+| **Wind Gust Max** | `vento.velocidade_maxima.value` | `km/h` | `>= 75 km/h` (Orange), `>= 100 km/h` (Red). INMET official bands for comparison: Yellow 40–60, Orange 61–99, Red > 100 km/h | Destructive winds, falling trees, power grid outages |
+| **Pressure Trend** | `pressaoatmos.tendencia.value` | rate | Sharp drop (`< -2.0 hPa/3h`) — informational only; no automated risk rule uses pressure today | Imminent squall line / cold front passage |
+
+### 3.1 Official River Quotas (Cotas Oficiais) — Evidence-Based
+
+Absolute river-level triggers MUST use each station's official quotas, not invented
+globals. Verified values (sources: Defesa Civil RS bulletins reported by Correio do
+Povo / Rádio Guaíba on 2026-07-23/24; ANA telemetry via nivelguaiba.com.br;
+estado.rs.gov.br 2024-05-28):
+
+| Station | Gauge point | Cota de atenção | Cota de alerta | Cota de inundação |
+| :--- | :--- | :--- | :--- | :--- |
+| `DCRS-00032` Charqueadas (Rio Jacuí) | municipal gauge | — | 4.05 m *(upper bound: water had already surpassed the cota de alerta at 4.05 m)* | **4.6 m** |
+| `DCRS-00093` General Câmara / São Jerônimo (Rio Jacuí) | ANA São Jerônimo gauge | — | 4.14 m *(provisional = flood − 0.5 m; official value unverified)* | **4.64 m** |
+| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) | Cais Mauá C6 reference | 2.0 m | 2.55 m | **3.0 m** |
+
+> **⚠️ Local datum caveat:** SGB/ANA warn that quota values are *"referências de nível
+> local e arbitrária"* valid only for the specific ruler/gauge they were defined for.
+> Before trusting absolute-level comparisons for any station, cross-check its live
+> `rio_nivel` reading against the corresponding official gauge (e.g., Cais Mauá C6
+> for the Guaíba lake stations).
 
 ---
 
@@ -149,61 +168,58 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
 
 ## 5. Secondary Risk Verification Algorithm
 
-When an INMET alert or severe forecast is active, the telemetry verifier confirms if real-world sensors are registering imminent or ongoing severe hazards:
+The canonical implementation is `evaluateDefesaCivilRisks()` in
+`src/defesa_civil_client.js`. It evaluates three independent rule groups per station:
+rain accumulation, wind gusts, and river level/trend (using the per-station official
+quotas from §3.1). The simplified shape of the algorithm:
 
 ```javascript
 export function verifyTelemetryRisks(stationTelemetry) {
     const verifiedRisks = [];
 
     for (const station of stationTelemetry) {
-        const name = station.name?.general || station.codigo;
-        const rioNivel = station.data?.rio?.rio_nivel?.value;
-        const rioTrend = station.data?.rio?.rio_nivel_tendencia?.value;
-        const rain15m = station.data?.chuva?.acumulado?.min015?.value || 0;
-        const rain1h = station.data?.chuva?.acumulado?.h001?.value || 0;
-        const rain24h = station.data?.chuva?.acumulado?.h024?.value || 0;
-        const windGust = station.data?.vento?.velocidade_maxima?.value || 0;
+        const meta = REGIONAL_STATIONS.find(s => s.code === station.codigo)
+            || { name: station.name?.local || station.codigo };
+        const data = station.data || {};
+        const rain15min = parseFloat(data.chuva?.acumulado?.min015?.value) || 0;
+        const rain1h = parseFloat(data.chuva?.acumulado?.h001?.value) || 0;
+        const windGust = parseFloat(data.vento?.velocidade_maxima?.value) || 0;
+        const riverLevel = parseFloat(data.rio?.rio_nivel?.value) || null;
+        const riverTrend = parseFloat(data.rio?.rio_nivel_tendencia?.value) || 0;
 
-        // 1. Hydrometric flood surge verification
-        if (rioNivel !== undefined && rioNivel !== null && rioNivel > 5.0) {
-            verifiedRisks.push({
-                station: station.codigo,
-                location: name,
-                type: 'ELEVAÇÃO CRÍTICA DO RIO JACUÍ',
-                severity: rioNivel >= 6.5 ? 'CRITICAL' : 'HIGH',
-                metric: `Nível do Rio: ${rioNivel}m (Tendência: ${rioTrend || 'N/A'})`,
-                timestamp: station.timestamp
-            });
+        // 1. Rain: RED >= 50mm/1h or 80mm/3h; ORANGE >= 20mm/15min, 30mm/1h, 50mm/3h or 80mm/24h
+        if (rain1h >= 50) {
+            verifiedRisks.push({ type: 'CHUVA TORRENCIAL EXTREMA', severity: 'CRITICAL', ... });
+        } else if (rain15min >= 20 || rain1h >= 30) {
+            verifiedRisks.push({ type: 'CHUVA INTENSA / ALAGAMENTO', severity: 'HIGH', ... });
         }
 
-        // 2. High intensity flash deluge
-        if (rain15m >= 15.0 || rain1h >= 30.0) {
-            verifiedRisks.push({
-                station: station.codigo,
-                location: name,
-                type: 'CHUVA TORRENCIAL EM TEMPO REAL',
-                severity: 'HIGH',
-                metric: `Chuva 15min: ${rain15m}mm | Chuva 1h: ${rain1h}mm | 24h: ${rain24h}mm`,
-                timestamp: station.timestamp
-            });
+        // 2. Wind gusts: RED >= 100 km/h; ORANGE >= 75 km/h
+        if (windGust >= 100) {
+            verifiedRisks.push({ type: 'VENDAVAL / RAJADA EXTREMA', severity: 'CRITICAL', ... });
+        } else if (windGust >= 75) {
+            verifiedRisks.push({ type: 'VENDAVAL / RAJADAS FORTES', severity: 'HIGH', ... });
         }
 
-        // 3. Destructive wind gusts
-        if (windGust >= 60.0) {
-            verifiedRisks.push({
-                station: station.codigo,
-                location: name,
-                type: 'RAJADA DE VENTO SEVERA DETECTADA',
-                severity: windGust >= 80.0 ? 'CRITICAL' : 'HIGH',
-                metric: `Rajada Máxima: ${windGust} km/h`,
-                timestamp: station.timestamp
-            });
+        // 3. River level vs OFFICIAL quotas + trend rate (absolute cota keeps the alert
+        //    active even after the rise stabilizes)
+        if (riverLevel !== null) {
+            if ((meta.floodLevelM != null && riverLevel >= meta.floodLevelM) || riverTrend >= 0.5) {
+                verifiedRisks.push({ type: 'ELEVAÇÃO CRÍTICA DO RIO', severity: 'CRITICAL', ... });
+            } else if ((meta.alertLevelM != null && riverLevel > meta.alertLevelM) || riverTrend >= 0.25) {
+                verifiedRisks.push({ type: 'ELEVAÇÃO DO RIO', severity: 'HIGH', ... });
+            }
         }
     }
 
     return verifiedRisks;
 }
 ```
+
+Historical note: before the July 2026 Jacuí flood event this skill suggested global
+thresholds (> 5.5 m alert / > 6.5 m flood). Those values exceeded Charqueadas' actual
+cota de inundação (4.6 m) and would have stayed silent during a real red-alert flood.
+Never reintroduce hard-coded global river thresholds — always use per-station quotas.
 
 ---
 

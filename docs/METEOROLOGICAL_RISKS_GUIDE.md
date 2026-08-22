@@ -30,7 +30,7 @@ INMET classifies meteorological risk situations into three primary severity leve
 To ensure school administrators receive actionable notifications strictly when class cancellation or remote operations are warranted, the system enforces:
 
 1. **🔴 INMET Warnings:** Triggered strictly on **`Grande Perigo` (`#FF0000` / Red)**. *(INMET Orange and Yellow are treated as advisory and do not dispatch high-priority alarms alone)*.
-2. **🟠 Defesa Civil RS Telemetry & Warnings:** Triggered on **`Alerta` (Orange)** and **`Alerta Máximo` (Red)** (Rain $\ge 20\text{ mm/15min}$ or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or rapid Jacuí river rise $\ge 0.25\text{ m/h}$).
+2. **🟠 Defesa Civil RS Telemetry & Warnings:** Triggered on **`Alerta` (Orange)** and **`Alerta Máximo` (Red)** (Rain $\ge 20\text{ mm/15min}$ or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or Jacuí river rise $\ge 0.25\text{ m/h}$, or the absolute level crossing the station's official cota — Charqueadas: alerta 4.05 m / inundação 4.6 m).
 3. **🔴 24h Extreme Forecasts:** Triggered on extreme conditions ($T_{\min} \le 0^\circ\text{C}$ sub-zero freezing/black ice, $T_{\max} \ge 40^\circ\text{C}$, severe storms with cyclone/hail, or $RH_{\min} \le 12\%$).
 
 Official INMET warnings are eligible only when their reported start/end interval overlaps the next 24 hours. Forecasts for the first two days are evaluated across the `manha`, `tarde`, and `noite` periods; later daily summaries are evaluated as full-day data.
@@ -56,7 +56,7 @@ In addition to official INMET weather alerts, **Defesa Civil RS (Rede Hidrometeo
 
 While INMET provides broader regional forecasts and severe weather warnings, the Defesa Civil RS API provides **hyper-local real-time hydrometeorological telemetry**:
 
-* **Hydrometric River Level Monitoring (`rio_nivel`):** Monitored in real-time at station `DCRS-00032` in Charqueadas (Rio Baixo Jacuí). Critical for flash flood and river overflow risk assessments.
+* **Hydrometric River Level Monitoring (`rio_nivel`):** Monitored in real-time at station `DCRS-00032` in Charqueadas (Rio Baixo Jacuí). Critical for flash flood and river overflow risk assessments. **Official quotas for Charqueadas: cota de inundação = 4.6 m; cota de alerta ≤ 4.05 m** (Defesa Civil RS, July 2026 flood bulletins). Upstream ANA gauge São Jerônimo: cota de inundação 4.64 m. Guaíba reference (Cais Mauá C6): alerta 2.55 m / inundação 3.0 m.
 * **Rapid Rain Accumulation (`chuva.acumulado`):** Tracks short-term high-intensity rainfall spikes in 15-minute (`min015`), 1-hour (`h001`), and 3-hour (`h003`) intervals, plus 24-hour accumulation (`h024`) to detect sudden deluge and basin-saturation conditions.
 * **Real-time Wind Gusts (`vento.velocidade_maxima`):** Provides instant wind vector data from regional stations.
 * **Absolute River Level (`rio_nivel`):** Keeps a critical or orange river alert active when the measured level remains high, even after the short-term rise has stabilized.

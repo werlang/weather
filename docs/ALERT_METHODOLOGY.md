@@ -315,7 +315,7 @@ Measurements read per station: rain accumulations `min015`, `h001`, `h003`,
 | :--- | :--- | :--- |
 | Rain accumulation | `rain_1h >= 50` **or** `rain_3h >= 80` | `rain_15min >= 20` **or** `rain_1h >= 30` **or** `rain_3h >= 50` **or** `rain_24h >= 80` |
 | Wind gust | `gust >= 100 km/h` | `gust >= 75 km/h` |
-| River level / trend | `level >= 6.5 m` **or** `trend >= 0.5 m/h` | `level > 5.5 m` **or** `trend >= 0.25 m/h` |
+| River level / trend | `level >= floodLevelM` **or** `trend >= 0.5 m/h` | `level > alertLevelM` **or** `trend >= 0.25 m/h` |
 
 Notes:
 
@@ -324,8 +324,40 @@ Notes:
 - The **absolute river cota keeps the alert active even after the rise
   stabilizes** (trend ≈ 0 but level ≥ threshold still fires).
 - Missing readings parse as `0` (river level missing ⇒ river group skipped).
+- River absolute-level rules use the **per-station official quotas**
+  (`alertLevelM` / `floodLevelM`) defined in `REGIONAL_STATIONS`
+  (§5.3.1); stations without a registered quota fall back to trend-only
+  detection.
 - Events pass the Defesa Civil threshold gate from §4.1 (`colorTier` rank ≥
   configured rank).
+
+#### 5.3.1 Official River Quotas & Threshold Provenance
+
+River quotas are official values tied to each gauge's local reference, not
+invented globals. A previous global pair (> 5.5 m alert / ≥ 6.5 m flood) was
+removed after evidence showed it exceeded Charqueadas' real cota de inundação
+(4.6 m) — it would have stayed silent during the July 2026 red-alert Jacuí
+flood.
+
+| Station (`alertLevelM` → `floodLevelM`) | Values (m) | Source |
+| :--- | :--- | :--- |
+| `DCRS-00032` Charqueadas | 4.05 → 4.6 | Cota de inundação 4,6 m per Defesa Civil RS bulletin reported by Correio do Povo / Rádio Guaíba (2026-07-23/24); 4.05 m is an upper bound for the cota de alerta (water had already surpassed it at that reading) |
+| `DCRS-00093` General Câmara / São Jerônimo | 4.14 → 4.64 | Flood cota 4,64 m from ANA telemetry (nivelguaiba.com.br); alert value provisional (flood − 0.5 m), official figure unverified |
+| Guaíba stations: `DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122` | 2.55 → 3.0 | Cais Mauá C6 reference quotas (alerta 2,55 m / inundação 3,0 m), estado.rs.gov.br 2024-05-28; 2026 press cites alerta 2,50 m |
+
+Caveats:
+
+- SGB/ANA warn quotas are *local, arbitrary references* valid only for the
+  specific gauge they were defined on; cross-check each station's live
+  `rio_nivel` against its reference gauge before trusting absolute-level
+  triggers (especially for the Lago Guaíba stations mapped to Cais Mauá C6).
+- Rain/wind thresholds intentionally align with INMET's published warning
+  criteria (rain: Yellow 20–30 mm/h / ≤ 50 mm/day, Orange 30–60 mm/h /
+  50–100 mm/day, Red > 60 mm/h / > 100 mm/day; wind: Yellow 40–60 km/h,
+  Orange 61–99 km/h, Red > 100 km/h). Two deliberate deviations: our RED rain
+  (≥ 50 mm/h) is stricter than INMET red to compensate for telemetry noise,
+  and our ORANGE wind (75 km/h) sits inside INMET's orange band rather than at
+  its lower edge (61 km/h) to reduce false positives from lake breeze gusts.
 
 ---
 

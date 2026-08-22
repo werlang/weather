@@ -32,6 +32,32 @@ Complete inventory of Defesa Civil RS hydrometeorological stations for **Charque
 | `DCRS-00033` | **Porto Alegre - Ipanema** | `-30.1419` | `-51.2271` | RS - Lago Guaíba | **Lake Water Level:** Live Guaíba basin levels and southerly wind vectoring. |
 | `DCRS-00122` | **Porto Alegre - Cristal** | `-30.0773` | `-51.2452` | RS - Lago Guaíba | **Delta Discharge:** Monitors drainage of Jacuí waters into the central lake. |
 
+### 2.1 Official River Quotas (Cotas Oficiais)
+
+Absolute river-level alert triggers must reference each station's official quotas.
+Verified values with sources:
+
+| Station / Gauge point | Cota de atenção | Cota de alerta | Cota de inundação | Evidence source |
+| :--- | :--- | :--- | :--- | :--- |
+| `DCRS-00032` Charqueadas — Rio Jacuí (municipal gauge) | — | 4.05 m *(upper bound; see note)* | **4.6 m** | Defesa Civil RS red-alert bulletin, 2026-07-23/24 (Correio do Povo, Rádio Guaíba) |
+| `DCRS-00093` General Câmara / São Jerônimo — Rio Jacuí (ANA São Jerônimo gauge) | — | 4.14 m *(provisional = flood − 0.5 m)* | **4.64 m** | ANA telemetry via nivelguaiba.com.br; 2026-07 press coverage |
+| Triunfo — Rio Jacuí (context only, not a monitored DCRS station) | — | ~4.65 m | 4.67 m | Correio do Povo, 2026-07 |
+| Guaíba lake stations (`DCRS-00076`, `DCRS-00054`, `DCRS-00033`, `DCRS-00122`) — Cais Mauá C6 reference gauge | 2.0 m | 2.55 m (2026 press cites 2.50 m) | **3.0 m** | estado.rs.gov.br, 2024-05-28; G1 / Agora RS, 2026-07 |
+| Usina do Gasômetro emergency gauge (Guaíba context, installed 2024-05-03) | — | 3.15 m | 3.60 m | estado.rs.gov.br, 2024-05-28 |
+| Porto Alegre Ilhas district (community-level quotas) | — | 2.0 m | 2.20 m | Agora RS, 2026-07 |
+
+> **⚠️ Local datum caveat:** SGB/ANA bulletins warn that quota values are
+> *"referências de nível local e arbitrária"*, valid only for the specific
+> ruler/gauge they were defined on. Before trusting absolute-level comparisons for a
+> station (especially the Lago Guaíba stations mapped to Cais Mauá C6 quotas), verify
+> that its `rio_nivel` readings share the same local zero as the official gauge.
+
+> **Charqueadas cota de alerta note:** during the 2026-07-23 event the river was
+> already above the cota de alerta when measured at 4.05 m, so the true quota is
+> *lower* than 4.05 m. The exact published value has not been located yet — treat
+> 4.05 m as a conservative upper bound and replace it once the official figure is
+> confirmed by Defesa Civil Municipal de Charqueadas / ANA HIDROWEB.
+
 ---
 
 ## 3. Hydrological Basin Dynamics: Baixo Jacuí & Lago Guaíba
@@ -66,4 +92,4 @@ Understanding river level behavior at Charqueadas requires analyzing the interac
 When assessing flood or severe weather risks in Charqueadas:
 * **Check `DCRS-00093` (General Câmara):** If river level or 24h rain is surging upstream, expect a crest in Charqueadas within 6 to 18 hours.
 * **Check `DCRS-00076` (Eldorado do Sul) & `DCRS-00033` (Ipanema):** If Guaíba levels are high and wind direction is South (`S`/`SE`), the Jacuí will suffer severe drainage blockage at Charqueadas.
-* **Check Station `DCRS-00032` (Charqueadas) `min015` vs `h001`:** Distinguish between instantaneous microbursts / flash floods (`min015 ≥ 15mm`) and continuous basin flooding (`h024 ≥ 80mm` + `rio_nivel > 5.5m`).
+* **Check Station `DCRS-00032` (Charqueadas) `min015` vs `h001`:** Distinguish between instantaneous microbursts / flash floods (`min015 >= 20mm`) and continuous basin flooding (`h024 >= 80mm` + `rio_nivel` approaching the 4.6 m cota de inundação).
