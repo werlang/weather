@@ -9,13 +9,15 @@
  */
 
 import { InlineKeyboard, splitTelegramMessage } from './telegram.js';
-import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring } from './monitor_service.js';
+import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring, getLastScanSnapshot } from './monitor_service.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
 import { aggregateRiskEvents, normalizeSeverityTier, ALERT_CATEGORIES } from './risk_analyzer.js';
 import {
     INVITE_CODE_REGEX,
     normalizeInviteCode,
+    extractInviteCodeFromText,
     getActiveInviteCode,
+    getActiveInvites,
     createAdminInviteCode,
     consumeInviteCode,
     getPersistedAdminChatIds,
@@ -216,25 +218,36 @@ function getAlertPresentation(events) {
 
 /**
  * Invite-code prompt shown to non-admin users.
- * Plain text, no keyboard — user must paste an 8-char A-Z0-9 code.
+ * Also serves as friendly hello for regular users — includes last-scan hint.
  *
- * @param {string|number|null} [chatId] - Optional chat ID for debugging (not shown to user).
  * @returns {string}
  */
 export function buildInviteRequiredMessage() {
+    return buildRegularWelcomeMessage();
+}
+
+/**
+ * Builds friendly hello for regular (non-admin) users with last-scan hint.
+ * Keeps "restrito ao administrador" phrase for backward compat with existing tests
+ * and clear permission messaging.
+ *
+ * @returns {string}
+ */
+export function buildRegularWelcomeMessage() {
     return [
-        '🔒 ACESSO RESTRITO',
+        '👋 Olá! Bem-vindo ao Monitor Meteorológico — Charqueadas / RS',
         CARD_HEADER,
-        'Este bot está restrito ao administrador configurado.',
+        'Sou o bot de monitoramento 24/7 de riscos (INMET + Defesa Civil RS).',
+        'Este bot está restrito ao administrador configurado para ajustes e varreduras ao vivo,',
+        'mas você pode consultar os últimos alertas já verificados sem gerar nova varredura.',
         '',
-        'Para solicitar acesso, peça a um administrador que gere um código de convite em:',
-        '⚙️ Configurações → 👥 Convidar Administrador',
-        '',
-        'Em seguida, envie o código aqui (8 caracteres, apenas A-Z e 0-9).',
-        'Exemplo: `AB12CD34`',
+        '🔑 Para acesso completo, peça a um administrador um código de convite',
+        '   em: ⚙️ Configurações → 👥 Convidar Administrador',
+        '   O código tem 8 caracteres A-Z0-9 e expira em 5 minutos (uso único).',
+        '   Basta colar o código aqui como mensagem (pode estar dentro de frase).',
         '',
         CARD_DIVIDER,
-        '💡 O código é de uso único e será invalidado após o resgate.'
+        '💡 Toque em “🚨 Ver Últimos Alertas” abaixo para ver o último scan.'
     ].join('\n');
 }
 
@@ -382,26 +395,29 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Sends the invite-code instruction to a non-admin chat.
+     * Sends the invite-code instruction to a non-admin chat (friendly hello + last-scan keyboard).
      *
      * @param {object} ctx - grammY context.
      * @returns {Promise<object>}
      */
     replyInviteRequired(ctx) {
-        return ctx.reply(buildInviteRequiredMessage());
+        return ctx.reply(buildRegularWelcomeMessage(), {
+            reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+        });
     }
 
     /**
      * Attempts to promote a non-admin chat via an invite code pasted as plain text.
-     * Single-use: successful consumption syncs the new admin into the in-memory allowlist.
+     * Supports surrounding text via extractInviteCodeFromText, single-use 5-min expiry.
      *
      * @param {object} ctx - grammY context.
      * @param {string} rawCode - Raw message text.
-     * @returns {Promise<object|null>} Reply result or null if code format does not match.
+     * @returns {Promise<object|null>} Reply result or null if no code found in text.
      */
     async tryConsumeInviteCode(ctx, rawCode) {
-        const normalized = normalizeInviteCode(rawCode);
-        if (!INVITE_CODE_REGEX.test(normalized)) return null;
+        const extracted = extractInviteCodeFromText(rawCode) || normalizeInviteCode(rawCode);
+        if (!INVITE_CODE_REGEX.test(extracted)) return null;
+        const normalized = extracted;
 
         const chatId = String(ctx.chat?.id);
         const result = consumeInviteCode(normalized, chatId);
@@ -431,6 +447,26 @@ export class WeatherTelegramBot {
                 CARD_HEADER,
                 'Use /start para abrir o painel principal.'
             ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+        }
+        if (result.reason === 'expired') {
+            return ctx.reply([
+                '⏰ CÓDIGO EXPIRADO',
+                CARD_HEADER,
+                `O código \`${normalized}\` expirou (validade 5 minutos).`,
+                '',
+                'Peça a um administrador que gere um novo código em:',
+                '⚙️ Configurações → 👥 Convidar Administrador'
+            ].join('\n'));
+        }
+        if (result.reason === 'revoked') {
+            return ctx.reply([
+                '🚫 CÓDIGO REVOGADO',
+                CARD_HEADER,
+                `O código \`${normalized}\` foi revogado pelo administrador.`,
+                '',
+                'Peça um novo código em:',
+                '⚙️ Configurações → 👥 Convidar Administrador'
+            ].join('\n'));
         }
         return ctx.reply([
             '❌ CÓDIGO INVÁLIDO',
@@ -464,7 +500,7 @@ export class WeatherTelegramBot {
     // =========================================================================
 
     /**
-     * Builds the primary inline keyboard for the bot main dashboard.
+     * Builds the primary inline keyboard for the bot main dashboard (admin).
      *
      * @returns {InlineKeyboard}
      */
@@ -475,6 +511,21 @@ export class WeatherTelegramBot {
             .row()
             .text('⚙️ Configurações', 'menu:settings')
             .text('❓ Ajuda & Comandos', 'action:help');
+    }
+
+    /**
+     * Builds the friendly keyboard for regular (non-admin) users.
+     * Last scan is read-only, no live API scan triggered.
+     *
+     * @returns {InlineKeyboard}
+     */
+    static buildRegularKeyboard() {
+        return new InlineKeyboard()
+            .text('🚨 Ver Últimos Alertas', 'action:last_scan')
+            .row()
+            .text('ℹ️ Sobre o Bot', 'action:regular_about')
+            .row()
+            .text('🔑 Já tenho código', 'action:regular_help');
     }
 
     /**
@@ -607,12 +658,13 @@ export class WeatherTelegramBot {
 
     /**
      * Renders the admin invite management menu with current invite status and allowlist.
+     * Shows 5-minute expiry countdown.
      *
      * @returns {string}
      */
     renderAdminsMenu() {
-        const persisted = (() => { try { return getPersistedAdminChatIds(); } catch { return []; } })();
-        const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
+        const persisted = (() => { try { return getPersistedAdminChatIds(); } catch (err) { console.error('[telegram_bot] renderAdminsMenu persisted error:', err.message); return []; } })();
+        const active = (() => { try { return getActiveInviteCode(); } catch (err) { console.error('[telegram_bot] renderAdminsMenu active error:', err.message); return null; } })();
         const adminIds = this.telegram.getAdminChatIds();
         const lines = [
             '👥 GERENCIAR ADMINISTRADORES',
@@ -626,34 +678,149 @@ export class WeatherTelegramBot {
         if (active) {
             lines.push(`🎟️ Código ativo: \`${active.code}\``);
             lines.push(`Criado em: ${active.createdAt || '—'} por ${active.createdBy || '—'}`);
-            lines.push('Envie este código ao novo administrador. É de uso único.');
+            if (active.expiresAt) {
+                const msLeft = new Date(active.expiresAt).getTime() - Date.now();
+                const mins = Math.max(0, Math.floor(msLeft / 60000));
+                const secs = Math.max(0, Math.floor((msLeft % 60000) / 1000));
+                lines.push(`Expira em: ${mins}m ${secs}s (5 minutos)`);
+            } else if (active.createdAt) {
+                const age = Date.now() - new Date(active.createdAt).getTime();
+                const left = Math.max(0, 5 * 60 * 1000 - age);
+                const mins = Math.floor(left / 60000);
+                const secs = Math.floor((left % 60000) / 1000);
+                lines.push(`Expira em: ${mins}m ${secs}s (5 minutos)`);
+            }
+            lines.push('Envie este código ao novo administrador. É de uso único e expira em 5 minutos.');
         } else {
             lines.push('Nenhum código de convite ativo no momento.');
-            lines.push('Gere um novo código para convidar um administrador.');
+            lines.push('Gere um novo código para convidar um administrador (expira em 5 minutos).');
         }
-        lines.push('', '💡 O convidado deve enviar o código aqui como mensagem de texto (8 caracteres A-Z0-9).');
+        lines.push('', '💡 O convidado deve enviar o código aqui como mensagem de texto (8 caracteres A-Z0-9). Pode estar dentro de frase — o bot extrai o código.');
         return lines.join('\n');
     }
 
     /**
      * Renders the newly generated invite code for display to the admin.
+     * Shows 5-minute expiry.
      *
      * @param {string} code - Generated invite code.
      * @returns {string}
      */
     renderInviteGenerated(code) {
+        const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
+        const expiryLine = active?.expiresAt
+            ? `Expira em: ${new Date(active.expiresAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })} (5 minutos)`
+            : 'Expira em 5 minutos';
         return [
             '🎟️ CÓDIGO DE CONVITE GERADO',
             CARD_HEADER,
             `Código: \`${code}\``,
+            expiryLine,
             '',
             'Compartilhe este código com o novo administrador.',
             'Ele deve iniciar conversa com o bot e enviar o código como mensagem.',
+            '(Pode colar com texto ao redor — o bot extrai o código)',
             '',
             CARD_DIVIDER,
-            '⚠️ Uso único — será invalidado após o primeiro resgate.',
+            '⚠️ Uso único — será invalidado após o primeiro resgate ou após expirar.',
             '🔁 Gere um novo código se precisar convidar outra pessoa.'
         ].join('\n');
+    }
+
+    /**
+     * Renders the friendly about text for regular users.
+     *
+     * @returns {string}
+     */
+    renderRegularAbout() {
+        return [
+            'ℹ️ SOBRE O BOT — CHARQUEADAS / RS',
+            CARD_HEADER,
+            'Monitoramento 24/7 de riscos meteorológicos (INMET + Defesa Civil RS).',
+            '• Fontes: avisos oficiais INMET e telemetria Defesa Civil RS (rios Jacuí/Guaíba, chuva, vento).',
+            '• Janela: próximas 24 horas, raio configurado pelo administrador.',
+            '• Atualização automática a cada ciclo (15 min padrão).',
+            '',
+            'Como regular, você vê o último scan já realizado (sem nova varredura).',
+            'Administradores veem varredura ao vivo via “🚨 Alertas Ativos”.',
+            '',
+            CARD_DIVIDER,
+            '🔑 Para virar administrador, peça um código de convite (8 A-Z0-9, 5 min) a um admin e cole aqui.'
+        ].join('\n');
+    }
+
+    /**
+     * Renders the last scan snapshot (no live API call) for regular users.
+     * Uses the cached snapshot from monitor_service (last_scan_snapshot system_settings).
+     *
+     * @returns {string}
+     */
+    renderLastScanReport() {
+        const snapshot = (() => { try { return getLastScanSnapshot(); } catch (err) { console.error('[telegram_bot] getLastScanSnapshot error:', err.message); return null; } })();
+        if (!snapshot) {
+            return [
+                '🟡 NENHUM SCAN RECENTE',
+                CARD_HEADER,
+                'Ainda não há varredura registrada desde o último reinício.',
+                'Aguarde o próximo ciclo automático (15 min) ou peça a um administrador para verificar.',
+                '',
+                CARD_DIVIDER,
+                `🕒 ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+            ].join('\n');
+        }
+        const events = Array.isArray(snapshot.events) ? snapshot.events : [];
+        const timestamp = snapshot.timestamp ? new Date(snapshot.timestamp).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '—';
+        if (events.length === 0) {
+            const lines = [
+                '🟢 ÚLTIMO SCAN — NENHUM ALERTA ATIVO',
+                CARD_HEADER,
+                `Varredura em: ${timestamp}`,
+                `Raio: ${snapshot.radiusKm ?? '—'} km | ${snapshot.citiesCount ?? '—'} municípios | ${snapshot.durationMs ?? '—'} ms`,
+                `Status dados: ${snapshot.dataQuality?.complete ? '✅ completo' : '⚠️ parcial'}`,
+                ''
+            ];
+            if (snapshot.dataQuality?.errors?.length) {
+                lines.push(`⚠️ Nota: ${snapshot.dataQuality.errors.join('; ')}`);
+                lines.push('');
+            }
+            lines.push(CARD_DIVIDER);
+            lines.push('💡 Monitoramento continua 24/7; novos alertas surgirão no próximo ciclo.');
+            lines.push('⚠️ Fontes: INMET + Defesa Civil RS (último scan, sem nova varredura).');
+            return lines.join('\n');
+        }
+        const aggregated = aggregateRiskEvents(events);
+        const uniqueCities = [...new Set(events.flatMap(e => e.affectedCities || []))];
+        const presentation = getAlertPresentation(aggregated);
+        const lines = [
+            `📋 ÚLTIMO SCAN — ${presentation.header.replace('🚨 ', '').replace('⚠️ ', '').replace('ℹ️ ', '')}`,
+            `(${presentation.criteria})`,
+            CARD_HEADER,
+            `🕒 Varredura em: ${timestamp}`,
+            `📊 ${aggregated.length} tipos agrupados — ${events.length} ocorrências em ${uniqueCities.length} de ${snapshot.citiesCount ?? '—'} municípios`,
+            `📏 Raio: ${snapshot.radiusKm ?? '—'} km | Status: ${snapshot.dataQuality?.complete ? '✅ completo' : '⚠️ parcial'}`,
+            ''
+        ];
+        aggregated.forEach((event, idx) => {
+            const badge = renderSeverityBadge(event.severity);
+            const cityCount = event.affectedCities.length;
+            const cityLabel = cityCount === 1 ? event.affectedCities[0] : `${cityCount} municípios: ${event.affectedCities.join(', ')}`;
+            const occNote = event.aggregatedCount > 1 ? ` (${event.aggregatedCount} ocorrências)` : '';
+            lines.push(`${idx + 1}. ${event.emoji || '⚠️'} ${event.type}${occNote}`);
+            lines.push(`   Severidade: ${badge}`);
+            lines.push(`   Origem: ${event.source || '—'}`);
+            lines.push(`   Municípios: ${cityLabel}`);
+            lines.push(`   Janela: ${event.timeframe || '—'}`);
+            lines.push(`   💡 Motivo: ${event.triggerReason || '—'}`);
+            if (event.details && event.details !== event.triggerReason) lines.push(`   📝 Detalhes: ${event.details}`);
+            if (idx < aggregated.length - 1) lines.push('', CARD_DIVIDER, '');
+        });
+        lines.push('', CARD_HEADER);
+        lines.push('ℹ️ Este é o último scan registrado (sem nova varredura ao vivo).');
+        if (snapshot.dataQuality?.errors?.length) {
+            lines.push(`⚠️ Nota dados parciais: ${snapshot.dataQuality.errors.join('; ')}`);
+        }
+        lines.push(`⚠️ Fontes: INMET + Defesa Civil RS | Snapshot: ${timestamp}`);
+        return lines.join('\n');
     }
 
     /**
@@ -991,15 +1158,6 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Registers standard bot commands with Telegram autocomplete.
-     *
-     * @returns {Promise<boolean>}
-     */
-    async initCommands() {
-        return this.telegram.setMyCommands?.(BOT_COMMANDS);
-    }
-
-    /**
      * Starts the bot polling loop and resolves when stopped.
      *
      * @param {object} [options] - Polling options.
@@ -1124,13 +1282,47 @@ export class WeatherTelegramBot {
 
         // Callback Query Router for Inline Buttons
         this.telegram.onCallbackQuery(async ctx => {
+            const data = ctx.callbackQuery?.data || '';
+            const answer = text => ctx.answerCallbackQuery?.(text ? { text } : undefined);
+
+            // Shared read-only actions (regular + admin) — no live scan, safe for spam
+            if (data === 'action:last_scan') {
+                await answer('📋 Carregando último scan…');
+                const report = this.renderLastScanReport();
+                const chunks = splitTelegramMessage(report);
+                const isAdminForKb = this.isAdmin(ctx);
+                const kb = isAdminForKb
+                    ? new InlineKeyboard().text('🔄 Atualizar', 'action:last_scan').text('⬅️ Menu', 'menu:main')
+                    : new InlineKeyboard().text('🔄 Atualizar', 'action:last_scan').text('⬅️ Menu', 'menu:regular_main');
+                if (chunks.length === 1) {
+                    return ctx.editMessageText?.(chunks[0], { reply_markup: kb });
+                }
+                await ctx.editMessageText?.(chunks[0]);
+                for (let i = 1; i < chunks.length; i += 1) {
+                    const isLast = i === chunks.length - 1;
+                    // eslint-disable-next-line no-await-in-loop
+                    await ctx.reply?.(chunks[i], { reply_markup: isLast ? kb : undefined });
+                }
+                return;
+            }
+            if (data === 'action:regular_about' || data === 'action:regular_help') {
+                await answer();
+                return ctx.editMessageText?.(this.renderRegularAbout(), {
+                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                });
+            }
+            if (data === 'menu:regular_main') {
+                await answer();
+                return ctx.editMessageText?.(buildRegularWelcomeMessage(), {
+                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                });
+            }
+
             if (!this.isAdmin(ctx)) {
                 await ctx.answerCallbackQuery?.({ text: 'Acesso restrito ao administrador.', show_alert: true });
                 return this.replyUnauthorized(ctx);
             }
 
-            const data = ctx.callbackQuery?.data || '';
-            const answer = text => ctx.answerCallbackQuery?.(text ? { text } : undefined);
             const config = this.getConfig();
 
             // Admin invite management

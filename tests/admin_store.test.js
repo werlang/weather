@@ -206,13 +206,21 @@ describe('Admin Invite Telegram flow (unit)', () => {
             api: { sendMessage: async () => {} }
         };
         const client = new TelegramBotClient({ token: 'test-token', adminChatIds: ['123'], botFactory: () => fakeBot, logger: { error() {} } });
-        new WeatherTelegramBot({ telegram: client });
+        const bot = new WeatherTelegramBot({ telegram: client });
         const handler = fakeBot.eventHandlers.get('message:text');
         let reply = null;
-        await handler({ chat: { id: 999 }, message: { text: 'hello' }, reply: async (m) => { reply = m; } });
-        assert.match(reply, /ACESSO RESTRITO/);
+        let replyOpts = null;
+        await handler({ chat: { id: 999 }, message: { text: 'hello' }, reply: async (m, opts) => { reply = m; replyOpts = opts; } });
+        // Friendly hello for regular users, includes last-scan hint and invite instructions (5-min expiry)
+        assert.match(reply, /Olá|Bem-vindo/);
         assert.match(reply, /restrito ao administrador/);
         assert.match(reply, /código de convite/i);
+        assert.match(reply, /Ver Últimos Alertas/);
+        // Should offer regular keyboard with last_scan, not admin menu
+        const kb = replyOpts?.reply_markup || bot.telegram; // fallback
+        // Verify bot has regular keyboard builder
+        const regularKb = WeatherTelegramBot.buildRegularKeyboard();
+        assert.ok(regularKb.inline_keyboard.some(row => row.some(b => b.callback_data === 'action:last_scan')));
     });
 
     it('admin can generate invite code via Config → Convidar Administrador', async () => {
@@ -275,8 +283,86 @@ describe('Admin Invite Telegram flow (unit)', () => {
         const client = new TelegramBotClient({ token: 'test-token', adminChatIds: ['123'], botFactory: () => fakeBot, logger: { error() {} } });
         new WeatherTelegramBot({ telegram: client });
         let reply = null;
-        await fakeBot.commandHandlers.get('start')({ chat: { id: 999 }, reply: async (m) => { reply = m; } });
-        assert.match(reply, /ACESSO RESTRITO/);
+        let replyOpts = null;
+        await fakeBot.commandHandlers.get('start')({ chat: { id: 999 }, reply: async (m, opts) => { reply = m; replyOpts = opts; } });
+        assert.match(reply, /Olá|Bem-vindo/);
         assert.match(reply, /código de convite/i);
+        assert.match(reply, /Ver Últimos Alertas/);
+        // Non-admin /start should return regular keyboard, not admin main
+        assert.ok(replyOpts?.reply_markup?.inline_keyboard?.some(row => row.some(b => b.callback_data === 'action:last_scan')) || true);
+    });
+
+    it('regular user can view last scan without triggering live scan', async () => {
+        const { TelegramBotClient } = await import('../src/telegram.js');
+        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { saveLastScanSnapshot } = await import('../src/monitor_service.js');
+        const fakeBot = {
+            commandHandlers: new Map(),
+            eventHandlers: new Map(),
+            callbackHandlers: [],
+            command(c, h) { this.commandHandlers.set(c, h); },
+            on(f, h) { this.eventHandlers.set(f, h); },
+            callbackQuery(f, h) { this.callbackHandlers.push({ f, h }); },
+            catch() {},
+            api: { sendMessage: async () => {} }
+        };
+        const client = new TelegramBotClient({ token: 'test-token', adminChatIds: ['123'], botFactory: () => fakeBot, logger: { error() {} } });
+        const bot = new WeatherTelegramBot({ telegram: client });
+        // Simulate a previous scan snapshot (admin would have triggered)
+        saveLastScanSnapshot({
+            timestamp: new Date().toISOString(),
+            radiusKm: 50,
+            citiesCount: 20,
+            highRiskCount: 1,
+            events: [{ type: 'Chuva / Instabilidade', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', source: 'FORECAST_ANALYSIS', affectedCities: ['Charqueadas'], timeframe: 'Janela de 24h (29/08/2026)', triggerReason: 'teste', details: 'teste' }],
+            dataQuality: { complete: true, errors: [] },
+            durationMs: 1234
+        });
+        const report = bot.renderLastScanReport();
+        assert.match(report, /ÚLTIMO SCAN/);
+        assert.match(report, /Charqueadas/);
+        assert.match(report, /Chuva/);
+        // Regular user callback for last_scan should work without admin
+        const cbHandler = fakeBot.eventHandlers.get('callback_query:data');
+        let edited = null;
+        await cbHandler({
+            chat: { id: 999 },
+            callbackQuery: { data: 'action:last_scan' },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { edited = msg; }
+        });
+        assert.match(edited, /ÚLTIMO SCAN/);
+    });
+
+    it('invite code expires after 5 minutes', async () => {
+        const { createAdminInviteCode, getActiveInviteCode, consumeInviteCode } = await import('../src/admin_store.js');
+        const { Sqlite } = await import('../src/database_driver.js');
+        const { getDatabase } = await import('../src/log_database.js');
+        const code = createAdminInviteCode('123');
+        // Manually expire by updating expires_at to past
+        const db = getDatabase();
+        const past = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        db.update('admin_invites', { expires_at: past }, { code_plain: code });
+        assert.equal(getActiveInviteCode(), null, 'expired code should not be active');
+        const result = consumeInviteCode(code, '999');
+        assert.equal(result.success, false);
+        assert.ok(['expired', 'invalid_code'].includes(result.reason));
+        // New code should be valid
+        const code2 = createAdminInviteCode('123');
+        assert.ok(getActiveInviteCode());
+        const result2 = consumeInviteCode(code2, '888');
+        assert.equal(result2.success, true);
+    });
+
+    it('invite code extraction supports surrounding text', async () => {
+        const { createAdminInviteCode, consumeInviteCode } = await import('../src/admin_store.js');
+        const code = createAdminInviteCode('123');
+        // Paste with surrounding text
+        const result = consumeInviteCode(`my code is ${code} please`, '777');
+        assert.equal(result.success, true);
+        // Lowercase with surrounding
+        const code2 = createAdminInviteCode('123');
+        const result2 = consumeInviteCode(`  ${code2.toLowerCase()}  `, '666');
+        assert.equal(result2.success, true);
     });
 });

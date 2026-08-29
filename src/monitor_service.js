@@ -32,10 +32,63 @@ import {
     logAlert,
     logMonitorCycle,
     saveSystemSetting,
+    getSystemSetting,
     loadAllSettings
 } from './log_database.js';
 
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
+
+/**
+ * In-memory cache for the last completed regional scan snapshot.
+ * Survives across calls in the same process; persisted to system_settings
+ * for cross-restart availability (regular users read last scan without live API calls).
+ * @type {object|null}
+ */
+let lastScanSnapshotCache = null;
+
+/**
+ * Persists the last scan snapshot to system_settings and in-memory cache.
+ *
+ * @param {object} snapshot - Snapshot data { timestamp, radiusKm, citiesCount, highRiskCount, events, dataQuality, durationMs }.
+ * @param {import('./database_driver.js').Sqlite|null} [customDriver=null]
+ * @returns {boolean}
+ */
+export function saveLastScanSnapshot(snapshot, customDriver = null) {
+    try {
+        lastScanSnapshotCache = snapshot;
+        const json = JSON.stringify(snapshot);
+        // Avoid storing huge payloads beyond SQLite TEXT limits (unlikely, but guard)
+        if (json.length > 500000) {
+            console.warn('[monitor_service] lastScanSnapshot too large, truncating events');
+            const truncated = { ...snapshot, events: snapshot.events?.slice(0, 20) };
+            return saveSystemSetting('last_scan_snapshot', JSON.stringify(truncated), customDriver);
+        }
+        return saveSystemSetting('last_scan_snapshot', json, customDriver);
+    } catch (err) {
+        console.error('[monitor_service] saveLastScanSnapshot failed:', err.message);
+        return false;
+    }
+}
+
+/**
+ * Retrieves the last scan snapshot from cache or database.
+ *
+ * @param {import('./database_driver.js').Sqlite|null} [customDriver=null]
+ * @returns {object|null} Parsed snapshot or null if none.
+ */
+export function getLastScanSnapshot(customDriver = null) {
+    try {
+        if (lastScanSnapshotCache) return lastScanSnapshotCache;
+        const raw = getSystemSetting('last_scan_snapshot', null, customDriver);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        lastScanSnapshotCache = parsed;
+        return parsed;
+    } catch (err) {
+        console.error('[monitor_service] getLastScanSnapshot failed:', err.message);
+        return lastScanSnapshotCache;
+    }
+}
 
 /**
  * Converte um valor bruto de categoria para tier canônico.
@@ -61,7 +114,9 @@ export function parseMonitorConfig() {
     let saved = {};
     try {
         saved = loadAllSettings();
-    } catch {}
+    } catch (err) {
+        console.error('[monitor_service] loadAllSettings failed in parseMonitorConfig:', err.message);
+    }
 
     // 1. Raio Regional em KM (banco > padrão)
     let radiusKm = 50;
@@ -271,6 +326,21 @@ export async function performRegionalRiskMonitoring({
 
         const durationMs = Date.now() - startTime;
         console.log(`[${timestamp}] ✓ Monitoramento concluído. ${cities.length} municípios verificados.`);
+
+        // Save last scan snapshot for regular users (no live scan)
+        try {
+            saveLastScanSnapshot({
+                timestamp: new Date().toISOString(),
+                radiusKm,
+                citiesCount: cities.length,
+                highRiskCount: highRiskEvents.length,
+                events: highRiskEvents,
+                dataQuality,
+                durationMs
+            });
+        } catch (err) {
+            console.error('[monitor_service] saveLastScanSnapshot failed:', err.message);
+        }
 
         // Persist monitoring cycle log to SQLite
         logMonitorCycle({
