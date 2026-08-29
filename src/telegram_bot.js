@@ -63,6 +63,16 @@ export const DEFESA_CIVIL_SEVERITY_OPTIONS = [
 ];
 
 /**
+ * Alert-category independent severity options (same 4-tier model as institutes).
+ */
+export const CATEGORY_SEVERITY_OPTIONS = [
+    { id: 'RED', label: '🔴 Vermelho (Grande Perigo)', desc: 'Apenas eventos críticos com risco elevado.' },
+    { id: 'ORANGE', label: '🟠 Laranja (Perigo) ou superior', desc: 'Inclui eventos moderados a severos.' },
+    { id: 'YELLOW', label: '🟡 Amarelo (Perigo Potencial) ou superior', desc: 'Modo informativo para qualquer severidade.' },
+    { id: 'OFF', label: '🚫 Desativado', desc: 'Silencia todos os alertas desta categoria.' }
+];
+
+/**
  * Formats a severity tier into a readable emoji badge.
  * 
  * @param {string} tier 
@@ -232,7 +242,7 @@ export class WeatherTelegramBot {
     /**
      * Retrieves the active monitoring and alert configuration.
      * 
-     * @returns {{ radiusKm: number, intervalMinutes: number, intervalMs: number, inmetMinSeverity: string, defesaCivilMinSeverity: string }}
+     * @returns {{ radiusKm: number, intervalMinutes: number, intervalMs: number, inmetMinSeverity: string, defesaCivilMinSeverity: string, categoryMinSeverities: Record<string,string> }}
      */
     getConfig() {
         if (this.monitorService?.getConfig) {
@@ -249,6 +259,7 @@ export class WeatherTelegramBot {
      * @param {number} [update.intervalMinutes]
      * @param {string} [update.inmetMinSeverity]
      * @param {string} [update.defesaCivilMinSeverity]
+     * @param {Record<string,string>} [update.categoryMinSeverities]
      * @returns {object} Updated configuration.
      */
     updateConfig(update) {
@@ -272,12 +283,14 @@ export class WeatherTelegramBot {
             this.localState.defesaCivilMinSeverity = normalizeSeverityTier(update.defesaCivilMinSeverity);
             try { saveSystemSetting('defesa_civil_min_severity', this.localState.defesaCivilMinSeverity); } catch {}
         }
-        if (Array.isArray(update.enabledCategories)) {
-            this.localState.enabledCategories = Object.keys(ALERT_CATEGORIES)
-                .filter(categoryId => update.enabledCategories.includes(categoryId));
+        if (update.categoryMinSeverities && typeof update.categoryMinSeverities === 'object') {
+            if (!this.localState.categoryMinSeverities) this.localState.categoryMinSeverities = {};
             for (const categoryId of Object.keys(ALERT_CATEGORIES)) {
-                const enabled = this.localState.enabledCategories.includes(categoryId);
-                try { saveSystemSetting(`alert_cat_${categoryId}`, enabled ? '1' : '0'); } catch {}
+                if (Object.prototype.hasOwnProperty.call(update.categoryMinSeverities, categoryId)) {
+                    const tier = normalizeSeverityTier(update.categoryMinSeverities[categoryId]);
+                    this.localState.categoryMinSeverities[categoryId] = tier;
+                    try { saveSystemSetting(`alert_cat_${categoryId}`, tier); } catch {}
+                }
             }
         }
         return this.getConfig();
@@ -344,22 +357,26 @@ export class WeatherTelegramBot {
 
     /**
      * Builds the settings overview inline keyboard, showing the current color
-     * circle badge of each provider's minimum alert level.
+     * circle badge of each provider's minimum alert level and a summary of
+     * per-category thresholds.
      *
      * @param {object} [config] - Active monitoring configuration.
      * @param {string} [config.inmetMinSeverity] - Current INMET minimum severity tier.
      * @param {string} [config.defesaCivilMinSeverity] - Current Defesa Civil RS minimum severity tier.
+     * @param {Record<string,string>} [config.categoryMinSeverities] - Per-category tier map.
      * @returns {InlineKeyboard}
      */
     static buildSettingsKeyboard(config = {}) {
-        const enabledCategories = Array.isArray(config.enabledCategories)
-            ? config.enabledCategories
-            : Object.keys(ALERT_CATEGORIES);
+        const total = Object.keys(ALERT_CATEGORIES).length;
+        const tierMap = config.categoryMinSeverities || {};
+        const enabledCount = Object.values(tierMap).filter(tier => normalizeSeverityTier(tier) !== 'OFF').length;
+        // If no map provided (should not happen), assume all active
+        const displayCount = Object.keys(tierMap).length === 0 ? total : enabledCount;
         return new InlineKeyboard()
             .text('⏱️ Alterar Intervalo', 'menu:interval')
             .text('📍 Alterar Raio Regional', 'menu:radius')
             .row()
-            .text(`🚨 Categorias de Alerta: ${enabledCategories.length}/${Object.keys(ALERT_CATEGORIES).length}`, 'menu:categories')
+            .text(`🚨 Categorias de Alerta: ${displayCount}/${total}`, 'menu:categories')
             .row()
             .text(`🏛️ Limiar INMET: ${getTierShortBadge(config.inmetMinSeverity)}`, 'menu:inmet_level')
             .row()
@@ -369,40 +386,81 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Builds the alert-category selection keyboard with on/off state per category.
+     * Builds the alert-category selection keyboard with per-category intensity badges.
+     * Each row navigates to a dedicated intensity selector for that category.
      *
-     * @param {string[]} [enabledCategories] - Ids of categories currently enabled.
+     * @param {Record<string,string>} [categoryMinSeverities] - Per-category tier map.
      * @returns {InlineKeyboard}
      */
-    static buildCategoriesKeyboard(enabledCategories = []) {
+    static buildCategoriesKeyboard(categoryMinSeverities = {}) {
         const kb = new InlineKeyboard();
         for (const [categoryId, definition] of Object.entries(ALERT_CATEGORIES)) {
-            const isOn = enabledCategories.includes(categoryId);
-            kb.text(`${definition.emoji} ${definition.label}: ${isOn ? '✅' : '❌'}`, `toggle_cat:${categoryId}`).row();
+            const tier = categoryMinSeverities[categoryId] ?? 'YELLOW';
+            const badge = getTierShortBadge(tier);
+            kb.text(`${definition.emoji} ${definition.label}: ${badge}`, `menu:category:${categoryId}`).row();
         }
         kb.text('⬅️ Voltar às Configurações', 'menu:settings');
         return kb;
     }
 
     /**
-     * Renders the alert-categories management text.
+     * Builds the intensity level selection keyboard for a single alert category.
      *
-     * @param {string[]} [enabledCategories] - Ids of categories currently enabled.
+     * @param {string} categoryId - Category identifier (see ALERT_CATEGORIES).
+     * @param {string} [currentLevel='YELLOW'] - Current tier for this category.
+     * @returns {InlineKeyboard}
+     */
+    static buildCategoryLevelKeyboard(categoryId, currentLevel = 'YELLOW') {
+        const kb = new InlineKeyboard();
+        const norm = String(currentLevel || '').toUpperCase();
+        CATEGORY_SEVERITY_OPTIONS.forEach(opt => {
+            const isCurrent = norm === opt.id;
+            const label = `${isCurrent ? '✅ ' : ''}${opt.label}`;
+            kb.text(label, `set_cat:${categoryId}:${opt.id}`).row();
+        });
+        kb.text('⬅️ Voltar às Categorias', 'menu:categories');
+        return kb;
+    }
+
+    /**
+     * Renders the alert-categories management text with per-category tier badges.
+     *
+     * @param {Record<string,string>} [categoryMinSeverities] - Per-category tier map.
      * @returns {string}
      */
-    renderCategoriesMenu(enabledCategories = []) {
+    renderCategoriesMenu(categoryMinSeverities = {}) {
         const lines = [
             '🚨 CATEGORIAS DE ALERTA',
             CARD_HEADER,
-            'Escolha quais grupos de eventos podem gerar envio de alertas:',
+            'Ajuste o limiar mínimo de severidade para cada grupo de eventos:',
             ''
         ];
         for (const [categoryId, definition] of Object.entries(ALERT_CATEGORIES)) {
-            lines.push(`${definition.emoji} ${definition.label}: ${enabledCategories.includes(categoryId) ? '✅ Ativo' : '❌ Silenciado'}`);
+            const tier = categoryMinSeverities[categoryId] ?? 'YELLOW';
+            lines.push(`${definition.emoji} ${definition.label}: ${getTierBadge(tier)}`);
         }
         lines.push('', CARD_DIVIDER);
-        lines.push('💡 Toque em uma categoria para ativar ou silenciar. Os limiares de severidade continuam sendo aplicados.');
+        lines.push('💡 Toque em uma categoria para escolher o nível mínimo (Vermelho/Laranja/Amarelo/Desativado), igual aos limiares por instituto.');
         return lines.join('\n');
+    }
+
+    /**
+     * Renders the intensity selector text for a single alert category.
+     *
+     * @param {string} categoryId - Category identifier.
+     * @param {string} [currentTier='YELLOW'] - Current tier for this category.
+     * @returns {string}
+     */
+    renderCategoryLevelMenu(categoryId, currentTier = 'YELLOW') {
+        const definition = ALERT_CATEGORIES[categoryId];
+        if (!definition) return 'Categoria desconhecida.';
+        return [
+            `🚨 LIMIAR — ${definition.emoji} ${definition.label.toUpperCase()}:`,
+            CARD_HEADER,
+            `Limiar ativo: ${getTierBadge(currentTier)}`,
+            '',
+            'Selecione o nível mínimo para acionamento de alertas desta categoria:'
+        ].join('\n');
     }
 
     /**
@@ -551,6 +609,9 @@ export class WeatherTelegramBot {
      */
     renderSettingsMenu() {
         const config = this.getConfig();
+        const tierMap = config.categoryMinSeverities || {};
+        const activeCategoryCount = Object.values(tierMap).filter(tier => normalizeSeverityTier(tier) !== 'OFF').length;
+        const displayCount = Object.keys(tierMap).length === 0 ? Object.keys(ALERT_CATEGORIES).length : activeCategoryCount;
         return [
             '⚙️ CONFIGURAÇÕES DO MONITOR',
             CARD_HEADER,
@@ -558,7 +619,7 @@ export class WeatherTelegramBot {
             `• Intervalo de Varredura:  A cada ${config.intervalMinutes} minutos`,
             `• Limiar Alerta INMET:     ${getTierBadge(config.inmetMinSeverity)}`,
             `• Limiar Defesa Civil RS:  ${getTierBadge(config.defesaCivilMinSeverity)}`,
-            `• Categorias Ativas:       ${(Array.isArray(config.enabledCategories) ? config.enabledCategories.length : Object.keys(ALERT_CATEGORIES).length)} de ${Object.keys(ALERT_CATEGORIES).length}`,
+            `• Categorias Ativas:       ${displayCount} de ${Object.keys(ALERT_CATEGORIES).length}`,
             CARD_DIVIDER,
             'Escolha o parâmetro que deseja ajustar de forma independente:'
         ].join('\n');
@@ -614,7 +675,7 @@ export class WeatherTelegramBot {
                 radiusKm: config.radiusKm,
                 inmetMinSeverity: config.inmetMinSeverity,
                 defesaCivilMinSeverity: config.defesaCivilMinSeverity,
-                enabledCategories: Array.isArray(config.enabledCategories) ? config.enabledCategories : null,
+                categoryMinSeverities: config.categoryMinSeverities || null,
                 alertCallback: null
             });
 
@@ -955,26 +1016,36 @@ export class WeatherTelegramBot {
 
             if (data === 'menu:categories') {
                 await answer();
-                return ctx.editMessageText?.(this.renderCategoriesMenu(config.enabledCategories), {
-                    reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.enabledCategories)
+                return ctx.editMessageText?.(this.renderCategoriesMenu(config.categoryMinSeverities), {
+                    reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.categoryMinSeverities)
                 });
             }
 
-            if (data.startsWith('toggle_cat:')) {
-                const categoryId = data.split(':')[1];
+            if (data.startsWith('menu:category:')) {
+                const categoryId = data.split(':')[2];
                 if (ALERT_CATEGORIES[categoryId]) {
-                    const current = Array.isArray(config.enabledCategories)
-                        ? [...config.enabledCategories]
-                        : Object.keys(ALERT_CATEGORIES);
-                    const next = current.includes(categoryId)
-                        ? current.filter(id => id !== categoryId)
-                        : [...current, categoryId];
-                    this.updateConfig({ enabledCategories: next });
-                    const definition = ALERT_CATEGORIES[categoryId];
-                    await answer(`${definition.emoji} ${definition.label}: ${next.includes(categoryId) ? 'ativado' : 'silenciado'}`);
+                    await answer();
+                    const currentTier = config.categoryMinSeverities?.[categoryId] ?? 'YELLOW';
+                    return ctx.editMessageText?.(this.renderCategoryLevelMenu(categoryId, currentTier), {
+                        reply_markup: WeatherTelegramBot.buildCategoryLevelKeyboard(categoryId, currentTier)
+                    });
+                }
+                await answer();
+                return;
+            }
+
+            if (data.startsWith('set_cat:')) {
+                const parts = data.split(':');
+                const categoryId = parts[1];
+                const tier = parts[2];
+                if (ALERT_CATEGORIES[categoryId] && tier) {
+                    const normalized = normalizeSeverityTier(tier);
+                    this.updateConfig({ categoryMinSeverities: { [categoryId]: normalized } });
+                    await answer(`✅ ${ALERT_CATEGORIES[categoryId].emoji} ${ALERT_CATEGORIES[categoryId].label}: ${getTierBadge(normalized)}!`);
                     const fresh = this.getConfig();
-                    return ctx.editMessageText?.(this.renderCategoriesMenu(fresh.enabledCategories), {
-                        reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(fresh.enabledCategories)
+                    const freshTier = fresh.categoryMinSeverities?.[categoryId] || normalized;
+                    return ctx.editMessageText?.(this.renderCategoryLevelMenu(categoryId, freshTier), {
+                        reply_markup: WeatherTelegramBot.buildCategoryLevelKeyboard(categoryId, freshTier)
                     });
                 }
                 await answer();

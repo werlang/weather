@@ -92,9 +92,9 @@ describe('Database Migration Workflow & SQL Parser', () => {
             assert.strictEqual(settings.interval_minutes, '15');
             assert.strictEqual(settings.inmet_min_severity, 'RED');
             assert.strictEqual(settings.defesa_civil_min_severity, 'ORANGE');
-            // Migration 003: alert categories default to enabled
+            // Migration 003: alert categories default to YELLOW (intensity tier)
             for (const categoryId of ['chuva', 'temperatura', 'vento', 'umidade', 'rio']) {
-                assert.strictEqual(settings[`alert_cat_${categoryId}`], '1');
+                assert.strictEqual(settings[`alert_cat_${categoryId}`], 'YELLOW');
             }
         });
 

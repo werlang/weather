@@ -576,6 +576,13 @@ describe('Monitoring data quality', () => {
       const unfiltered = await performRegionalRiskMonitoring({
         radiusKm: 25,
         defesaCivilMinSeverity: 'ORANGE',
+        categoryMinSeverities: {
+          chuva: 'YELLOW',
+          temperatura: 'YELLOW',
+          vento: 'YELLOW',
+          umidade: 'YELLOW',
+          rio: 'YELLOW'
+        },
         alertCallback: null
       });
       assert.strictEqual(unfiltered.highRiskCount, 2);
@@ -583,7 +590,13 @@ describe('Monitoring data quality', () => {
       const riversOnly = await performRegionalRiskMonitoring({
         radiusKm: 25,
         defesaCivilMinSeverity: 'ORANGE',
-        enabledCategories: ['rio'],
+        categoryMinSeverities: {
+          chuva: 'OFF',
+          temperatura: 'OFF',
+          vento: 'OFF',
+          umidade: 'OFF',
+          rio: 'YELLOW'
+        },
         alertCallback: null
       });
       assert.strictEqual(riversOnly.highRiskCount, 1);
