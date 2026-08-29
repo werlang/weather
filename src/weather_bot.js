@@ -6,6 +6,7 @@ import {
 } from './telegram.js';
 import { WeatherTelegramBot } from './telegram_bot.js';
 import { startMonitoringService } from './monitor_service.js';
+import { getPersistedAdminChatIds } from './admin_store.js';
 
 /**
  * Starts the canonical weather monitor and its Telegram interface.
@@ -23,6 +24,15 @@ export async function startWeatherBot({ env = process.env, logger = console, tel
         adminChatIds: config.adminChatIds,
         logger
     });
+
+    // Merge persisted invite-promoted admins (system_settings admin_extra_chat_ids)
+    try {
+        const persisted = getPersistedAdminChatIds();
+        for (const chatId of persisted) {
+            telegramClient.addAdminChatId(chatId);
+        }
+        if (persisted.length) logger.log?.(`Loaded ${persisted.length} persisted admin(s) from database.`);
+    } catch {}
 
     const bot = new WeatherTelegramBot({
         telegram: telegramClient,

@@ -171,6 +171,29 @@ export class TelegramBotClient {
     }
 
     /**
+     * Adds a chat ID to the in-memory administrator allowlist if absent.
+     *
+     * @param {number|string} chatId - Chat ID to add.
+     * @returns {boolean} True if added.
+     */
+    addAdminChatId(chatId) {
+        const id = String(chatId).trim();
+        if (!id || !/^-?\d+$/.test(id)) return false;
+        if (this.adminChatIds.includes(id)) return false;
+        this.adminChatIds.push(id);
+        return true;
+    }
+
+    /**
+     * Returns a copy of the current administrator allowlist.
+     *
+     * @returns {string[]}
+     */
+    getAdminChatIds() {
+        return [...this.adminChatIds];
+    }
+
+    /**
      * Registers a command handler on the wrapped bot.
      *
      * @param {string} command - Command name without the leading slash.
