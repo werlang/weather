@@ -504,9 +504,7 @@ export class WeatherTelegramBot {
         return new InlineKeyboard()
             .text('🚨 Ver Últimos Alertas', 'action:last_scan')
             .row()
-            .text('ℹ️ Sobre o Bot', 'action:regular_about')
-            .row()
-            .text('🔑 Já tenho código', 'action:regular_help');
+            .text('ℹ️ Sobre o Bot', 'action:regular_about');
     }
 
     /**
