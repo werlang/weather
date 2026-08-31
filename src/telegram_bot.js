@@ -1378,10 +1378,28 @@ export class WeatherTelegramBot {
                 }
                 return;
             }
-            if (data === 'action:regular_about' || data === 'action:regular_help') {
+            if (data === 'action:regular_about') {
                 await answer();
                 return ctx.editMessageText?.(this.renderRegularAbout(), {
                     reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                });
+            }
+            if (data === 'action:regular_help') {
+                await answer();
+                return ctx.editMessageText?.([
+                    '🔑 USAR CÓDIGO DE CONVITE',
+                    CARD_HEADER,
+                    'Cole o código de 8 caracteres A-Z0-9 aqui como mensagem.',
+                    'Exemplos:',
+                    '• `AB12CD34`',
+                    '• `meu código é AB12CD34 por favor` (o bot extrai)',
+                    '• Link: `https://t.me/' + (this.getBotUsername() || 'seu_bot') + '?start=AB12CD34` → clique e depois [Aceitar]',
+                    '',
+                    'O código expira em 5 minutos e é de uso único.',
+                    CARD_DIVIDER,
+                    'Basta enviar o código agora neste chat.'
+                ].join('\n'), {
+                    reply_markup: new InlineKeyboard().text('⬅️ Voltar', 'menu:regular_main')
                 });
             }
             if (data === 'menu:regular_main') {
