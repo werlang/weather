@@ -75,7 +75,12 @@ describe('Telegram configuration and wrapper', () => {
             adminChatIds: ['123', '456']
         });
 
-        assert.throws(() => parseTelegramConfig({ env: {} }), /TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID/);
+        assert.throws(() => parseTelegramConfig({ env: {} }), /TELEGRAM_BOT_TOKEN/);
+        // TELEGRAM_ADMIN_CHAT_ID is optional for bootstrap — first /start can become admin via accept/refuse
+        assert.doesNotThrow(() => parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token' } }));
+        assert.deepEqual(parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token' } }).adminChatIds, []);
+        // Invalid admin ID should still throw
+        assert.throws(() => parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token', TELEGRAM_ADMIN_CHAT_ID: 'not-a-number' } }), /Invalid Telegram administrator/);
     });
 
     it('splits outbound messages at Telegram’s maximum length', () => {

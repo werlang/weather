@@ -47,7 +47,7 @@ export function parseTelegramConfig({ env = process.env, requireConfigured = tru
     if (requireConfigured) {
         const missing = [];
         if (!token) missing.push('TELEGRAM_BOT_TOKEN');
-        if (adminChatIds.length === 0) missing.push('TELEGRAM_ADMIN_CHAT_ID');
+        // TELEGRAM_ADMIN_CHAT_ID is optional for bootstrap — first /start can become admin
         if (missing.length > 0) {
             throw new Error(`Missing required Telegram configuration: ${missing.join(', ')}`);
         }
@@ -150,12 +150,12 @@ export class TelegramBotClient {
         if (!String(token || '').trim()) {
             throw new Error('Telegram bot token is required.');
         }
-        if (!Array.isArray(adminChatIds) || adminChatIds.length === 0) {
-            throw new Error('At least one Telegram administrator chat ID is required.');
+        if (!Array.isArray(adminChatIds)) {
+            throw new Error('Telegram administrator chat IDs must be an array.');
         }
 
         this.bot = botFactory(token);
-        this.adminChatIds = [...new Set(adminChatIds.map(chatId => String(chatId)))];
+        this.adminChatIds = [...new Set(adminChatIds.map(chatId => String(chatId)).filter(id => /^-?\d+$/.test(id)))];
         this.logger = logger;
     }
 

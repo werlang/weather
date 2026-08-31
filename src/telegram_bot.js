@@ -20,6 +20,7 @@ import {
     createAdminInviteCode,
     consumeInviteCode,
     getPersistedAdminChatIds,
+    addPersistedAdminChatId,
     clearInviteCode
 } from './admin_store.js';
 
@@ -768,6 +769,30 @@ export class WeatherTelegramBot {
     }
 
     /**
+     * Renders the bootstrap prompt for the very first user when no admin exists.
+     * Same accept/refuse flow as valid code, but without code.
+     *
+     * @returns {string}
+     */
+    renderBootstrapPrompt() {
+        return [
+            '🎉 BEM-VINDO — CONFIGURAÇÃO INICIAL',
+            CARD_HEADER,
+            'Nenhum administrador configurado ainda.',
+            'Você é o primeiro a iniciar conversa com o bot.',
+            '',
+            'Deseja se tornar o administrador principal?',
+            'Como admin você poderá:',
+            '• Ajustar raio, intervalo e limiares em ⚙️ Configurações',
+            '• Gerar códigos de convite para outros admins',
+            '• Receber alertas meteorológicos em tempo real',
+            '',
+            CARD_DIVIDER,
+            'Toque em Aceitar para confirmar ou Recusar para continuar como visitante (apenas leitura do último scan).'
+        ].join('\n');
+    }
+
+    /**
      * Renders the friendly about text for regular users.
      *
      * @returns {string}
@@ -1240,6 +1265,7 @@ export class WeatherTelegramBot {
     registerHandlers() {
         // Command: /start & /menu -> Show Main Dashboard with Interactive Buttons
         // Supports invite link /start <CODE> → shows Accept/Refuse for non-admin
+        // Bootstrap: if no admin exists yet, first /start offers to become admin (same accept/refuse flow)
         const handleStart = async ctx => {
             const payloadRaw = ctx.match !== undefined
                 ? String(ctx.match)
@@ -1247,6 +1273,14 @@ export class WeatherTelegramBot {
             const payloadCode = payloadRaw ? (extractInviteCodeFromText(payloadRaw) || normalizeInviteCode(payloadRaw)) : null;
             const isInvitePayload = payloadCode && INVITE_CODE_REGEX.test(payloadCode);
             if (!this.isAdmin(ctx)) {
+                const totalAdmins = this.telegram.getAdminChatIds().length;
+                if (totalAdmins === 0) {
+                    return ctx.reply(this.renderBootstrapPrompt(), {
+                        reply_markup: new InlineKeyboard()
+                            .text('✅ Aceitar', 'action:bootstrap_accept')
+                            .text('❌ Recusar', 'action:bootstrap_reject')
+                    });
+                }
                 if (isInvitePayload) {
                     const normalized = normalizeInviteCode(payloadCode);
                     return ctx.reply(this.renderInviteAcceptPrompt(normalized), {
@@ -1436,6 +1470,62 @@ export class WeatherTelegramBot {
                     '',
                     CARD_DIVIDER,
                     'Você continua com acesso de leitura aos últimos alertas via “🚨 Ver Últimos Alertas”.'
+                ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
+            }
+            if (data === 'action:bootstrap_accept') {
+                const chatId = String(ctx.chat?.id);
+                const totalAdmins = this.telegram.getAdminChatIds().length;
+                if (totalAdmins !== 0) {
+                    await answer('Já existe administrador');
+                    return ctx.editMessageText?.([
+                        'ℹ️ Já existe um administrador configurado.',
+                        CARD_HEADER,
+                        'Peça um código de convite ao administrador atual em:',
+                        '⚙️ Configurações → 👥 Convidar Administrador'
+                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
+                }
+                if (this.isAdmin(ctx)) {
+                    await answer('Já é administrador');
+                    return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
+                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    });
+                }
+                const username = ctx.from?.username || null;
+                const added = addPersistedAdminChatId(chatId, { addedBy: 'bootstrap', username });
+                if (added) {
+                    this.telegram.addAdminChatId(chatId);
+                    this.syncAdminsFromStore();
+                    await answer('✅ Bem-vindo, administrador!');
+                    return ctx.editMessageText?.([
+                        '✅ CÓDIGO ACEITO — ACESSO LIBERADO',
+                        CARD_HEADER,
+                        `Bem-vindo! Seu chat \`${chatId}\` agora é administrador principal.`,
+                        '',
+                        'Você já pode usar:',
+                        '• /start — painel principal',
+                        '• /status — diagnóstico',
+                        '• /config — ajustes',
+                        '• /alertas — avisos ativos',
+                        '',
+                        CARD_DIVIDER,
+                        '🔒 Você pode agora convidar outros administradores em ⚙️ Configurações → 👥 Convidar.'
+                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+                }
+                await answer('Falha ao promover');
+                return ctx.editMessageText?.('❌ Falha ao se tornar administrador. Tente novamente.', {
+                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                });
+            }
+            if (data === 'action:bootstrap_reject') {
+                await answer('Convite recusado');
+                return ctx.editMessageText?.([
+                    '❌ CONVITE RECUSADO',
+                    CARD_HEADER,
+                    'Você recusou se tornar administrador.',
+                    'Continuará com acesso de leitura aos últimos alertas.',
+                    '',
+                    CARD_DIVIDER,
+                    'Você pode mudar de ideia e usar /start novamente enquanto não houver administrador.'
                 ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
             }
 

@@ -450,4 +450,90 @@ describe('Admin Invite Telegram flow (unit)', () => {
         if (prevUsername === undefined) delete process.env.TELEGRAM_BOT_USERNAME;
         else process.env.TELEGRAM_BOT_USERNAME = prevUsername;
     });
+
+    it('first user to /start with no admin gets bootstrap accept/refuse (same flow as valid code)', async () => {
+        const { TelegramBotClient } = await import('../src/telegram.js');
+        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { getPersistedAdminChatIds } = await import('../src/admin_store.js');
+        // Ensure no persisted admins (fresh :memory: DB already empty)
+        assert.deepEqual(getPersistedAdminChatIds(), []);
+        const fakeBot = {
+            commandHandlers: new Map(),
+            eventHandlers: new Map(),
+            callbackHandlers: [],
+            botInfo: { username: 'test_weather_bot' },
+            command(c, h) { this.commandHandlers.set(c, h); },
+            on(f, h) { this.eventHandlers.set(f, h); },
+            callbackQuery(f, h) { this.callbackHandlers.push({ f, h }); },
+            catch() {},
+            api: { sendMessage: async () => {}, getMe: async () => ({ username: 'test_weather_bot' }) }
+        };
+        const client = new TelegramBotClient({ token: 'test-token', adminChatIds: [], botFactory: () => fakeBot, logger: { error() {} } });
+        const bot = new WeatherTelegramBot({ telegram: client });
+        assert.equal(client.getAdminChatIds().length, 0, 'should start with no admin');
+        // First user /start → bootstrap prompt
+        let startReply = null;
+        let startKb = null;
+        await fakeBot.commandHandlers.get('start')({
+            chat: { id: 111 },
+            message: { text: '/start' },
+            reply: async (msg, opts) => { startReply = msg; startKb = opts?.reply_markup; }
+        });
+        assert.match(startReply, /CONFIGURAÇÃO INICIAL/);
+        assert.match(startReply, /primeiro a iniciar/);
+        assert.ok(startKb.inline_keyboard.some(row => row.some(b => b.callback_data === 'action:bootstrap_accept')));
+        assert.ok(startKb.inline_keyboard.some(row => row.some(b => b.callback_data === 'action:bootstrap_reject')));
+        // Accept bootstrap
+        const cbHandler = fakeBot.eventHandlers.get('callback_query:data');
+        let acceptMsg = null;
+        await cbHandler({
+            chat: { id: 111 },
+            from: { username: 'firstadmin' },
+            callbackQuery: { data: 'action:bootstrap_accept' },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { acceptMsg = msg; }
+        });
+        assert.match(acceptMsg, /CÓDIGO ACEITO|ACESSO LIBERADO/);
+        assert.ok(client.isAdminChat('111'));
+        assert.ok(bot.isAdmin({ chat: { id: 111 } }));
+        // Second user should not get bootstrap, just regular hello
+        let secondReply = null;
+        await fakeBot.commandHandlers.get('start')({
+            chat: { id: 222 },
+            message: { text: '/start' },
+            reply: async (msg) => { secondReply = msg; }
+        });
+        assert.match(secondReply, /Olá|Bem-vindo/);
+        assert.doesNotMatch(secondReply, /CONFIGURAÇÃO INICIAL/);
+        // Reject path (when no admin, fresh DB, test reject separately)
+        // Reset DB for reject test
+        const { Sqlite } = await import('../src/database_driver.js');
+        Sqlite.close();
+        process.env.DB_PATH = ':memory:';
+        const { getDatabase } = await import('../src/log_database.js');
+        getDatabase();
+        const fakeBot2 = {
+            commandHandlers: new Map(),
+            eventHandlers: new Map(),
+            callbackHandlers: [],
+            command(c, h) { this.commandHandlers.set(c, h); },
+            on(f, h) { this.eventHandlers.set(f, h); },
+            callbackQuery(f, h) { this.callbackHandlers.push({ f, h }); },
+            catch() {},
+            api: { sendMessage: async () => {} }
+        };
+        const client2 = new TelegramBotClient({ token: 'test-token', adminChatIds: [], botFactory: () => fakeBot2, logger: { error() {} } });
+        new WeatherTelegramBot({ telegram: client2 });
+        const cb2 = fakeBot2.eventHandlers.get('callback_query:data');
+        let rejectMsg = null;
+        await cb2({
+            chat: { id: 333 },
+            callbackQuery: { data: 'action:bootstrap_reject' },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { rejectMsg = msg; }
+        });
+        assert.match(rejectMsg, /CONVITE RECUSADO/);
+        assert.equal(client2.isAdminChat('333'), false);
+        assert.equal(getPersistedAdminChatIds().length, 0, 'rejected bootstrap should not create admin');
+    });
 });
