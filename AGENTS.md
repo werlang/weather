@@ -64,19 +64,28 @@ ifsul/weather/
 │   ├── INMET_API_DOCUMENTATION.md    # Complete technical reference for INMET endpoints
 │   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # GraphQL/WebSocket schema for Defesa Civil RS
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md # Severity tiers, color codes, and filtering rules
-│   └── TELEGRAM_BOT_SCOPE.md         # Telegram bot capabilities, security & non-goals
+│   ├── TELEGRAM_BOT_SCOPE.md         # Telegram bot capabilities, security & non-goals
+│   └── ALERT_METHODOLOGY.md          # Canonical normative alert pipeline (must update with code)
 ├── database/                         # SQLite database storage (weather_logs.db)
 ├── migrations/                       # Versioned SQL migration scripts
-│   └── 001_initial_schema.sql        # Initial schema migration
+│   ├── 001_initial_schema.sql        # Initial schema migration
+│   ├── 002_seed_default_settings.sql # Default radius/interval/thresholds
+│   ├── 003_seed_alert_categories.sql # Per-category tiers
+│   ├── 004_unknown_alert_sources.sql # UNKNOWN tier registry
+│   ├── 005_migrate_category_tiers.sql# Boolean → tier migration
+│   ├── 006_admin_invites.sql         # Admin invites & users tables
+│   └── 007_cleanup_legacy_settings.sql# Legacy key cleanup
 ├── src/
 │   ├── inmet_client.js               # INMET & IBGE HTTP client (native fetch)
+│   ├── defesa_civil_client.js        # Defesa Civil RS GraphQL telemetry & river quotas
+│   ├── admin_store.js                # Admin allowlist & 5-min invite codes (admin_users/invites)
 │   ├── database_driver.js            # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
 │   ├── migrate.js                    # Versioned SQLite database migration runner
-│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
+│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics + retention
 │   ├── risk_analyzer.js              # Business logic: risk parsing, 24h window evaluation
-│   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator
-│   ├── telegram.js                   # grammY wrapper, allowlist auth, splitMessage (<4096)
-│   ├── telegram_bot.js               # Bot command handlers, alert layout formatter
+│   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator + last_scan snapshot
+│   ├── telegram.js                   # grammY wrapper, DB allowlist auth, splitMessage (<4096)
+│   ├── telegram_bot.js               # Bot command handlers, alert layout formatter, invite/bootstrap
 │   ├── weather_bot.js                # Process composition entry point & signal handling
 │   └── monitor_regional_risks.js     # On-demand CLI regional report generator
 ├── tests/
@@ -85,7 +94,8 @@ ifsul/weather/
 │   ├── inmet_client.test.js          # Unit tests for INMET client & regional rings
 │   ├── log_database.test.js          # Unit tests for SQLite log database
 │   ├── monitor_service.test.js       # Unit tests for risk analyzer & 24h window logic
-│   └── telegram.test.js              # Unit tests for grammY wrapper & command handling
+│   ├── telegram.test.js              # Unit tests for grammY wrapper & command handling
+│   └── admin_store.test.js           # Unit tests for admin invites & bootstrap
 ├── Dockerfile                        # Multi-stage Docker build (base, dev, prod)
 ├── compose.yaml                      # Production Docker Compose specification
 ├── compose.dev.yaml                  # Development Compose specification (live volume mount)
@@ -99,13 +109,15 @@ ifsul/weather/
 | Module | Allowed Responsibilities | Forbidden Responsibilities |
 | :--- | :--- | :--- |
 | `src/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
+| `src/defesa_civil_client.js` | Fetching Defesa Civil RS GraphQL telemetry, river quotas, rain/wind thresholds. | Telegram messaging, scheduling, INMET parsing. |
+| `src/admin_store.js` | Admin allowlist (`admin_users`) & invite codes (`admin_invites`, 5-min, hash), DB-only bootstrap. | Telegram delivery, forecast parsing, risk algorithms. |
 | `src/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
 | `src/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
-| `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs. | Direct external network I/O, Telegram alert dispatch. |
-| `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching. | Network I/O, Telegram delivery, formatting CLI UI. |
-| `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback. | Direct Telegram API calls, command handling. |
-| `src/telegram.js` | grammY client lifecycle, allowlist parsing, `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
-| `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/config`, formatting plain-text alert templates. | Socket handling, low-level grammY polling. |
+| `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
+| `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching, `UNKNOWN` tier. | Network I/O, Telegram delivery, formatting CLI UI. |
+| `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
+| `src/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
+| `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/config`, invite/bootstrap, formatting plain-text alert templates, `Ver Últimos Alertas` read-only. | Socket handling, low-level grammY polling. |
 | `src/weather_bot.js` | Composing Telegram bot and monitor service, handling `SIGINT`/`SIGTERM` graceful stop. | Domain logic, low-level HTTP requests. |
 
 
@@ -148,7 +160,7 @@ docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_
 docker compose up --build -d
 
 # 6. View live production logs
-docker compose logs -f weather-bot
+docker compose logs -f app
 
 # 7. Start development stack with live volume mounts
 docker compose -f compose.dev.yaml up --build

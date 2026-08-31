@@ -20,11 +20,10 @@ const __dirname = path.dirname(__filename);
 export const DEFAULT_MIGRATIONS_DIR = path.join(__dirname, '../migrations');
 
 /**
- * Removes SQL line comments before splitting a script into ordered,
- * non-empty statements.
- *
- * Removing comments first prevents semicolons inside `--` comments from
- * becoming executable statement fragments.
+ * Splits SQL migration source into ordered statements, respecting
+ * single-quoted strings, double-quoted identifiers, line comments (--),
+ * and block comments so semicolons inside literals/comments
+ * don't become statement boundaries.
  *
  * @param {string} sqlContent - Migration SQL source.
  * @returns {string[]} Ordered executable SQL statements.
@@ -32,12 +31,66 @@ export const DEFAULT_MIGRATIONS_DIR = path.join(__dirname, '../migrations');
 export function splitSqlStatements(sqlContent) {
     if (!sqlContent || typeof sqlContent !== 'string') return [];
 
-    const uncommentedSql = sqlContent.replace(/--.*$/gm, '');
+    const statements = [];
+    let current = '';
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inLineComment = false;
+    let inBlockComment = false;
 
-    return uncommentedSql
-        .split(';')
-        .map(stmt => stmt.trim())
-        .filter(stmt => stmt.length > 0);
+    for (let i = 0; i < sqlContent.length; i += 1) {
+        const char = sqlContent[i];
+        const next = sqlContent[i + 1] || '';
+
+        if (inLineComment) {
+            if (char === '\n') {
+                inLineComment = false;
+                current += char;
+            }
+            continue;
+        }
+        if (inBlockComment) {
+            if (char === '*' && next === '/') {
+                inBlockComment = false;
+                i += 1;
+            }
+            continue;
+        }
+        if (!inSingleQuote && !inDoubleQuote) {
+            if (char === '-' && next === '-') {
+                inLineComment = true;
+                i += 1;
+                continue;
+            }
+            if (char === '/' && next === '*') {
+                inBlockComment = true;
+                i += 1;
+                continue;
+            }
+        }
+        if (char === "'" && !inDoubleQuote && !inLineComment && !inBlockComment) {
+            // Handle escaped '' inside single quotes
+            if (inSingleQuote && next === "'") {
+                current += "''";
+                i += 1;
+                continue;
+            }
+            inSingleQuote = !inSingleQuote;
+        } else if (char === '"' && !inSingleQuote) {
+            inDoubleQuote = !inDoubleQuote;
+        }
+
+        if (char === ';' && !inSingleQuote && !inDoubleQuote && !inLineComment && !inBlockComment) {
+            const trimmed = current.trim();
+            if (trimmed.length > 0) statements.push(trimmed);
+            current = '';
+        } else {
+            current += char;
+        }
+    }
+    const tail = current.trim();
+    if (tail.length > 0) statements.push(tail);
+    return statements;
 }
 
 /**
@@ -72,7 +125,7 @@ export function migrateSync(options = {}) {
     `);
 
     // 2. Fetch already applied versions using Sqlite query methods
-    const rows = Sqlite.find('schema_migrations', {}, { view: ['version'] });
+    const rows = Sqlite.find('schema_migrations', { view: ['version'] });
     const appliedVersions = new Set(rows.map(r => Number(r.version)));
 
     // 3. Read and sort migration files naturally (numeric prefix)

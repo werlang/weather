@@ -83,12 +83,12 @@ The continuous monitor evaluates two distinct risk streams for the upcoming 24-h
    - Checks if any regional city within configured radius is listed in `warning.geocodes` or `warning.municipios`.
 
 2. **Forecast Telemetry Analysis (`FORECAST_ANALYSIS`):**
-   - Evaluates forecast condition summaries and numerical parameters:
-     - **Storms / Tempests:** `resumo` containing `tempestade`, `trovoada`, `granizo`, `pancadas de chuva forte`.
-     - **Extreme Cold / Frost:** `temp_min <= 3°C` or `resumo` containing `geada severa`.
-     - **Extreme Heat / Heatwave:** `temp_max >= 38°C`.
-     - **Severe Low Humidity:** `umidade_min <= 20%`.
-     - **High Winds / Gale:** `int_vento` containing `rajadas fortes`, `muito fortes`, or `vendaval`.
+   - Evaluates forecast condition summaries and numerical parameters (`src/risk_analyzer.js:210` `analyzeForecastRisks()`, canonical `docs/ALERT_METHODOLOGY.md:282`):
+     - **Storms / Tempests:** `resumo` containing `ciclone`/`temporal`/`tempestade` or `granizo+chuva`.
+     - **Extreme Cold / Frost:** `temp_min <=0°C` (HIGH sub-zero) or `<=4°C` + `geada` (MODERATE) or `<=8°C` (LOW); `resumo` `neve`/`chuva congelada`.
+     - **Extreme Heat / Heatwave:** `temp_max >=40°C` (HIGH) or `>=34°C` (MODERATE).
+     - **Severe Low Humidity:** `umidade_min <=12%` (HIGH) or `<=25%` (MODERATE).
+     - **High Winds / Gale:** `int_vento` `muito forte`/`forte+vento`→`HIGH` (vendaval), `forte`/`rajadas`→`MODERATE`.
 
 ---
 

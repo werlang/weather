@@ -61,7 +61,7 @@ export function saveLastScanSnapshot(snapshot, customDriver = null) {
         // Avoid storing huge payloads beyond SQLite TEXT limits (unlikely, but guard)
         if (json.length > 500000) {
             console.warn('[monitor_service] lastScanSnapshot too large, truncating events');
-            const truncated = { ...snapshot, events: snapshot.events?.slice(0, 20) };
+            const truncated = { ...snapshot, events: snapshot.events?.slice(0, 20), truncated: true, originalCount: snapshot.events?.length || 0 };
             return saveSystemSetting('last_scan_snapshot', JSON.stringify(truncated), customDriver);
         }
         return saveSystemSetting('last_scan_snapshot', json, customDriver);

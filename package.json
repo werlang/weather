@@ -21,6 +21,9 @@
   ],
   "author": "Pablo Werlang",
   "license": "MIT",
+  "engines": {
+    "node": ">=26.0.0"
+  },
   "dependencies": {
     "grammy": "^1.45.1"
   }

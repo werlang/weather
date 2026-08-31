@@ -251,6 +251,7 @@ export class WeatherTelegramBot {
         this.monitorService = monitorService;
         this.getStatus = getStatus;
         this.logger = logger;
+        this._adminCache = { ids: null, expires: 0 };
 
         this.localState = parseMonitorConfig();
         this.syncAdminsFromStore();
@@ -271,6 +272,8 @@ export class WeatherTelegramBot {
             for (const chatId of persisted) {
                 if (this.telegram.addAdminChatId(chatId)) added += 1;
             }
+            // Invalidate isAdmin cache after sync
+            this._adminCache = { ids: null, expires: 0 };
             return added;
         } catch {
             return 0;
@@ -345,8 +348,8 @@ export class WeatherTelegramBot {
 
     /**
      * Checks if a Telegram chat context originates from an authorized administrator.
-     * Checks both in-memory allowlist and persisted extra admins to survive restarts
-     * and cross-process promotion without requiring an immediate restart.
+     * Checks both in-memory allowlist and cached persisted admins (5s TTL) to
+     * avoid per-message DB read while still reflecting new promotions.
      *
      * @param {object} ctx - grammY context.
      * @returns {boolean}
@@ -356,8 +359,12 @@ export class WeatherTelegramBot {
         if (chatId === undefined || chatId === null) return false;
         if (this.telegram.isAdminChat(chatId)) return true;
         try {
-            const persisted = getPersistedAdminChatIds();
-            return persisted.includes(String(chatId));
+            const now = Date.now();
+            if (!this._adminCache.ids || now > this._adminCache.expires) {
+                this._adminCache.ids = getPersistedAdminChatIds();
+                this._adminCache.expires = now + 5000;
+            }
+            return this._adminCache.ids.includes(String(chatId));
         } catch {
             return false;
         }
@@ -859,7 +866,7 @@ export class WeatherTelegramBot {
             `(${presentation.criteria})`,
             CARD_HEADER,
             `🕒 Varredura em: ${timestamp}`,
-            `📊 ${aggregated.length} tipos agrupados — ${events.length} ocorrências em ${uniqueCities.length} de ${snapshot.citiesCount ?? '—'} municípios`,
+            `📊 ${aggregated.length} tipos agrupados — ${events.length} ocorrências em ${uniqueCities.length} de ${snapshot.citiesCount ?? '—'} municípios${snapshot.truncated ? ` (truncado de ${snapshot.originalCount} eventos)` : ''}`,
             `📏 Raio: ${snapshot.radiusKm ?? '—'} km | Status: ${snapshot.dataQuality?.complete ? '✅ completo' : '⚠️ parcial'}`,
             ''
         ];
@@ -1552,118 +1559,108 @@ export class WeatherTelegramBot {
 
             const config = this.getConfig();
 
-            // Admin invite management
-            if (data === 'menu:admins') {
-                await answer();
-                const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
-                return ctx.editMessageText?.(this.renderAdminsMenu(), {
-                    reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: !!active })
-                });
-            }
+            // Table-driven admin handlers (exact matches)
+            const adminExactHandlers = {
+                'menu:admins': async () => {
+                    await answer();
+                    const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
+                    return ctx.editMessageText?.(this.renderAdminsMenu(), {
+                        reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: !!active })
+                    });
+                },
+                'action:generate_invite': async () => {
+                    const code = createAdminInviteCode(String(ctx.chat?.id || 'unknown'));
+                    await answer(`🎟️ Código gerado: ${code}`);
+                    return ctx.editMessageText?.(this.renderInviteGenerated(code), {
+                        reply_markup: new InlineKeyboard()
+                            .text('🔁 Gerar Novo Código', 'action:generate_invite')
+                            .row()
+                            .text('🚫 Revogar Código', 'action:revoke_invite')
+                            .row()
+                            .text('⬅️ Voltar', 'menu:admins')
+                    });
+                },
+                'action:revoke_invite': async () => {
+                    clearInviteCode();
+                    await answer('🚫 Código revogado.');
+                    return ctx.editMessageText?.(this.renderAdminsMenu(), {
+                        reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: false })
+                    });
+                },
+                'menu:main': async () => {
+                    await answer();
+                    return ctx.editMessageText?.(this.renderMainMenu(), {
+                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    });
+                },
+                'menu:settings': async () => {
+                    await answer();
+                    return ctx.editMessageText?.(this.renderSettingsMenu(), {
+                        reply_markup: WeatherTelegramBot.buildSettingsKeyboard(config)
+                    });
+                },
+                'menu:interval': async () => {
+                    await answer();
+                    const text = [
+                        '⏱️ ESCOLHA O INTERVALO DE VARREDURA:',
+                        CARD_HEADER,
+                        `Intervalo ativo: A cada ${config.intervalMinutes} minutos`,
+                        '',
+                        'Selecione a nova frequência de monitoramento:'
+                    ].join('\n');
+                    return ctx.editMessageText?.(text, {
+                        reply_markup: WeatherTelegramBot.buildIntervalKeyboard(config.intervalMinutes)
+                    });
+                },
+                'menu:radius': async () => {
+                    await answer();
+                    const text = [
+                        '📍 ESCOLHA O RAIO REGIONAL DE COBERTURA:',
+                        CARD_HEADER,
+                        `Raio ativo: ${config.radiusKm} km em torno de Charqueadas`,
+                        '',
+                        'Selecione o novo raio de varredura:'
+                    ].join('\n');
+                    return ctx.editMessageText?.(text, {
+                        reply_markup: WeatherTelegramBot.buildRadiusKeyboard(config.radiusKm)
+                    });
+                },
+                'menu:inmet_level': async () => {
+                    await answer();
+                    const text = [
+                        '🏛️ LIMIAR MÍNIMO DE ALERTA — INMET:',
+                        CARD_HEADER,
+                        `Limiar ativo: ${getTierBadge(config.inmetMinSeverity)}`,
+                        '',
+                        'Selecione o nível mínimo para acionamento de alertas do INMET:'
+                    ].join('\n');
+                    return ctx.editMessageText?.(text, {
+                        reply_markup: WeatherTelegramBot.buildInmetLevelKeyboard(config.inmetMinSeverity)
+                    });
+                },
+                'menu:defesa_civil_level': async () => {
+                    await answer();
+                    const text = [
+                        '🛡️ LIMIAR MÍNIMO DE ALERTA — DEFESA CIVIL RS:',
+                        CARD_HEADER,
+                        `Limiar ativo: ${getTierBadge(config.defesaCivilMinSeverity)}`,
+                        '',
+                        'Selecione o nível mínimo para acionamento de alertas da Defesa Civil:'
+                    ].join('\n');
+                    return ctx.editMessageText?.(text, {
+                        reply_markup: WeatherTelegramBot.buildDefesaCivilLevelKeyboard(config.defesaCivilMinSeverity)
+                    });
+                },
+                'menu:categories': async () => {
+                    await answer();
+                    return ctx.editMessageText?.(this.renderCategoriesMenu(config.categoryMinSeverities), {
+                        reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.categoryMinSeverities)
+                    });
+                }
+            };
+            if (adminExactHandlers[data]) return adminExactHandlers[data]();
 
-            if (data === 'action:generate_invite') {
-                const code = createAdminInviteCode(String(ctx.chat?.id || 'unknown'));
-                await answer(`🎟️ Código gerado: ${code}`);
-                return ctx.editMessageText?.(this.renderInviteGenerated(code), {
-                    reply_markup: new InlineKeyboard()
-                        .text('🔁 Gerar Novo Código', 'action:generate_invite')
-                        .row()
-                        .text('🚫 Revogar Código', 'action:revoke_invite')
-                        .row()
-                        .text('⬅️ Voltar', 'menu:admins')
-                });
-            }
-
-            if (data === 'action:revoke_invite') {
-                clearInviteCode();
-                await answer('🚫 Código revogado.');
-                return ctx.editMessageText?.(this.renderAdminsMenu(), {
-                    reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: false })
-                });
-            }
-
-            // 1. Navigation Submenus
-            if (data === 'menu:main') {
-                await answer();
-                return ctx.editMessageText?.(this.renderMainMenu(), {
-                    reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
-                });
-            }
-
-            if (data === 'menu:settings') {
-                await answer();
-                return ctx.editMessageText?.(this.renderSettingsMenu(), {
-                    reply_markup: WeatherTelegramBot.buildSettingsKeyboard(config)
-                });
-            }
-
-            if (data === 'menu:interval') {
-                await answer();
-                const text = [
-                    '⏱️ ESCOLHA O INTERVALO DE VARREDURA:',
-                    CARD_HEADER,
-                    `Intervalo ativo: A cada ${config.intervalMinutes} minutos`,
-                    '',
-                    'Selecione a nova frequência de monitoramento:'
-                ].join('\n');
-
-                return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildIntervalKeyboard(config.intervalMinutes)
-                });
-            }
-
-            if (data === 'menu:radius') {
-                await answer();
-                const text = [
-                    '📍 ESCOLHA O RAIO REGIONAL DE COBERTURA:',
-                    CARD_HEADER,
-                    `Raio ativo: ${config.radiusKm} km em torno de Charqueadas`,
-                    '',
-                    'Selecione o novo raio de varredura:'
-                ].join('\n');
-
-                return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildRadiusKeyboard(config.radiusKm)
-                });
-            }
-
-            if (data === 'menu:inmet_level') {
-                await answer();
-                const text = [
-                    '🏛️ LIMIAR MÍNIMO DE ALERTA — INMET:',
-                    CARD_HEADER,
-                    `Limiar ativo: ${getTierBadge(config.inmetMinSeverity)}`,
-                    '',
-                    'Selecione o nível mínimo para acionamento de alertas do INMET:'
-                ].join('\n');
-
-                return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildInmetLevelKeyboard(config.inmetMinSeverity)
-                });
-            }
-
-            if (data === 'menu:defesa_civil_level') {
-                await answer();
-                const text = [
-                    '🛡️ LIMIAR MÍNIMO DE ALERTA — DEFESA CIVIL RS:',
-                    CARD_HEADER,
-                    `Limiar ativo: ${getTierBadge(config.defesaCivilMinSeverity)}`,
-                    '',
-                    'Selecione o nível mínimo para acionamento de alertas da Defesa Civil:'
-                ].join('\n');
-
-                return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildDefesaCivilLevelKeyboard(config.defesaCivilMinSeverity)
-                });
-            }
-
-            if (data === 'menu:categories') {
-                await answer();
-                return ctx.editMessageText?.(this.renderCategoriesMenu(config.categoryMinSeverities), {
-                    reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.categoryMinSeverities)
-                });
-            }
-
+            // Prefix handlers (category, set_*)
             if (data.startsWith('menu:category:')) {
                 const categoryId = data.split(':')[2];
                 if (ALERT_CATEGORIES[categoryId]) {
@@ -1676,7 +1673,6 @@ export class WeatherTelegramBot {
                 await answer();
                 return;
             }
-
             if (data.startsWith('set_cat:')) {
                 const parts = data.split(':');
                 const categoryId = parts[1];
@@ -1694,8 +1690,6 @@ export class WeatherTelegramBot {
                 await answer();
                 return;
             }
-
-            // 2. Settings Modifiers
             if (data.startsWith('set_interval:')) {
                 const minutes = parseInt(data.split(':')[1], 10);
                 const updated = this.updateConfig({ intervalMinutes: minutes });

@@ -40,7 +40,7 @@ describe('Regional Risk Monitoring Client Functions', () => {
   it('getSurroundingCities(100) returns 100km radius list containing Charqueadas and regional IBGE codes', async () => {
     const cities100 = await getSurroundingCities(100);
     assert.ok(Array.isArray(cities100));
-    assert.ok(cities100.length >= 30);
+    assert.ok(cities100.length === 38, '100km ring must contain exactly 38 cities');
     const hasCharqueadas = cities100.some(c => c.ibgeCode === '4305355' || c.name === 'Charqueadas');
     assert.strictEqual(hasCharqueadas, true);
   });
@@ -48,30 +48,51 @@ describe('Regional Risk Monitoring Client Functions', () => {
   it('getSurroundingCities(50) returns filtered list under 50km radius', async () => {
     const cities50 = await getSurroundingCities(50);
     assert.ok(Array.isArray(cities50));
-    assert.ok(cities50.length < CHARQUEADAS_SURROUNDING_CITIES_100KM.length);
+    assert.ok(cities50.length === 20, '50km ring must contain exactly 20 cities');
     assert.ok(cities50.every(c => c.distKm <= 50));
   });
 
   it('getRegionalRiskWarnings returns object with regionalWarnings and stateWarnings', async () => {
-    const testCities = [
-      { ibgeCode: '4305355', name: 'Charqueadas' },
-      { ibgeCode: '4318408', name: 'São Jerônimo' }
-    ];
-    const warnings = await getRegionalRiskWarnings(testCities);
-    assert.ok(warnings);
-    assert.ok(Array.isArray(warnings.regionalWarnings));
-    assert.ok(Array.isArray(warnings.stateWarnings));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => []
+    });
+    try {
+      const testCities = [
+        { ibgeCode: '4305355', name: 'Charqueadas' },
+        { ibgeCode: '4318408', name: 'São Jerônimo' }
+      ];
+      const warnings = await getRegionalRiskWarnings(testCities);
+      assert.ok(warnings);
+      assert.ok(Array.isArray(warnings.regionalWarnings));
+      assert.ok(Array.isArray(warnings.stateWarnings));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('getRegionalForecasts handles list of cities gracefully', async () => {
-    const testCities = [
-      { ibgeCode: '4305355', name: 'Charqueadas', role: 'Center' }
-    ];
-    const regionalForecasts = await getRegionalForecasts(testCities);
-    assert.ok(Array.isArray(regionalForecasts));
-    assert.strictEqual(regionalForecasts.length, 1);
-    assert.strictEqual(regionalForecasts[0].name, 'Charqueadas');
-    assert.ok(typeof regionalForecasts[0].forecast === 'object');
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ '4305355': { '15/08/2026': { manha: { resumo: 'Sol', temp_min: 10, temp_max: 20 } } } }),
+      headers: { get: () => null }
+    });
+    try {
+      const testCities = [
+        { ibgeCode: '4305355', name: 'Charqueadas', role: 'Center' }
+      ];
+      const regionalForecasts = await getRegionalForecasts(testCities);
+      assert.ok(Array.isArray(regionalForecasts));
+      assert.strictEqual(regionalForecasts.length, 1);
+      assert.strictEqual(regionalForecasts[0].name, 'Charqueadas');
+      assert.ok(typeof regionalForecasts[0].forecast === 'object');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

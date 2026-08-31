@@ -88,9 +88,10 @@ All alert logic operates on four canonical tiers defined in
 | `YELLOW` | 1 | Perigo Potencial / Atenção (moderate) | 🟡 |
 | `ORANGE` | 2 | Perigo / Alerta (severe) | 🟠 |
 | `RED` | 3 | Grande Perigo / Alerta Máximo (extreme) | 🔴 |
+| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/log_database.js:470` `logUnknownAlert`) | ❓ |
 
 An event fires when `rank(event.tier) >= rank(configured threshold)` for its
-source. A threshold of `OFF` (rank 0) disables that source entirely.
+source, with `UNKNOWN` (`4`) outranking `RED` so unrecognized sources never miss. A threshold of `OFF` (rank 0) disables that source entirely.
 
 ### 2.2 Tier Normalization
 
@@ -525,9 +526,11 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Defesa Civil GraphQL fetching + telemetry thresholds | `src/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
 | Tier model, normalization, 24h evaluation, identity, aggregation | `src/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents` | `tests/monitor_service.test.js` |
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitor_service.test.js` |
-| Thresholds menus, badges, presentation copy, message layout | `src/telegram_bot.js` | `ALERT_POLICIES`, `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `renderSeverityBadge`, `formatHighRiskAlert`, `renderActiveAlertsReport` | `tests/telegram.test.js` |
+| Thresholds menus, badges, presentation copy, message layout | `src/telegram_bot.js` | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport` | `tests/telegram.test.js` |
 | Admin delivery + chunking | `src/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/telegram.test.js` |
-| Persistence of cycles/alerts/settings/fetches | `src/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch` | `tests/log_database.test.js` |
+| Persistence of cycles/alerts/settings/fetches + retention | `src/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/log_database.test.js` |
+| Admin allowlist & invites (5-min, hash) | `src/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/admin_store.test.js` |
+| DB driver | `src/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/database_driver.test.js` |
 | Seeded defaults | `migrations/002_seed_default_settings.sql` | — | `tests/migrate.test.js` |
 
 ---
@@ -564,7 +567,8 @@ that violate them.
    America/Sao_Paulo; user-facing timestamps are rendered in
    `America/Sao_Paulo` with `pt-BR` formatting. Parse only through
    `parseWarningDate` / `parseForecastDate`.
-8. **Documentation parity.** Any PR that changes filtering, thresholds, colors,
+8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/log_database.js:534` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitor_service.js:361`.
+9. **Documentation parity.** Any PR that changes filtering, thresholds, colors,
    wording, or delivery semantics updates this file in the same commit and adds
    or amends deterministic unit tests (mocked `fetch`, fake bot objects — no
    live network).

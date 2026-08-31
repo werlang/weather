@@ -213,13 +213,13 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         const cityName = stationMeta.name;
         const data = station.data || {};
 
-        const rain15min = parseFloat(data.chuva?.acumulado?.min015?.value) || 0;
-        const rain1h = parseFloat(data.chuva?.acumulado?.h001?.value) || 0;
-        const rain3h = parseFloat(data.chuva?.acumulado?.h003?.value) || 0;
-        const rain24h = parseFloat(data.chuva?.acumulado?.h024?.value) || 0;
-        const windGust = parseFloat(data.vento?.velocidade_maxima?.value) || 0;
-        const riverLevel = parseFloat(data.rio?.rio_nivel?.value) || null;
-        const riverTrend = parseFloat(data.rio?.rio_nivel_tendencia?.value) || 0;
+        const rain15min = (() => { const n = parseFloat(data.chuva?.acumulado?.min015?.value); return Number.isFinite(n) ? n : 0; })();
+        const rain1h = (() => { const n = parseFloat(data.chuva?.acumulado?.h001?.value); return Number.isFinite(n) ? n : 0; })();
+        const rain3h = (() => { const n = parseFloat(data.chuva?.acumulado?.h003?.value); return Number.isFinite(n) ? n : 0; })();
+        const rain24h = (() => { const n = parseFloat(data.chuva?.acumulado?.h024?.value); return Number.isFinite(n) ? n : 0; })();
+        const windGust = (() => { const n = parseFloat(data.vento?.velocidade_maxima?.value); return Number.isFinite(n) ? n : 0; })();
+        const riverLevel = (() => { const v = data.rio?.rio_nivel?.value; if (v === null || v === undefined || v === '') return null; const n = parseFloat(v); return Number.isFinite(n) ? n : null; })();
+        const riverTrend = (() => { const n = parseFloat(data.rio?.rio_nivel_tendencia?.value); return Number.isFinite(n) ? n : 0; })();
         const riverName = data.rio?.rio_nome?.value || stationMeta.river || 'Rio Jacuí';
 
         // 1. Chuva Torrencial / Acúmulo Rápido (Orange / Red)

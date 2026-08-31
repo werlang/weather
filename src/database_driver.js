@@ -36,6 +36,7 @@ export class DatabaseError extends Error {
 export class Sqlite {
     static connected = false;
     static connection = null;
+    static _connectedPath = null;
     static #rawSqlSentinel = Symbol('raw-sql-fragment');
 
     static get config() {
@@ -51,11 +52,17 @@ export class Sqlite {
      * @returns {typeof Sqlite}
      */
     static connect(config = {}) {
+        const requestedPath = config.path || Sqlite.config.path;
         if (Sqlite.connected && Sqlite.connection) {
-            return this;
+            if (Sqlite._connectedPath === requestedPath) return this;
+            // Path changed — close old and reconnect
+            try { Sqlite.connection.close(); } catch {}
+            Sqlite.connection = null;
+            Sqlite.connected = false;
+            Sqlite._connectedPath = null;
         }
 
-        const dbPath = config.path || Sqlite.config.path;
+        const dbPath = requestedPath;
         if (dbPath === ':memory:') {
             Sqlite.connection = new DatabaseSync(':memory:');
         } else {
@@ -71,6 +78,7 @@ export class Sqlite {
         }
 
         Sqlite.connected = true;
+        Sqlite._connectedPath = dbPath;
         return this;
     }
 
@@ -88,6 +96,7 @@ export class Sqlite {
         } catch {
             // Ignore close errors
         }
+        Sqlite._connectedPath = null;
         Sqlite.connection = null;
         Sqlite.connected = false;
         return this;

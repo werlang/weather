@@ -538,7 +538,6 @@ export function cleanupOldLogs({ retentionHours = null, customDriver = null } = 
     const db = customDriver || getDatabase();
     let fetchLogs = 0, alertLogs = 0, monitorCycles = 0, unknownSources = 0, adminInvites = 0;
     try {
-        // Use direct SQL for range delete (driver delete with '<' works, but exec is clearer for timestamp)
         const tables = [
             { name: 'fetch_logs', col: 'timestamp' },
             { name: 'alert_logs', col: 'timestamp' },
@@ -547,42 +546,20 @@ export function cleanupOldLogs({ retentionHours = null, customDriver = null } = 
         ];
         for (const { name, col } of tables) {
             try {
-                const before = db.count(name, { [col]: { '<': cutoff } });
-                if (before > 0) {
-                    // Use exec for efficient bulk delete; fallback to driver delete
-                    try {
-                        Sqlite.exec(`DELETE FROM "${name}" WHERE "${col}" < '${cutoff.replace(/'/g, "''")}'`);
-                    } catch {
-                        db.delete(name, { [col]: { '<': cutoff } });
-                    }
-                    const after = db.count(name, { [col]: { '<': cutoff } });
-                    const deleted = before - after;
-                    if (name === 'fetch_logs') fetchLogs = deleted;
-                    else if (name === 'alert_logs') alertLogs = deleted;
-                    else if (name === 'monitor_cycle_logs') monitorCycles = deleted;
-                    else if (name === 'unknown_alert_sources') unknownSources = deleted;
-                }
+                const result = db.delete(name, { [col]: { '<': cutoff } });
+                const deleted = Number(result?.[0]?.changes || 0);
+                if (name === 'fetch_logs') fetchLogs = deleted;
+                else if (name === 'alert_logs') alertLogs = deleted;
+                else if (name === 'monitor_cycle_logs') monitorCycles = deleted;
+                else if (name === 'unknown_alert_sources') unknownSources = deleted;
             } catch (err) {
                 console.error(`[log_database] cleanupOldLogs ${name} failed:`, err.message);
             }
         }
-        // Purge admin_invites that are expired/revoked/used and older than retention (or at least 5-min)
+        // Purge expired admin_invites older than retention
         try {
-            const inviteCutoff = new Date(Date.now() - Math.max(hours, 1) * 60 * 60 * 1000).toISOString();
-            const expiredInvites = db.find('admin_invites', {
-                filter: { expires_at: { '<': cutoff } },
-                view: ['code_hash']
-            });
-            if (expiredInvites.length) {
-                try {
-                    Sqlite.exec(`DELETE FROM "admin_invites" WHERE "expires_at" < '${cutoff.replace(/'/g, "''")}'`);
-                    adminInvites = expiredInvites.length;
-                } catch {
-                    for (const r of expiredInvites) {
-                        try { db.delete('admin_invites', { code_hash: r.code_hash }); adminInvites += 1; } catch {}
-                    }
-                }
-            }
+            const result = db.delete('admin_invites', { expires_at: { '<': cutoff } });
+            adminInvites = Number(result?.[0]?.changes || 0);
         } catch (err) {
             console.error('[log_database] cleanupOldLogs admin_invites failed:', err.message);
         }
