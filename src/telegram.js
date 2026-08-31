@@ -32,6 +32,8 @@ export function parseTelegramAdminChatIds(value) {
 
 /**
  * Reads and optionally validates Telegram settings from an environment object.
+ * Admin bootstrap is now DB-only — first /start becomes admin via
+ * action:bootstrap_accept, no env allowlist.
  *
  * @param {object} [options]
  * @param {NodeJS.ProcessEnv} [options.env=process.env] - Source configuration.
@@ -42,18 +44,12 @@ export function parseTelegramAdminChatIds(value) {
  */
 export function parseTelegramConfig({ env = process.env, requireConfigured = true } = {}) {
     const token = String(env.TELEGRAM_BOT_TOKEN || '').trim();
-    const adminChatIds = parseTelegramAdminChatIds(env.TELEGRAM_ADMIN_CHAT_ID);
 
-    if (requireConfigured) {
-        const missing = [];
-        if (!token) missing.push('TELEGRAM_BOT_TOKEN');
-        // TELEGRAM_ADMIN_CHAT_ID is optional for bootstrap — first /start can become admin
-        if (missing.length > 0) {
-            throw new Error(`Missing required Telegram configuration: ${missing.join(', ')}`);
-        }
+    if (requireConfigured && !token) {
+        throw new Error('Missing required Telegram configuration: TELEGRAM_BOT_TOKEN');
     }
 
-    return { token, adminChatIds };
+    return { token, adminChatIds: [] };
 }
 
 /**

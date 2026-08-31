@@ -4,7 +4,7 @@
 
 | File | Primary Responsibility |
 | :--- | :--- |
-| `src/telegram.js` | Direct grammY wrapper. Parses `TELEGRAM_BOT_TOKEN` & `TELEGRAM_ADMIN_CHAT_ID`, provides `splitMessage(text, 4096)`, `sendToAdmins(text)`, `start({ onStart })`, and `stop(signal)`. |
+| `src/telegram.js` | Direct grammY wrapper. Parses `TELEGRAM_BOT_TOKEN` (admin is DB `admin_users` bootstrap), provides `splitMessage(text, 4096)`, `sendToAdmins(text)`, `start({ onStart })`, and `stop(signal)`. |
 | `src/telegram_bot.js` | High-level OOP bot layer (`WeatherTelegramBot`). Manages interactive menus, inline keyboards, visual gauges, card templates, command routes, and `sendHighRiskAlerts` / `createAlertCallback`. |
 | `src/weather_bot.js` | Process composition entry point. Initializes `WeatherTelegramBot`, binds alert callback to `startMonitoringService`, and coordinates graceful process exit. |
 

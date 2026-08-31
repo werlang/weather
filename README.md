@@ -50,19 +50,19 @@ ifsul/weather/
 
 ### 1. Run the canonical Telegram monitoring service (`npm start`)
 ```bash
-# Copy the template and provide TELEGRAM_BOT_TOKEN plus TELEGRAM_ADMIN_CHAT_ID.
+# Copy the template and provide TELEGRAM_BOT_TOKEN (admin bootstrap is DB-only).
 cp .env.example .env
 
 # Starts long-running regional monitoring with Telegram alert delivery.
 npm start
 # or via Docker Compose
 docker compose up --build
+# First /start from any user → 🎉 BEM-VINDO — Aceitar/Recusar to become first admin (same flow as invite code)
 ```
 
 Configurable via `.env`:
 - `TELEGRAM_BOT_TOKEN`: Token issued by Telegram's BotFather.
-- `TELEGRAM_ADMIN_CHAT_ID`: One or more authorized chat IDs, comma-separated.
-- `SQLITE_DB_PATH`: Path to SQLite logs database (default: `weather_logs.db`)
+- `SQLITE_DB_PATH`: Path to SQLite logs database (default: `weather_logs.db`, holds `admin_users`/`admin_invites`)
 
 Monitoring radius (default: `50` km) and cycle interval (default: `15` minutes)
 live in the SQLite `system_settings` table — adjust them at runtime through the

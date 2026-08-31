@@ -39,11 +39,10 @@ For message formatting, layout templates, and character budget rules, see [Alert
 
 ## Core Operational Patterns
 
-### 1. Configuration & Administrator Allowlist
+### 1. Configuration & Administrator Allowlist (DB-only bootstrap)
 - **Environment Variables:**
-  - `TELEGRAM_BOT_TOKEN`: Telegram bot token from BotFather.
-  - `TELEGRAM_ADMIN_CHAT_ID`: Comma-separated list of allowed chat IDs (e.g. `123456789,987654321`).
-- **Security Rule:** Outbound alert delivery and protected commands (`/status`) are strictly restricted to configured administrator IDs. An unauthorized user sending `/start` or `/status` is safely deflected with an informational message and never granted access.
+  - `TELEGRAM_BOT_TOKEN`: Telegram bot token from BotFather. (Only required env; admin is DB `admin_users` table)
+- **Security Rule:** Outbound alert delivery and protected commands (`/status`, `/config`, live `Alertas Ativos`) are restricted to DB allowlist (`admin_users` + in-memory `TelegramBotClient`). First `/start` when `admin_users` empty shows bootstrap `🎉 BEM-VINDO — CONFIGURAÇÃO INICIAL` with `[✅ Aceitar]`/`[❌ Recusar]` (same flow as invite code). Further admins via Config → `👥 Convidar` → `A-Z0-9×8` code (5-min, `admin_invites`, `SHA256`) + link `https://t.me/<bot>?start=CODE` → `Accept/Refuse`. Regular users get `buildRegularWelcomeMessage()` + `buildRegularKeyboard()` with `Ver Últimos Alertas` (read-only `getLastScanSnapshot()` `last_scan_snapshot`).
 
 ### 2. Non-blocking Alert Dispatch (`createTelegramAlertCallback`)
 The monitoring loop must never stall or crash due to Telegram network timeouts or rate limits:

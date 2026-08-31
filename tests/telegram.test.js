@@ -65,6 +65,7 @@ describe('Telegram configuration and wrapper', () => {
     });
 
     it('requires token and administrator configuration for the bot entry point', () => {
+        // Admin bootstrap is DB-only — env TELEGRAM_ADMIN_CHAT_ID is ignored (legacy removed)
         assert.deepEqual(parseTelegramConfig({
             env: {
                 TELEGRAM_BOT_TOKEN: ' token ',
@@ -72,15 +73,16 @@ describe('Telegram configuration and wrapper', () => {
             }
         }), {
             token: 'token',
-            adminChatIds: ['123', '456']
+            adminChatIds: []
         });
 
         assert.throws(() => parseTelegramConfig({ env: {} }), /TELEGRAM_BOT_TOKEN/);
-        // TELEGRAM_ADMIN_CHAT_ID is optional for bootstrap — first /start can become admin via accept/refuse
         assert.doesNotThrow(() => parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token' } }));
         assert.deepEqual(parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token' } }).adminChatIds, []);
-        // Invalid admin ID should still throw
-        assert.throws(() => parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token', TELEGRAM_ADMIN_CHAT_ID: 'not-a-number' } }), /Invalid Telegram administrator/);
+        // Env admin invalid is ignored — DB is source of truth
+        assert.doesNotThrow(() => parseTelegramConfig({ env: { TELEGRAM_BOT_TOKEN: 'token', TELEGRAM_ADMIN_CHAT_ID: 'not-a-number' } }));
+        // Direct validation still works for chat IDs used when adding admins
+        assert.throws(() => parseTelegramAdminChatIds('not-a-number'), /Invalid Telegram administrator/);
     });
 
     it('splits outbound messages at Telegram’s maximum length', () => {

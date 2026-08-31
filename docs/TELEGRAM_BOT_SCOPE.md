@@ -72,14 +72,14 @@ Broadcast emergency alerts include quick jump action buttons attached directly t
 
 ---
 
-## 5. Security & Administrator Allowlist
+## 5. Security & Administrator Allowlist (DB-only bootstrap)
 
-Registration is configuration-based:
-1. Create the bot with Telegram's BotFather and obtain `TELEGRAM_BOT_TOKEN`.
-2. Retrieve the authorized Telegram Chat ID (e.g., by messaging `@userinfobot` or checking the service logs on first contact).
-3. Set `TELEGRAM_ADMIN_CHAT_ID` in `.env` (comma-separated for multiple admins).
-4. Protected commands, settings modifications, and alert broadcasts are strictly restricted to allow-listed IDs.
-5. Unauthorized users receive a polite access restriction card.
+Registration is DB-only (no env allowlist):
+1. Create the bot with Telegram's BotFather and obtain `TELEGRAM_BOT_TOKEN` (only required env).
+2. Deploy with empty `admin_users` table. First user to `/start` sees `🎉 BEM-VINDO — CONFIGURAÇÃO INICIAL` with `[✅ Aceitar]`/`[❌ Recusar]` — same accept/refuse flow as invite code. Accept persists `admin_users` (`added_by='bootstrap'`) and in-memory `TelegramBotClient` allowlist.
+3. Further admins: existing admin Config → `👥 Convidar Administrador` generates `A-Z0-9×8` code (5-min, single-use, `admin_invites` table, `SHA256` hash) + shareable link `https://t.me/<bot>?start=CODE` → invitee `/start CODE` or pastes code → `[✅ Aceitar]`/`[❌ Recusar]` → `consumeInviteCode()` `withTransaction` promotes.
+4. Protected commands, settings, live scans and broadcasts are restricted to DB allowlist (`admin_users` + in-memory). Regular users get friendly hello `buildRegularWelcomeMessage()` + `buildRegularKeyboard()` with `🚨 Ver Últimos Alertas` (read-only `getLastScanSnapshot()` from `system_settings:last_scan_snapshot`, no live `performRegionalRiskMonitoring()`).
+5. Unauthorized callbacks receive `Acesso restrito` toast + invite prompt.
 
 ---
 
@@ -88,8 +88,7 @@ Registration is configuration-based:
 | Variable | Required | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
-| `TELEGRAM_ADMIN_CHAT_ID` | Yes | — | Comma-separated allowlist of Telegram chat IDs. |
-| `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, and runtime settings. |
+| `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, runtime settings and `admin_users`/`admin_invites`. |
 
 Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002): monitoring radius (`radius_km`, default `50` km) and cycle interval (`interval_minutes`, default `15` minutes) are configured exclusively through the database (bot `/config` or CLI), never through environment variables. `/config` changes persist across restarts.
 

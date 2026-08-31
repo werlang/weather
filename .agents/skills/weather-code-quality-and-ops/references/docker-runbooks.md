@@ -55,8 +55,7 @@ cp .env.example .env
 ```
 
 Key environment variables supported:
-* `TELEGRAM_BOT_TOKEN`: The bot authentication token from BotFather (required for `npm start`).
-* `TELEGRAM_ADMIN_CHAT_ID`: Comma-separated list of numerical Telegram chat IDs authorized to receive alerts and send commands.
+* `TELEGRAM_BOT_TOKEN`: The bot authentication token from BotFather (required for `npm start`; admin bootstrap is DB `admin_users` via first `/start` → Accept).
 * `CHARQUEADAS_IBGE_CODE`: IBGE geocode (default: `4305355`).
 * `INMET_PREVMET_URL`: INMET base forecast URL (default: `https://apiprevmet3.inmet.gov.br`).
 
