@@ -33,7 +33,8 @@ import {
     logMonitorCycle,
     saveSystemSetting,
     getSystemSetting,
-    loadAllSettings
+    loadAllSettings,
+    cleanupOldLogs
 } from './log_database.js';
 
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
@@ -356,6 +357,9 @@ export async function performRegionalRiskMonitoring({
         for (const event of highRiskEvents) {
             logAlert(event);
         }
+
+        // Cleanup logs older than retention (env LOG_RETENTION_HOURS, default 168h) at every scan
+        try { cleanupOldLogs(); } catch (err) { console.error('[monitor_service] cleanupOldLogs failed:', err.message); }
 
         if (highRiskEvents.length > 0) {
             if (typeof alertCallback === 'function') {

@@ -503,6 +503,98 @@ export function loadAllSettings(customDriver = null) {    try {
     }
 }
 
+/**
+ * Returns configured log retention in hours from env.
+ * Reads LOG_RETENTION_HOURS (fallback LOGS_RETENTION_HOURS, LOG_KEEP_HOURS).
+ * Default 168 hours (7 days) if not set or invalid. 0 or negative disables cleanup.
+ *
+ * @param {NodeJS.ProcessEnv} [env=process.env]
+ * @returns {number} Hours to keep, 0 = keep forever.
+ */
+export function getLogRetentionHours(env = process.env) {
+    const raw = env.LOG_RETENTION_HOURS ?? env.LOGS_RETENTION_HOURS ?? env.LOG_KEEP_HOURS ?? env.LOG_RETENTION ?? '';
+    if (raw === undefined || raw === null || String(raw).trim() === '') return 168;
+    const parsed = Number(String(raw).trim());
+    if (!Number.isFinite(parsed) || parsed < 0) return 168;
+    return Math.floor(parsed);
+}
+
+/**
+ * Deletes log rows older than the configured retention window.
+ * Called at every scan cycle to keep tables bounded.
+ * Deletes from fetch_logs, alert_logs, monitor_cycle_logs, unknown_alert_sources
+ * where timestamp < cutoff (now - retentionHours). Also purges expired/revoked
+ * admin_invites older than retention (or 5-min expiry if retention is larger).
+ *
+ * @param {object} [options]
+ * @param {number|null} [options.retentionHours] - Override env, 0 = skip.
+ * @param {typeof Sqlite|null} [options.customDriver=null]
+ * @returns {{ fetchLogs: number, alertLogs: number, monitorCycles: number, unknownSources: number, adminInvites: number }} Deleted counts.
+ */
+export function cleanupOldLogs({ retentionHours = null, customDriver = null } = {}) {
+    const hours = retentionHours !== null && retentionHours !== undefined ? Number(retentionHours) : getLogRetentionHours();
+    if (!hours || hours <= 0 || !Number.isFinite(hours)) return { fetchLogs: 0, alertLogs: 0, monitorCycles: 0, unknownSources: 0, adminInvites: 0 };
+    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+    const db = customDriver || getDatabase();
+    let fetchLogs = 0, alertLogs = 0, monitorCycles = 0, unknownSources = 0, adminInvites = 0;
+    try {
+        // Use direct SQL for range delete (driver delete with '<' works, but exec is clearer for timestamp)
+        const tables = [
+            { name: 'fetch_logs', col: 'timestamp' },
+            { name: 'alert_logs', col: 'timestamp' },
+            { name: 'monitor_cycle_logs', col: 'timestamp' },
+            { name: 'unknown_alert_sources', col: 'timestamp' }
+        ];
+        for (const { name, col } of tables) {
+            try {
+                const before = db.count(name, { [col]: { '<': cutoff } });
+                if (before > 0) {
+                    // Use exec for efficient bulk delete; fallback to driver delete
+                    try {
+                        Sqlite.exec(`DELETE FROM "${name}" WHERE "${col}" < '${cutoff.replace(/'/g, "''")}'`);
+                    } catch {
+                        db.delete(name, { [col]: { '<': cutoff } });
+                    }
+                    const after = db.count(name, { [col]: { '<': cutoff } });
+                    const deleted = before - after;
+                    if (name === 'fetch_logs') fetchLogs = deleted;
+                    else if (name === 'alert_logs') alertLogs = deleted;
+                    else if (name === 'monitor_cycle_logs') monitorCycles = deleted;
+                    else if (name === 'unknown_alert_sources') unknownSources = deleted;
+                }
+            } catch (err) {
+                console.error(`[log_database] cleanupOldLogs ${name} failed:`, err.message);
+            }
+        }
+        // Purge admin_invites that are expired/revoked/used and older than retention (or at least 5-min)
+        try {
+            const inviteCutoff = new Date(Date.now() - Math.max(hours, 1) * 60 * 60 * 1000).toISOString();
+            const expiredInvites = db.find('admin_invites', {
+                filter: { expires_at: { '<': cutoff } },
+                view: ['code_hash']
+            });
+            if (expiredInvites.length) {
+                try {
+                    Sqlite.exec(`DELETE FROM "admin_invites" WHERE "expires_at" < '${cutoff.replace(/'/g, "''")}'`);
+                    adminInvites = expiredInvites.length;
+                } catch {
+                    for (const r of expiredInvites) {
+                        try { db.delete('admin_invites', { code_hash: r.code_hash }); adminInvites += 1; } catch {}
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[log_database] cleanupOldLogs admin_invites failed:', err.message);
+        }
+        if (fetchLogs + alertLogs + monitorCycles + unknownSources + adminInvites > 0) {
+            console.log(`[log_database] cleanupOldLogs retention=${hours}h cutoff=${cutoff} deleted fetch:${fetchLogs} alerts:${alertLogs} cycles:${monitorCycles} unknown:${unknownSources} invites:${adminInvites}`);
+        }
+    } catch (err) {
+        console.error('[log_database] cleanupOldLogs outer error:', err.message);
+    }
+    return { fetchLogs, alertLogs, monitorCycles, unknownSources, adminInvites };
+}
+
 export function closeDatabase(customDriver = null) {
     if (customDriver && typeof customDriver.close === 'function') {
         try { customDriver.close(); } catch {}
