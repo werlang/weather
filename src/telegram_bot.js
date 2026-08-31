@@ -700,8 +700,37 @@ export class WeatherTelegramBot {
     }
 
     /**
+     * Returns the bot username for invite links, if known.
+     *
+     * @returns {string|null}
+     */
+    getBotUsername() {
+        try {
+            const fromInfo = this.telegram?.bot?.botInfo?.username;
+            if (fromInfo) return String(fromInfo).replace(/^@/, '');
+            const envName = process.env.TELEGRAM_BOT_USERNAME;
+            if (envName) return String(envName).replace(/^@/, '');
+        } catch {}
+        return null;
+    }
+
+    /**
+     * Builds a shareable invite link that auto-starts the bot with the code.
+     * User clicking the link triggers /start <code> and then sees Accept/Refuse.
+     *
+     * @param {string} code - Invite code.
+     * @returns {string|null} HTTPS link or null if username unknown.
+     */
+    buildInviteLink(code) {
+        const username = this.getBotUsername();
+        if (!username) return null;
+        const normalized = normalizeInviteCode(code);
+        return `https://t.me/${username}?start=${normalized}`;
+    }
+
+    /**
      * Renders the newly generated invite code for display to the admin.
-     * Shows 5-minute expiry.
+     * Shows 5-minute expiry and shareable link that auto-sends the code.
      *
      * @param {string} code - Generated invite code.
      * @returns {string}
@@ -711,19 +740,50 @@ export class WeatherTelegramBot {
         const expiryLine = active?.expiresAt
             ? `Expira em: ${new Date(active.expiresAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })} (5 minutos)`
             : 'Expira em 5 minutos';
-        return [
+        const link = this.buildInviteLink(code);
+        const lines = [
             '🎟️ CÓDIGO DE CONVITE GERADO',
             CARD_HEADER,
             `Código: \`${code}\``,
             expiryLine,
+            ''
+        ];
+        if (link) {
+            lines.push(`🔗 Link de convite (clique para aceitar):`);
+            lines.push(link);
+            lines.push('');
+            lines.push('Ao clicar, o usuário inicia o bot e vê botões [Aceitar] [Recusar].');
+        } else {
+            lines.push('Compartilhe este código com o novo administrador.');
+            lines.push('Ele deve iniciar conversa com o bot e enviar o código como mensagem.');
+            lines.push('(Pode colar com texto ao redor — o bot extrai o código)');
+        }
+        lines.push('', CARD_DIVIDER, '⚠️ Uso único — será invalidado após o primeiro resgate ou após expirar.', '🔁 Gere um novo código se precisar convidar outra pessoa.');
+        return lines.join('\n');
+    }
+
+    /**
+     * Renders the accept/refuse prompt for a user who arrived via invite link (/start <code>).
+     *
+     * @param {string} code - Invite code from start payload.
+     * @returns {string}
+     */
+    renderInviteAcceptPrompt(code) {
+        const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
+        const isActive = active && active.code === normalizeInviteCode(code);
+        const expiryInfo = isActive && active.expiresAt
+            ? `Expira em: ${new Date(active.expiresAt).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+            : 'Expira em 5 minutos (uso único)';
+        return [
+            '🎟️ CONVITE PARA ADMINISTRADOR',
+            CARD_HEADER,
+            `Você recebeu um convite para ser administrador do Monitor Charqueadas.`,
+            `Código: \`${normalizeInviteCode(code)}\``,
+            expiryInfo,
             '',
-            'Compartilhe este código com o novo administrador.',
-            'Ele deve iniciar conversa com o bot e enviar o código como mensagem.',
-            '(Pode colar com texto ao redor — o bot extrai o código)',
-            '',
+            'Deseja aceitar o convite?',
             CARD_DIVIDER,
-            '⚠️ Uso único — será invalidado após o primeiro resgate ou após expirar.',
-            '🔁 Gere um novo código se precisar convidar outra pessoa.'
+            'Toque em Aceitar para confirmar ou Recusar para ignorar.'
         ].join('\n');
     }
 
@@ -1216,8 +1276,24 @@ export class WeatherTelegramBot {
      */
     registerHandlers() {
         // Command: /start & /menu -> Show Main Dashboard with Interactive Buttons
+        // Supports invite link /start <CODE> → shows Accept/Refuse for non-admin
         const handleStart = async ctx => {
-            if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
+            const payloadRaw = ctx.match !== undefined
+                ? String(ctx.match)
+                : String(ctx.message?.text || '').split(/\s+/).slice(1).join(' ');
+            const payloadCode = payloadRaw ? (extractInviteCodeFromText(payloadRaw) || normalizeInviteCode(payloadRaw)) : null;
+            const isInvitePayload = payloadCode && INVITE_CODE_REGEX.test(payloadCode);
+            if (!this.isAdmin(ctx)) {
+                if (isInvitePayload) {
+                    const normalized = normalizeInviteCode(payloadCode);
+                    return ctx.reply(this.renderInviteAcceptPrompt(normalized), {
+                        reply_markup: new InlineKeyboard()
+                            .text('✅ Aceitar', `action:invite_accept:${normalized}`)
+                            .text('❌ Recusar', `action:invite_reject:${normalized}`)
+                    });
+                }
+                return this.replyUnauthorized(ctx);
+            }
             const text = this.renderMainMenu();
             return ctx.reply(text, { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
         };
@@ -1316,6 +1392,88 @@ export class WeatherTelegramBot {
                 return ctx.editMessageText?.(buildRegularWelcomeMessage(), {
                     reply_markup: WeatherTelegramBot.buildRegularKeyboard()
                 });
+            }
+            // Invite accept/reject — allowed for non-admin (invitee) via link or paste
+            if (data.startsWith('action:invite_accept:')) {
+                const code = data.split(':')[2] || '';
+                const normalized = normalizeInviteCode(code);
+                if (!INVITE_CODE_REGEX.test(normalized)) {
+                    await answer('Código inválido');
+                    return;
+                }
+                if (this.isAdmin(ctx)) {
+                    await answer('Você já é administrador');
+                    return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
+                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    });
+                }
+                const chatId = String(ctx.chat?.id);
+                const username = ctx.from?.username || null;
+                const result = consumeInviteCode(normalized, chatId, { username });
+                if (result.success) {
+                    this.telegram.addAdminChatId(chatId);
+                    this.syncAdminsFromStore();
+                    await answer('✅ Convite aceito!');
+                    return ctx.editMessageText?.([
+                        '✅ CÓDIGO ACEITO — ACESSO LIBERADO',
+                        CARD_HEADER,
+                        `Bem-vindo! Seu chat \`${chatId}\` agora é administrador.`,
+                        '',
+                        'Você já pode usar:',
+                        '• /start — painel principal',
+                        '• /status — diagnóstico',
+                        '• /config — ajustes',
+                        '• /alertas — avisos ativos',
+                        '',
+                        CARD_DIVIDER,
+                        '🔒 O código foi invalidado (uso único).'
+                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+                }
+                if (result.reason === 'already_admin') {
+                    this.telegram.addAdminChatId(chatId);
+                    await answer('Já é administrador');
+                    return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
+                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    });
+                }
+                if (result.reason === 'expired') {
+                    await answer('Código expirado');
+                    return ctx.editMessageText?.([
+                        '⏰ CÓDIGO EXPIRADO',
+                        CARD_HEADER,
+                        `O código \`${normalized}\` expirou (5 minutos).`,
+                        'Peça novo código ao administrador.'
+                    ].join('\n'));
+                }
+                if (result.reason === 'revoked') {
+                    await answer('Código revogado');
+                    return ctx.editMessageText?.([
+                        '🚫 CÓDIGO REVOGADO',
+                        CARD_HEADER,
+                        `O código \`${normalized}\` foi revogado.`,
+                        'Peça novo código ao administrador.'
+                    ].join('\n'));
+                }
+                await answer('Código inválido');
+                return ctx.editMessageText?.([
+                    '❌ CÓDIGO INVÁLIDO',
+                    CARD_HEADER,
+                    `O código \`${normalized}\` não é válido ou já foi usado.`,
+                    'Peça novo código ao administrador em: ⚙️ Configurações → 👥 Convidar'
+                ].join('\n'));
+            }
+            if (data.startsWith('action:invite_reject:')) {
+                const code = data.split(':')[2] || '';
+                await answer('Convite recusado');
+                return ctx.editMessageText?.([
+                    '❌ CONVITE RECUSADO',
+                    CARD_HEADER,
+                    `Você recusou o convite \`${normalizeInviteCode(code)}\`.`,
+                    'Se mudar de ideia, peça novo código ao administrador.',
+                    '',
+                    CARD_DIVIDER,
+                    'Você continua com acesso de leitura aos últimos alertas via “🚨 Ver Últimos Alertas”.'
+                ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
             }
 
             if (!this.isAdmin(ctx)) {

@@ -365,4 +365,89 @@ describe('Admin Invite Telegram flow (unit)', () => {
         const result2 = consumeInviteCode(`  ${code2.toLowerCase()}  `, '666');
         assert.equal(result2.success, true);
     });
+
+    it('admin generate shows shareable link and start payload shows accept/refuse', async () => {
+        const { TelegramBotClient } = await import('../src/telegram.js');
+        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { createAdminInviteCode } = await import('../src/admin_store.js');
+        // Set bot username for link generation
+        const prevUsername = process.env.TELEGRAM_BOT_USERNAME;
+        process.env.TELEGRAM_BOT_USERNAME = 'test_weather_bot';
+        const fakeBot = {
+            commandHandlers: new Map(),
+            eventHandlers: new Map(),
+            callbackHandlers: [],
+            botInfo: { username: 'test_weather_bot' },
+            command(c, h) { this.commandHandlers.set(c, h); },
+            on(f, h) { this.eventHandlers.set(f, h); },
+            callbackQuery(f, h) { this.callbackHandlers.push({ f, h }); },
+            catch() {},
+            api: { sendMessage: async () => {}, getMe: async () => ({ username: 'test_weather_bot' }) }
+        };
+        const client = new TelegramBotClient({ token: 'test-token', adminChatIds: ['123'], botFactory: () => fakeBot, logger: { error() {} } });
+        const bot = new WeatherTelegramBot({ telegram: client });
+        // Admin generates invite via callback
+        const cbHandler = fakeBot.eventHandlers.get('callback_query:data');
+        let generatedMsg = null;
+        await cbHandler({
+            chat: { id: 123 },
+            callbackQuery: { data: 'action:generate_invite' },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { generatedMsg = msg; }
+        });
+        assert.match(generatedMsg, /CÓDIGO DE CONVITE GERADO/);
+        assert.match(generatedMsg, /https:\/\/t\.me\/test_weather_bot\?start=[A-Z0-9]{8}/);
+        const linkMatch = generatedMsg.match(/https:\/\/t\.me\/test_weather_bot\?start=([A-Z0-9]{8})/);
+        assert.ok(linkMatch, 'link should contain code');
+        const codeFromLink = linkMatch[1];
+        // Non-admin clicks link → /start CODE
+        let startReply = null;
+        let startKb = null;
+        await fakeBot.commandHandlers.get('start')({
+            chat: { id: 999 },
+            from: { username: 'newuser' },
+            message: { text: `/start ${codeFromLink}` },
+            match: codeFromLink,
+            reply: async (msg, opts) => { startReply = msg; startKb = opts?.reply_markup; }
+        });
+        assert.match(startReply, /CONVITE PARA ADMINISTRADOR/);
+        assert.match(startReply, new RegExp(codeFromLink));
+        assert.ok(startKb.inline_keyboard.some(row => row.some(b => b.callback_data === `action:invite_accept:${codeFromLink}`)));
+        assert.ok(startKb.inline_keyboard.some(row => row.some(b => b.callback_data === `action:invite_reject:${codeFromLink}`)));
+        // Non-admin accepts via button
+        let acceptedMsg = null;
+        await cbHandler({
+            chat: { id: 999 },
+            from: { username: 'newuser' },
+            callbackQuery: { data: `action:invite_accept:${codeFromLink}` },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { acceptedMsg = msg; }
+        });
+        assert.match(acceptedMsg, /CÓDIGO ACEITO/);
+        assert.ok(client.isAdminChat('999'));
+        // Code is single-use, second accept should be invalid
+        let secondAccept = null;
+        await cbHandler({
+            chat: { id: 888 },
+            callbackQuery: { data: `action:invite_accept:${codeFromLink}` },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { secondAccept = msg; }
+        });
+        assert.match(secondAccept, /CÓDIGO INVÁLIDO|já foi usado|expirou/);
+        // Test reject path
+        const code2 = createAdminInviteCode('123');
+        let rejectedMsg = null;
+        await cbHandler({
+            chat: { id: 777 },
+            callbackQuery: { data: `action:invite_reject:${code2}` },
+            answerCallbackQuery: async () => {},
+            editMessageText: async (msg) => { rejectedMsg = msg; }
+        });
+        assert.match(rejectedMsg, /CONVITE RECUSADO/);
+        // Rejected code should still be active (not consumed)
+        const { getActiveInviteCode } = await import('../src/admin_store.js');
+        assert.ok(getActiveInviteCode(), 'rejected code should remain active');
+        if (prevUsername === undefined) delete process.env.TELEGRAM_BOT_USERNAME;
+        else process.env.TELEGRAM_BOT_USERNAME = prevUsername;
+    });
 });
