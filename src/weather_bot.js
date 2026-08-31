@@ -25,7 +25,7 @@ export async function startWeatherBot({ env = process.env, logger = console, tel
         logger
     });
 
-    // Merge persisted invite-promoted admins (system_settings admin_extra_chat_ids)
+    // Merge persisted invite-promoted admins (admin_users table)
     try {
         const persisted = getPersistedAdminChatIds();
         for (const chatId of persisted) {

@@ -17,7 +17,6 @@ import {
     normalizeInviteCode,
     extractInviteCodeFromText,
     getActiveInviteCode,
-    getActiveInvites,
     createAdminInviteCode,
     consumeInviteCode,
     getPersistedAdminChatIds,
@@ -31,26 +30,7 @@ import {
 export const CARD_HEADER = '━━━━━━━━━━━━━━━━━━━━━━━━━';
 export const CARD_DIVIDER = '─────────────────────────';
 
-/**
- * Standardized alert policies and criteria for educational & municipal safety.
- */
-export const ALERT_POLICIES = {
-    school: {
-        id: 'school',
-        label: '🏫 Escola (Laranja Defesa Civil / Vermelho INMET)',
-        description: 'Recomendação de cancelamento/suspensão de aulas. Filtra frio de rotina e aciona apenas temporais/alagamentos severos e avisos vermelhos.'
-    },
-    red_only: {
-        id: 'red_only',
-        label: '🔴 Apenas Vermelho Extremo (Grande Perigo)',
-        description: 'Aciona estritamente para alertas vermelhos oficiais do INMET ou Defesa Civil RS.'
-    },
-    all: {
-        id: 'all',
-        label: '🟡 Todos os Níveis (Amarelo, Laranja e Vermelho)',
-        description: 'Modo informativo amplo para todos os avisos de perigo potencial e moderados.'
-    }
-};
+
 
 
 /**
@@ -927,23 +907,6 @@ export class WeatherTelegramBot {
         });
 
         kb.row().text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
-
-    /**
-     * Builds the alert policy selection inline keyboard with active indicator.
-     *
-     * @param {string} [currentPolicy='school']
-     * @returns {InlineKeyboard}
-     */
-    static buildAlertLevelKeyboard(currentPolicy = 'school') {
-        const kb = new InlineKeyboard();
-        Object.values(ALERT_POLICIES).forEach(p => {
-            const isCurrent = currentPolicy === p.id;
-            const label = `${isCurrent ? '✅ ' : ''}${p.label}`;
-            kb.text(label, `set_alert:${p.id}`).row();
-        });
-        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
         return kb;
     }
 

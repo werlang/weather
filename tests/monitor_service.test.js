@@ -341,7 +341,8 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     const highRisks = evaluateHighRisksIn24hWindow({
       regionalWarnings,
       regionalForecasts: [],
-      alertPolicy: 'school',
+      inmetMinSeverity: 'RED',
+      defesaCivilMinSeverity: 'ORANGE',
       now
     });
 
@@ -383,7 +384,8 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     const highRisks = evaluateHighRisksIn24hWindow({
       regionalWarnings: [],
       regionalForecasts,
-      alertPolicy: 'school',
+      inmetMinSeverity: 'RED',
+      defesaCivilMinSeverity: 'ORANGE',
       now
     });
 

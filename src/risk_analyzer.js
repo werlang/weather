@@ -334,7 +334,6 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
  * @param {Array<object>} [params.defesaCivilTelemetry] - Dados de telemetria da Defesa Civil RS.
  * @param {'RED' | 'ORANGE' | 'YELLOW' | 'OFF'} [params.inmetMinSeverity='RED'] - Nível mínimo para alertas INMET.
  * @param {'RED' | 'ORANGE' | 'YELLOW' | 'OFF'} [params.defesaCivilMinSeverity='ORANGE'] - Nível mínimo para Defesa Civil RS.
- * @param {string} [params.alertPolicy] - Preset de compatibilidade ('school', 'red_only', 'all').
  * @param {Date} [params.now] - Data/hora de referência.
  * @returns {Array<object>} Lista de eventos de risco que atingiram o limiar configurado.
  */
@@ -344,25 +343,10 @@ export function evaluateHighRisksIn24hWindow({
     defesaCivilTelemetry = [],
     inmetMinSeverity = 'RED',
     defesaCivilMinSeverity = 'ORANGE',
-    alertPolicy = null,
     now = new Date()
 }) {
-    // Se preset legado informado, mapeia para os níveis independentes
-    let inmetLevel = inmetMinSeverity;
-    let dcLevel = defesaCivilMinSeverity;
-    if (alertPolicy === 'school') {
-        inmetLevel = 'RED';
-        dcLevel = 'ORANGE';
-    } else if (alertPolicy === 'red_only') {
-        inmetLevel = 'RED';
-        dcLevel = 'RED';
-    } else if (alertPolicy === 'all') {
-        inmetLevel = 'YELLOW';
-        dcLevel = 'YELLOW';
-    }
-
-    const inmetRank = SEVERITY_LEVELS[normalizeSeverityTier(inmetLevel)] ?? SEVERITY_LEVELS.RED;
-    const dcRank = SEVERITY_LEVELS[normalizeSeverityTier(dcLevel)] ?? SEVERITY_LEVELS.ORANGE;
+    const inmetRank = SEVERITY_LEVELS[normalizeSeverityTier(inmetMinSeverity)] ?? SEVERITY_LEVELS.RED;
+    const dcRank = SEVERITY_LEVELS[normalizeSeverityTier(defesaCivilMinSeverity)] ?? SEVERITY_LEVELS.ORANGE;
 
     const highRiskEvents = [];
     const windowStart = now.getTime();
