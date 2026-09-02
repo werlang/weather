@@ -28,10 +28,10 @@ describe('Shared Risk Analyzer Utilities', () => {
     }
   });
 
-  it('analyzeForecastRisks classifies storm, frost, heatwave, low humidity and wind risks', () => {
-    const stormForecast = { resumo: 'Tempestade com trovoadas com pancadas', temp_min: 15, temp_max: 25 };
-    const stormRisks = analyzeForecastRisks(stormForecast);
-    assert.strictEqual(stormRisks.some(r => r.severity === 'HIGH' && r.type.includes('Tempestade')), true);
+  it('analyzeForecastRisks classifies frost, heatwave, low humidity and wind risks (forecast purely numeric, resumo is only detail)', () => {
+    const benignForecast = { resumo: 'Tempestade com trovoadas com pancadas', temp_min: 15, temp_max: 25 };
+    const benignRisks = analyzeForecastRisks(benignForecast);
+    assert.strictEqual(benignRisks.length, 0, 'Resumo alone should not trigger — forecast is numeric only');
 
     const subZeroForecast = { resumo: 'Céu limpo com risco de congelamento', temp_min: -1, temp_max: 10 };
     const subZeroRisks = analyzeForecastRisks(subZeroForecast);
@@ -52,6 +52,11 @@ describe('Shared Risk Analyzer Utilities', () => {
     const windForecast = { resumo: 'Ventos severos', int_vento: 'Muito forte' };
     const windRisks = analyzeForecastRisks(windForecast);
     assert.strictEqual(windRisks.some(r => r.severity === 'HIGH' && r.type.includes('Vendaval')), true);
+
+    const benignClouds = { resumo: 'Muitas nuvens', temp_min: 15, temp_max: 25 };
+    assert.strictEqual(analyzeForecastRisks(benignClouds).length, 0, 'Muitas nuvens should be benign (no alert)');
+    const chuvisco = { resumo: 'Encoberto com chuvisco', temp_min: 15, temp_max: 25 };
+    assert.strictEqual(analyzeForecastRisks(chuvisco).length, 0, 'Encoberto com chuvisco should be benign/low, not HIGH');
   });
 });
 
@@ -156,13 +161,12 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       assert.strictEqual(events[0].colorTier, 'UNKNOWN');
       assert.match(events[0].triggerReason, /não reconhecida/);
 
-      // 2. Unmatched forecast summary -> UNKNOWN event (non-benign wording)
+      // 2. Unmatched forecast summary -> no longer UNKNOWN HIGH (forecast is numeric-only, resumo only logged)
       const unknownForecast = analyzeForecastRisks(
         { resumo: 'Nebulosidade variável com ventania costeira' },
         { city: 'Charqueadas', dateStr: '21/08/2026', periodKey: 'manha' }
       );
-      assert.strictEqual(unknownForecast.length, 1);
-      assert.strictEqual(unknownForecast[0].unknown, true);
+      assert.strictEqual(unknownForecast.length, 0, 'Forecast resumo alone should not trigger — purely numeric');
 
       const unknownEvents = evaluateHighRisksIn24hWindow({
         regionalForecasts: [{
@@ -173,7 +177,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
         inmetMinSeverity: 'RED',
         now
       });
-      assert.ok(unknownEvents.some(e => e.colorTier === 'UNKNOWN' && e.type.includes('Não Classificada')));
+      assert.strictEqual(unknownEvents.length, 0, 'Non-numeric resumo should not generate UNKNOWN event — only logged');
 
       // 3. Benign unmatched summary is a known no-worry signal: discarded entirely
       const benignForecast = analyzeForecastRisks({ resumo: 'Sol com muitas nuvens' });
@@ -354,7 +358,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     assert.deepStrictEqual(highRisks[0].affectedCities, ['Charqueadas', 'São Jerônimo']);
   });
 
-  it('detects high-risk forecast conditions (storm, extreme cold, extreme heat) within 24h window', () => {
+  it('detects high-risk forecast conditions (extreme cold, extreme heat) within 24h window (forecast numeric-only)', () => {
     const now = new Date(2026, 7, 15, 10, 0, 0); // 15 de Agosto de 2026
     const regionalForecasts = [
       {
@@ -389,13 +393,10 @@ describe('24-Hour Window High-Risk Evaluation', () => {
       now
     });
 
-    assert.ok(highRisks.length >= 3, 'Should detect storm, sub-zero cold, and extreme heatwave');
-    const stormEvent = highRisks.find(e => e.type.includes('Tempestade'));
-    assert.ok(stormEvent, 'Must detect storm in forecast');
-    assert.strictEqual(stormEvent.affectedCities[0], 'Charqueadas');
-
+    assert.ok(highRisks.length >= 2, 'Should detect sub-zero cold and extreme heatwave (forecast numeric-only, storm resumo ignored)');
     const frostEvent = highRisks.find(e => e.type.includes('Frio Extremo'));
     assert.ok(frostEvent, 'Must detect sub-zero severe cold (temp_min <= 0°C)');
+    assert.strictEqual(frostEvent.affectedCities[0], 'Charqueadas');
 
     const heatEvent = highRisks.find(e => e.type.includes('Calor'));
     assert.ok(heatEvent, 'Must detect extreme heatwave (temp_max >= 40°C)');
@@ -455,7 +456,7 @@ describe('24-Hour Window High-Risk Evaluation', () => {
         forecast: {
           '21/08/2026': {
             manha: { resumo: 'Céu limpo', temp_min: 15, temp_max: 25 },
-            tarde: { resumo: 'Tempestade severa com trovoadas', temp_min: 15, temp_max: 25 },
+            tarde: { resumo: 'Céu limpo', temp_min: -1, temp_max: 25 },
             noite: { resumo: 'Céu limpo', temp_min: 15, temp_max: 22 }
           }
         }

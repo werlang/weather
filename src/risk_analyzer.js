@@ -217,29 +217,14 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
     const humidityMin = forecastDay.umidade_min;
     const windInt = (forecastDay.int_vento || '').toLowerCase();
 
-    // 1. Tempestades Extremas / Ciclones (Critério Vermelho)
-    if (summary.includes('ciclone') || summary.includes('temporal') || summary.includes('tempestade') || (summary.includes('granizo') && summary.includes('chuva'))) {
-        risks.push({
-            type: 'Tempestade Severa / Temporal Extremo',
-            severity: 'HIGH',
-            detail: `Condição prevista: "${forecastDay.resumo}" (Risco à mobilidade e segurança escolar)`
-        });
-    } else if (summary.includes('chuva') || summary.includes('pancadas') || summary.includes('trovoadas') || summary.includes('chuvoso')) {
-        risks.push({
-            type: 'Chuva / Instabilidade',
-            severity: 'MODERATE',
-            detail: `Condição prevista: "${forecastDay.resumo}"`
-        });
-    }
-
-    // 2. Frio Extremo / Congelamento / Neve
-    if (summary.includes('neve') || summary.includes('chuva congelada') || (tempMin !== undefined && tempMin <= 0)) {
+    // 1. Frio Extremo / Congelamento (puramente numérico — resumo vira só detail)
+    if (tempMin !== undefined && tempMin <= 0) {
         risks.push({
             type: 'Frio Extremo / Risco de Congelamento',
             severity: 'HIGH',
             detail: `Temp. Mínima Extrema: ${tempMin}°C (${forecastDay.resumo || 'Frio crítico com risco de congelamento'})`
         });
-    } else if (summary.includes('geada') || (tempMin !== undefined && tempMin <= 4)) {
+    } else if (tempMin !== undefined && tempMin <= 4) {
         risks.push({
             type: 'Geada / Frio Típico de Inverno',
             severity: 'MODERATE',
@@ -283,8 +268,8 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         });
     }
 
-    // 5. Ventos Destrutivos / Vendaval / Ciclone
-    if (summary.includes('ciclone') || summary.includes('vendaval') || windInt.includes('muito forte') || (windInt.includes('forte') && summary.includes('vento'))) {
+    // 5. Ventos (puramente int_vento, sem resumo — resumo vira só detail)
+    if (windInt.includes('muito forte')) {
         risks.push({
             type: 'Vendaval / Rajadas Destrutivas de Vento',
             severity: 'HIGH',
@@ -298,18 +283,12 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         });
     }
 
-    // 6. Vocabulário não reconhecido: registra apenas sinais de fato desconhecidos.
-    // Resumos benignos conhecidos (sol/nuvens/claro) são descartados — sinais
-    // conhecidos e sem risco não geram registro nem alerta.
+    // 6. Vocabulário não reconhecido: apenas registra para análise, não gera alerta.
+    // Forecast agora é puramente numérico (temp/umidade/vento); resumo é só detail.
+    // Frases como "Muitas nuvens", "Encoberto", "Encoberto com chuvisco" são benignas e não geram UNKNOWN.
     if (risks.length === 0 && summary) {
-        const benign = /sol|céu|ceu|claro|limpo|nuvem|nublado/.test(summary);
+        const benign = /sol|céu|ceu|claro|limpo|nuvem|nuvens|nublado|encobert|chuvisco|garoa/.test(summary);
         if (!benign) {
-            risks.push({
-                type: 'Condição Não Classificada',
-                severity: 'HIGH',
-                detail: `Resumo de previsão fora do vocabulário de análise: "${forecastDay.resumo}"`,
-                unknown: true
-            });
             try {
                 logUnknownAlert({
                     dedupeKey: `inmet_forecast:${context.city || forecastDay.ibgeCode || 'desconhecida'}:${context.dateStr || ''}:${context.periodKey || 'dia'}:${summary}`,
