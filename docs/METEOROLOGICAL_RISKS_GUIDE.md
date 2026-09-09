@@ -45,8 +45,8 @@ The API endpoint `GET https://apiprevmet3.inmet.gov.br/avisos/ativos` returns ac
 
 1. Parse the JSON response.
 2. Iterate through all alert objects inside `"hoje"`, `"amanha"`, or flat array structures.
-3. Convert `warning.get("geocodes")` into a list.
-4. Match against IBGE code `"4305355"` OR search `"Charqueadas"` in `warning.get("municipios")`.
+3. Convert `warning.get("geocodes")` into a trimmed list, plus the parenthetical `(1234567)` codes in `warning.get("municipios")`.
+4. Match the IBGE code `"4305355"` exactly against that code set, OR match a `municipios` entry whose name equals `"Charqueadas"` exactly with UF `RS` — never substring-search the name (`"Lajeado Grande - SC"` must not match `"Lajeado"`).
 
 ---
 

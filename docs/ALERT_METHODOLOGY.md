@@ -111,7 +111,7 @@ Each source derives its events' tiers differently:
 
 | Source | Tier derivation |
 | :--- | :--- |
-| `INMET_OFFICIAL_WARNING` | From the official warning itself: `aviso_cor === '#FF0000'` or `severidade` contains `grande perigo`/`extremo` → `RED`; else `aviso_cor === '#F96602'` or `severidade` contains `perigo` without `potencial` → `ORANGE`; otherwise default `YELLOW`. The system never upgrades or downgrades INMET's own classification. |
+| `INMET_OFFICIAL_WARNING` | From the official warning itself: `aviso_cor === '#FF0000'` or `'#F80703'` (red variant observed live on 2026-09-09) or `severidade` contains `grande perigo`/`extremo` → `RED`; else `aviso_cor === '#F96602'` or `severidade` contains `perigo` without `potencial` → `ORANGE`; otherwise default `YELLOW`. The system never upgrades or downgrades INMET's own classification. |
 | `FORECAST_ANALYSIS` | From the analyzer gradings: `HIGH` → `RED`, `MODERATE` → `ORANGE`, `LOW` → `YELLOW`. |
 | `DEFESA_CIVIL_RS` | Hard-coded measurement thresholds produce `RED` or `ORANGE` directly (see §5.3). Defesa Civil telemetry currently emits **no YELLOW events**, so a `YELLOW` threshold behaves like `ORANGE` for this source in practice. |
 
@@ -122,7 +122,7 @@ checked in this order:
 
 | Priority | Match condition (`aviso_cor` upper-cased, `severidade` lower-cased) | Emoji |
 | :---: | :--- | :---: |
-| 1 | `#FF0000`, or contains `grande perigo` / `extremo` | 🔴 |
+| 1 | `#FF0000` or `#F80703`, or contains `grande perigo` / `extremo` | 🔴 |
 | 2 | `#F96602` or `#FFA500`, or contains `perigo` but not `potencial` | 🟠 |
 | 3 | `#FFFE00` or `#FFFF00`, or contains `potencial` / `moderado` | 🟡 |
 | 4 | fallback (unrecognized) | ⚪ |
@@ -167,7 +167,10 @@ palette, update §2.3/§2.4 and the tests together.
 
 The monitored universe is the static catalog
 `CHARQUEADAS_SURROUNDING_CITIES_100KM` (`src/inmet_client.js`): 38
-municipalities with pre-computed distances and rings:
+municipalities with pre-computed distances and rings. IBGE codes were verified
+against `servicodados.ibge.gov.br` on 2026-09-09 (corrected: Taquari `4321303`,
+Mariana Pimentel `4311981`, Sertão Santana `4320552`, Teutônia `4321451`,
+Estrela `4307807`, Santa Cruz do Sul `4316808`):
 
 | Ring | Distance band |
 | :--- | :--- |
@@ -184,10 +187,20 @@ discovery of cities.
 ### 3.3 Warning-to-City Matching
 
 INMET's `/avisos/ativos` endpoint returns warnings for all of Brazil. A warning
-is regional (**eligible for alerts**) when any catalog city matches:
+is regional (**eligible for alerts**) when any catalog city matches exactly
+(`warningAffectsCity`, `src/inmet_client.js`):
 
-- `warning.geocodes` (comma-separated string) contains the city IBGE code, **or**
-- `warning.municipios` (lower-cased) contains the city name (lower-cased).
+- the city IBGE code is listed in `warning.geocodes` (comma-separated,
+  whitespace-trimmed) **or** in the parenthetical codes of `warning.municipios`
+  entries (`"Name - UF (1234567)"`), **or**
+- `warning.municipios` contains an entry whose name equals the city name
+  exactly (case- and accent-insensitive) and whose UF is `RS`.
+
+Substring matching is forbidden: entries such as `"Lajeado Grande - SC"` or
+`"São João do Triunfo - PR"` must never match `"Lajeado"` or `"Triunfo"` in RS
+(false positives from live red alert `28224` on 2026-09-10, which listed
+`Lajeado, Teutônia, Triunfo` while actually covering `Lajeado Grande - SC`,
+`São João do Triunfo - PR` and `Tenente Portela - RS`).
 
 Matching cities are attached as `affectedRegionalCities`. Warnings that match no
 catalog city but mention `Rio Grande do Sul` / `RS` in `estados` are kept as
@@ -374,7 +387,8 @@ dispatcher, aggregator, formatter, and persistence layer):
 {
   source: 'INMET_OFFICIAL_WARNING' | 'FORECAST_ANALYSIS' | 'DEFESA_CIVIL_RS',
   eventId: '<provider id or null>',   // stable provider identifier, preferred for identity
-  type: '<human hazard name>',
+  type: '<human hazard name>',        // INMET: descricao || tipo
+  alertType: '<original provider type or null>', // INMET `tipo` (e.g. 'Chuvas Intensas'); null for other sources
   severity: '<original label>',       // e.g. 'Grande Perigo', 'HIGH (Red Equivalent)', 'Alerta Máximo (Red)'
   colorTier: 'RED' | 'ORANGE' | 'YELLOW',
   emoji: '🔴' | '🟠' | '🟡' | '⚪',
@@ -384,6 +398,11 @@ dispatcher, aggregator, formatter, and persistence layer):
   triggerReason: '<why the alert fired>'
 }
 ```
+
+The display alert type comes from `getAlertTypeLabel(event)`
+(`src/risk_analyzer.js`): the unified category (`getEventCategory` →
+`ALERT_CATEGORIES`, e.g. `🌧️ Chuva e Alagamentos`), plus the raw
+`alertType`/`tipo` suffix (`• <tipo>`) when it differs from `type`.
 
 After aggregation (§7) events may also carry `aggregatedCount`.
 
@@ -486,7 +505,8 @@ Alerts go **only** to allowlisted administrator chats (`sendToAdmins` in
 
 3. Body layout per aggregated event (fields separated by `CARD_DIVIDER`):
    numbered line with `emoji` + `type` (+ grouped-occurrence note), then
-   indented `Severidade:` badge, `Origem:` source, `Municípios Impactados:`,
+   indented `Tipo:` alert type (`getAlertTypeLabel` — category + INMET `tipo`
+   when different), `Severidade:` badge, `Origem:` source, `Municípios Impactados:`,
    `Janela:`, `💡 Motivo do Disparo:`, and `📝 Detalhes:` (omitted when equal
    to the reason).
 4. Header block includes the São Paulo-timezone timestamp (`pt-BR` format) and
@@ -522,9 +542,9 @@ Required behavior for the 24/7 process (enforced by tests and review):
 
 | Pipeline concern | Owning module | Key exports | Locking tests |
 | :--- | :--- | :--- | :--- |
-| INMET fetching, city catalog, warning matching, emoji | `src/inmet_client.js` | `getSurroundingCities`, `getRegionalRiskWarnings`, `getRegionalForecasts`, `getAlertEmoji` | `tests/inmet_client.test.js` |
+| INMET fetching, city catalog, warning matching, emoji | `src/inmet_client.js` | `getSurroundingCities`, `getRegionalRiskWarnings`, `getRegionalForecasts`, `getAlertEmoji`, `extractWarningGeocodeSet`, `warningAffectsCity` | `tests/inmet_client.test.js` |
 | Defesa Civil GraphQL fetching + telemetry thresholds | `src/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
-| Tier model, normalization, 24h evaluation, identity, aggregation | `src/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents` | `tests/monitor_service.test.js` |
+| Tier model, normalization, 24h evaluation, identity, aggregation | `src/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `getAlertTypeLabel` | `tests/monitor_service.test.js` |
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitor_service.test.js` |
 | Thresholds menus, badges, presentation copy, message layout | `src/telegram_bot.js` | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport` | `tests/telegram.test.js` |
 | Admin delivery + chunking | `src/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/telegram.test.js` |
