@@ -358,6 +358,30 @@ describe('24-Hour Window High-Risk Evaluation', () => {
     assert.deepStrictEqual(highRisks[0].affectedCities, ['Charqueadas', 'São Jerônimo']);
   });
 
+  it('treats the observed INMET red variant #F80703 as RED tier', () => {
+    const now = new Date('2026-09-09T10:00:00Z');
+    const highRisks = evaluateHighRisksIn24hWindow({
+      regionalWarnings: [
+        {
+          aviso_cor: '#F80703',
+          severidade: 'Severa',
+          descricao: 'Tempestade',
+          inicio: '10/09/2026 00:01',
+          fim: '10/09/2026 23:59',
+          affectedRegionalCities: ['Charqueadas'],
+          riscos: ['Chuva superior a 60 mm/h']
+        }
+      ],
+      regionalForecasts: [],
+      inmetMinSeverity: 'RED',
+      defesaCivilMinSeverity: 'OFF',
+      now
+    });
+
+    assert.strictEqual(highRisks.length, 1);
+    assert.strictEqual(highRisks[0].colorTier, 'RED');
+  });
+
   it('detects high-risk forecast conditions (extreme cold, extreme heat) within 24h window (forecast numeric-only)', () => {
     const now = new Date(2026, 7, 15, 10, 0, 0); // 15 de Agosto de 2026
     const regionalForecasts = [

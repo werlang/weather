@@ -25,6 +25,7 @@ import {
     getRiskEventKey,
     ALERT_CATEGORIES,
     getEventCategory,
+    getAlertTypeLabel,
     SEVERITY_LEVELS
 } from './risk_analyzer.js';
 
@@ -176,6 +177,7 @@ export function onHighRiskEventDetected(highRiskEvents) {
 
     highRiskEvents.forEach((event, idx) => {
         console.log(` [#${idx + 1}] ${event.emoji} TIPO DE PERIGO:      ${event.type.toUpperCase()}`);
+        console.log(`      🏷️ Tipo de Alerta:        ${getAlertTypeLabel(event)}`);
         console.log(`      📍 Municípios Impactados: ${(event.affectedCities || []).join(', ') || 'N/A'}`);
         console.log(`      💡 Motivo do Disparo:     ${event.triggerReason || event.details}`);
         console.log(`      📊 Origem & Severidade:   ${event.source} (${event.severity})`);

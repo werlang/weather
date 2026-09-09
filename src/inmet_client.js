@@ -23,28 +23,28 @@ export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [
     { ibgeCode: '4322004', name: 'Triunfo', distKm: 15, ring: 'Zona Imediata (<25km)' },
     { ibgeCode: '4306767', name: 'Eldorado do Sul', distKm: 20, ring: 'Zona Imediata (<25km)' },
     { ibgeCode: '4308805', name: 'General Câmara', distKm: 25, ring: 'Zona Imediata (<25km)' },
-    { ibgeCode: '4321204', name: 'Taquari', distKm: 27, ring: 'Zona Intermediária (25-50km)' },
+    { ibgeCode: '4321303', name: 'Taquari', distKm: 27, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4312401', name: 'Montenegro', distKm: 28, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4309308', name: 'Guaíba', distKm: 35, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4302709', name: 'Butiá', distKm: 35, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4301750', name: 'Barão do Triunfo', distKm: 40, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4313375', name: 'Nova Santa Rita', distKm: 40, ring: 'Zona Intermediária (25-50km)' },
-    { ibgeCode: '4311775', name: 'Mariana Pimentel', distKm: 40, ring: 'Zona Intermediária (25-50km)' },
+    { ibgeCode: '4311981', name: 'Mariana Pimentel', distKm: 40, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4314902', name: 'Porto Alegre', distKm: 45, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4304606', name: 'Canoas', distKm: 45, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4312252', name: 'Minas do Leão', distKm: 45, ring: 'Zona Intermediária (25-50km)' },
-    { ibgeCode: '4320651', name: 'Sertão Santana', distKm: 45, ring: 'Zona Intermediária (25-50km)' },
+    { ibgeCode: '4320552', name: 'Sertão Santana', distKm: 45, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4303103', name: 'Cachoeirinha', distKm: 48, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4320008', name: 'Sapucaia do Sul', distKm: 48, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4307708', name: 'Esteio', distKm: 50, ring: 'Zona Intermediária (25-50km)' },
     { ibgeCode: '4318705', name: 'São Leopoldo', distKm: 55, ring: 'Anel Externo (50-100km)' },
-    { ibgeCode: '4321402', name: 'Teutônia', distKm: 59, ring: 'Anel Externo (50-100km)' },
+    { ibgeCode: '4321451', name: 'Teutônia', distKm: 59, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4313409', name: 'Novo Hamburgo', distKm: 60, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4303905', name: 'Campo Bom', distKm: 62, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4323002', name: 'Viamão', distKm: 65, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4309209', name: 'Gravataí', distKm: 65, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4313953', name: 'Pantano Grande', distKm: 65, ring: 'Anel Externo (50-100km)' },
-    { ibgeCode: '4307609', name: 'Estrela', distKm: 70, ring: 'Anel Externo (50-100km)' },
+    { ibgeCode: '4307807', name: 'Estrela', distKm: 70, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4311403', name: 'Lajeado', distKm: 74, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4315701', name: 'Rio Pardo', distKm: 74, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4322608', name: 'Venâncio Aires', distKm: 75, ring: 'Anel Externo (50-100km)' },
@@ -54,7 +54,7 @@ export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [
     { ibgeCode: '4304804', name: 'Carlos Barbosa', distKm: 90, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4308607', name: 'Garibaldi', distKm: 95, ring: 'Anel Externo (50-100km)' },
     { ibgeCode: '4305108', name: 'Caxias do Sul', distKm: 94, ring: 'Anel Externo (50-100km)' },
-    { ibgeCode: '4316800', name: 'Santa Cruz do Sul', distKm: 98, ring: 'Anel Externo (50-100km)' }
+    { ibgeCode: '4316808', name: 'Santa Cruz do Sul', distKm: 98, ring: 'Anel Externo (50-100km)' }
 ];
 
 export const CHARQUEADAS_SURROUNDING_CITIES = CHARQUEADAS_SURROUNDING_CITIES_100KM;
@@ -175,6 +175,64 @@ export async function getRegionalForecasts(citiesList) {
 }
 
 /**
+ * Extracts the set of 7-digit IBGE municipality codes covered by an INMET warning.
+ * Reads both the `geocodes` comma-separated field and the parenthetical codes
+ * embedded in `municipios` entries (`"Name - UF (1234567)"`), trimming whitespace.
+ *
+ * @param {Record<string, any>} [warning={}] - Raw INMET warning object.
+ * @returns {Set<string>} Set of 7-digit IBGE codes.
+ */
+export function extractWarningGeocodeSet(warning = {}) {
+    const codes = new Set();
+    for (const part of String(warning.geocodes || '').split(',')) {
+        const code = part.trim();
+        if (/^\d{7}$/.test(code)) codes.add(code);
+    }
+    for (const match of String(warning.municipios || '').matchAll(/\((\d{7})\)/g)) {
+        codes.add(match[1]);
+    }
+    return codes;
+}
+
+/**
+ * Normalizes a municipality name for exact comparison (lowercase, trimmed,
+ * diacritics removed).
+ *
+ * @param {string} name - Municipality name.
+ * @returns {string} Normalized name.
+ */
+function normalizeCityName(name) {
+    return String(name || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Checks whether an INMET warning affects a given city using exact matching only.
+ * A city matches when its IBGE code is listed (in `geocodes` or in the
+ * parenthetical codes of `municipios`), or when `municipios` contains an entry
+ * whose name equals the city name exactly and whose UF is RS. Substring
+ * matching is deliberately avoided: entries like "Lajeado Grande - SC" or
+ * "São João do Triunfo - PR" must not match "Lajeado" or "Triunfo" in RS.
+ *
+ * @param {Record<string, any>} warning - Raw INMET warning object.
+ * @param {{ ibgeCode: string, name: string }} city - Catalog city.
+ * @param {Set<string>} [geocodeSet=null] - Precomputed set from extractWarningGeocodeSet.
+ * @returns {boolean} True when the warning affects the city.
+ */
+export function warningAffectsCity(warning, city, geocodeSet = null) {
+    const codes = geocodeSet || extractWarningGeocodeSet(warning);
+    if (codes.has(String(city.ibgeCode))) return true;
+    const target = normalizeCityName(city.name);
+    if (!target) return false;
+    for (const entry of String(warning.municipios || '').split(',')) {
+        const match = entry.trim().match(/^(.*?)\s*-\s*([A-Za-z]{2})(?:\s*\(.*\))?$/);
+        if (!match) continue;
+        if (match[2].toUpperCase() !== 'RS') continue;
+        if (normalizeCityName(match[1]) === target) return true;
+    }
+    return false;
+}
+
+/**
  * Fetches active meteorological risk warnings from INMET across Brazil and filters for the target municipality.
  * 
  * @param {string} [ibgeCode=CHARQUEADAS_IBGE_CODE] - 7-digit IBGE code.
@@ -199,11 +257,12 @@ export async function getActiveRiskWarnings(ibgeCode = CHARQUEADAS_IBGE_CODE) {
     const regionalStateWarnings = [];
 
     for (const warning of allWarnings) {
-        const geocodes = String(warning.geocodes || '').split(',');
-        const municipios = String(warning.municipios || '');
         const estados = String(warning.estados || '');
+        const codes = extractWarningGeocodeSet(warning);
+        const catalogCity = CHARQUEADAS_SURROUNDING_CITIES_100KM.find(c => String(c.ibgeCode) === String(ibgeCode));
+        const city = { ibgeCode: String(ibgeCode), name: catalogCity ? catalogCity.name : '' };
 
-        if (geocodes.includes(ibgeCode) || municipios.includes('Charqueadas')) {
+        if (warningAffectsCity(warning, city, codes)) {
             directCityWarnings.push(warning);
         } else if (estados.includes('Rio Grande do Sul') || estados.includes('RS')) {
             regionalStateWarnings.push(warning);
@@ -221,8 +280,6 @@ export async function getActiveRiskWarnings(ibgeCode = CHARQUEADAS_IBGE_CODE) {
  */
 export async function getRegionalRiskWarnings(citiesList) {
     const cities = citiesList || await getSurroundingCities();
-    const cityIbgeSet = new Set(cities.map(c => c.ibgeCode));
-    const cityNameSet = new Set(cities.map(c => c.name.toLowerCase()));
 
     const url = `${BASE_PREVMET_URL}/avisos/ativos`;
     const rawData = await httpGet(url);
@@ -242,13 +299,10 @@ export async function getRegionalRiskWarnings(citiesList) {
     const stateWarnings = [];
 
     for (const warning of allWarnings) {
-        const geocodes = String(warning.geocodes || '').split(',');
-        const municipios = String(warning.municipios || '').toLowerCase();
         const estados = String(warning.estados || '');
+        const codes = extractWarningGeocodeSet(warning);
 
-        const affectedCities = cities.filter(c =>
-            geocodes.includes(c.ibgeCode) || municipios.includes(c.name.toLowerCase())
-        );
+        const affectedCities = cities.filter(c => warningAffectsCity(warning, c, codes));
 
         if (affectedCities.length > 0) {
             regionalWarnings.push({
@@ -283,7 +337,7 @@ export function getAlertEmoji(warning = {}) {
     const color = String(warning.aviso_cor || '').toUpperCase();
     const severity = String(warning.severidade || '').toLowerCase();
 
-    if (color === '#FF0000' || severity.includes('grande perigo') || severity.includes('extremo')) {
+    if (color === '#FF0000' || color === '#F80703' || severity.includes('grande perigo') || severity.includes('extremo')) {
         return '🔴'; // Grande Perigo / Risco Extremo (Vermelho)
     }
     if (color === '#F96602' || color === '#FFA500' || (severity.includes('perigo') && !severity.includes('potencial'))) {

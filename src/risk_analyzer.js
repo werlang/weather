@@ -57,6 +57,27 @@ export function getEventCategory(event = {}) {
 }
 
 /**
+ * Returns a human-readable alert type label for presentation.
+ * Combines the unified alert category (see ALERT_CATEGORIES) with the
+ * provider's original type (INMET `tipo`) when it differs from the
+ * normalized hazard name, so no source information is lost.
+ *
+ * @param {object} event - Normalized risk event.
+ * @returns {string} Alert type label (e.g. "🌧️ Chuva e Alagamentos • Chuvas Intensas").
+ */
+export function getAlertTypeLabel(event = {}) {
+    const categoryId = getEventCategory(event);
+    const definition = ALERT_CATEGORIES[categoryId];
+    const base = definition ? `${definition.emoji} ${definition.label}` : null;
+    const raw = event.alertType || event.tipo || null;
+    const normalizedType = event.type ? String(event.type).trim() : '';
+    if (raw && String(raw).trim() && String(raw).trim() !== normalizedType) {
+        return base ? `${base} • ${String(raw).trim()}` : String(raw).trim();
+    }
+    return base || normalizedType || '—';
+}
+
+/**
  * Normalizes input severity strings to canonical uppercase tiers.
  * 
  * @param {string|number} tier - Input tier representation.
@@ -346,7 +367,7 @@ export function evaluateHighRisksIn24hWindow({
             const avisoCor = String(warning.aviso_cor || '').toUpperCase();
 
             let warningTier;
-            if (avisoCor === '#FF0000' || severidade.includes('grande perigo') || severidade.includes('extremo')) {
+            if (avisoCor === '#FF0000' || avisoCor === '#F80703' || severidade.includes('grande perigo') || severidade.includes('extremo')) {
                 warningTier = 'RED';
             } else if (avisoCor === '#F96602' || (severidade.includes('perigo') && !severidade.includes('potencial'))) {
                 warningTier = 'ORANGE';
@@ -377,6 +398,7 @@ export function evaluateHighRisksIn24hWindow({
                     source: 'INMET_OFFICIAL_WARNING',
                     eventId: warning.id_aviso || warning.codigo || null,
                     type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
+                    alertType: warning.tipo || null,
                     severity: warning.severidade || severityFallback,
                     colorTier: warningTier,
                     emoji: warningTier === 'UNKNOWN' ? '❓' : getAlertEmoji(warning),

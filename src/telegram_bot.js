@@ -11,7 +11,7 @@
 import { InlineKeyboard, splitTelegramMessage } from './telegram.js';
 import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring, getLastScanSnapshot } from './monitor_service.js';
 import { getFetchStats, saveSystemSetting } from './log_database.js';
-import { aggregateRiskEvents, normalizeSeverityTier, ALERT_CATEGORIES } from './risk_analyzer.js';
+import { aggregateRiskEvents, normalizeSeverityTier, getAlertTypeLabel, ALERT_CATEGORIES } from './risk_analyzer.js';
 import {
     INVITE_CODE_REGEX,
     normalizeInviteCode,
@@ -876,6 +876,7 @@ export class WeatherTelegramBot {
             const cityLabel = cityCount === 1 ? event.affectedCities[0] : `${cityCount} municípios: ${event.affectedCities.join(', ')}`;
             const occNote = event.aggregatedCount > 1 ? ` (${event.aggregatedCount} ocorrências)` : '';
             lines.push(`${idx + 1}. ${event.emoji || '⚠️'} ${event.type}${occNote}`);
+            lines.push(`   Tipo: ${getAlertTypeLabel(event)}`);
             lines.push(`   Severidade: ${badge}`);
             lines.push(`   Origem: ${event.source || '—'}`);
             lines.push(`   Municípios: ${cityLabel}`);
@@ -1132,6 +1133,7 @@ export class WeatherTelegramBot {
                 const cityLabel = cityCount === 1 ? event.affectedCities[0] : `${cityCount} municípios: ${event.affectedCities.join(', ')}`;
                 const occurrenceNote = event.aggregatedCount > 1 ? ` (${event.aggregatedCount} ocorrências agrupadas)` : '';
                 lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico severo'}${occurrenceNote}`);
+                lines.push(`   Tipo: ${getAlertTypeLabel(event)}`);
                 lines.push(`   Severidade: ${badge}`);
                 lines.push(`   Origem: ${event.source || 'Não informada'}`);
                 lines.push(`   Municípios: ${cityLabel}`);
@@ -1189,6 +1191,7 @@ export class WeatherTelegramBot {
         aggregated.forEach((event, index) => {
             const badge = renderSeverityBadge(getEventAlertTier(event));
             lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico severo'}`);
+            lines.push(`   Tipo: ${getAlertTypeLabel(event)}`);
             lines.push(`   Severidade: ${badge}`);
             lines.push(`   Origem: ${event.source || 'Não informada'}`);
             lines.push(`   Municípios Impactados: ${(event.affectedCities || []).join(', ') || 'Não informados'}`);
