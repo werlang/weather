@@ -8,8 +8,8 @@
  * @module logDatabase
  */
 
-import { Sqlite } from './database_driver.js';
-import { migrateSync } from './migrate.js';
+import { Sqlite } from '../helpers/database_driver.js';
+import { migrateSync } from '../helpers/migrate.js';
 
 export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db';
 

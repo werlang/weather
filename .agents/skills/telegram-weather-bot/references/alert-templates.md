@@ -2,7 +2,7 @@
 
 ## 1. Alert Message Layout
 
-The alert message generator in `src/telegram_bot.js` (`formatWeatherAlertMessage`) creates structured reports:
+The alert message generator in `src/bot/telegram_bot.js` (`formatWeatherAlertMessage`) creates structured reports:
 
 ```
 🚨 *ALERTA METEOROLÓGICO REGIONAL*

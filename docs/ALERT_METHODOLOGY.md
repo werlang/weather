@@ -7,7 +7,7 @@
 > behavior MUST update this document in the same change**, and unit tests must
 > lock the new behavior before merge.
 >
-> Last verified against source on 2026-08-21.
+> Last verified against source on 2026-09-11.
 
 ---
 
@@ -51,14 +51,17 @@ never duplicate a stage's responsibility elsewhere.
         └───────────────────────┬─────────────────────────┘
                                 ▼
         ┌─────────────────────────────────────────────────┐
-        │  createAlertDispatcher (monitor_service.js)      │
+        │  createAlertDispatcher                         │
+        │  (src/monitoring/monitor_service.js)             │
         │  cross-cycle suppression of already-active keys  │
         └───────────────────────┬─────────────────────────┘
                                 ▼
         ┌─────────────────────────────────────────────────┐
-        │  WeatherTelegramBot (telegram_bot.js)            │
+        │  WeatherTelegramBot (src/bot/telegram_bot.js)    │
         │  aggregateRiskEvents → formatHighRiskAlert →     │
         │  splitTelegramMessage → sendToAdmins             │
+        │  + admin email comunicado (action:email_compose) │
+        │    → renderAlertEmail → EmailService.send        │
         └─────────────────────────────────────────────────┘
 ```
 
@@ -67,11 +70,11 @@ never duplicate a stage's responsibility elsewhere.
 - `/alertas` (and the "🚨 Alertas Ativos" button) runs the same
   `performRegionalRiskMonitoring` on demand with delivery disabled, so an
   operator query always applies the same thresholds as the background service.
-- The standalone CLI (`src/monitor_regional_risks.js`) is a **report-only**
+- The standalone CLI (`scripts/monitor_regional_risks.js`) is a **report-only**
   tool: it prints warnings and forecast risks without severity thresholds,
   deduplication state, or Telegram delivery. It is not part of the alert path.
 - Every cycle and every detected event is persisted to SQLite via
-  `logMonitorCycle` / `logAlert` (`src/log_database.js`).
+  `logMonitorCycle` / `logAlert` (`src/model/log_database.js`).
 
 ---
 
@@ -80,7 +83,7 @@ never duplicate a stage's responsibility elsewhere.
 ### 2.1 Canonical Tiers
 
 All alert logic operates on four canonical tiers defined in
-`SEVERITY_LEVELS` (`src/risk_analyzer.js`):
+`SEVERITY_LEVELS` (`src/monitoring/risk_analyzer.js`):
 
 | Tier | Rank | Meaning | Circle |
 | :--- | :---: | :--- | :---: |
@@ -88,7 +91,7 @@ All alert logic operates on four canonical tiers defined in
 | `YELLOW` | 1 | Perigo Potencial / Atenção (moderate) | 🟡 |
 | `ORANGE` | 2 | Perigo / Alerta (severe) | 🟠 |
 | `RED` | 3 | Grande Perigo / Alerta Máximo (extreme) | 🔴 |
-| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/log_database.js:470` `logUnknownAlert`) | ❓ |
+| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/model/log_database.js:470` `logUnknownAlert`) | ❓ |
 
 An event fires when `rank(event.tier) >= rank(configured threshold)` for its
 source, with `UNKNOWN` (`4`) outranking `RED` so unrecognized sources never miss. A threshold of `OFF` (rank 0) disables that source entirely.
@@ -117,7 +120,7 @@ Each source derives its events' tiers differently:
 
 ### 2.4 Emoji Mapping
 
-Warning emoji comes from `getAlertEmoji(warning)` (`src/inmet_client.js`),
+Warning emoji comes from `getAlertEmoji(warning)` (`src/clients/inmet_client.js`),
 checked in this order:
 
 | Priority | Match condition (`aviso_cor` upper-cased, `severidade` lower-cased) | Emoji |
@@ -133,7 +136,7 @@ Forecast-analysis events use the fixed mapping `HIGH`→🔴, `MODERATE`→🟠,
 ### 2.5 Presentation Badges
 
 Human-readable badges come from `renderSeverityBadge(severity)`
-(`src/telegram_bot.js`). Matching order matters:
+(`src/bot/telegram_bot.js`). Matching order matters:
 
 | Priority | Match condition | Badge text |
 | :---: | :--- | :--- |
@@ -166,7 +169,7 @@ palette, update §2.3/§2.4 and the tests together.
 ### 3.2 Municipality Catalog
 
 The monitored universe is the static catalog
-`CHARQUEADAS_SURROUNDING_CITIES_100KM` (`src/inmet_client.js`): 38
+`CHARQUEADAS_SURROUNDING_CITIES_100KM` (`src/clients/inmet_client.js`): 38
 municipalities with pre-computed distances and rings. IBGE codes were verified
 against `servicodados.ibge.gov.br` on 2026-09-09 (corrected: Taquari `4321303`,
 Mariana Pimentel `4311981`, Sertão Santana `4320552`, Teutônia `4321451`,
@@ -188,7 +191,7 @@ discovery of cities.
 
 INMET's `/avisos/ativos` endpoint returns warnings for all of Brazil. A warning
 is regional (**eligible for alerts**) when any catalog city matches exactly
-(`warningAffectsCity`, `src/inmet_client.js`):
+(`warningAffectsCity`, `src/clients/inmet_client.js`):
 
 - the city IBGE code is listed in `warning.geocodes` (comma-separated,
   whitespace-trimmed) **or** in the parenthetical codes of `warning.municipios`
@@ -400,7 +403,7 @@ dispatcher, aggregator, formatter, and persistence layer):
 ```
 
 The display alert type comes from `getAlertTypeLabel(event)`
-(`src/risk_analyzer.js`): the unified category (`getEventCategory` →
+(`src/monitoring/risk_analyzer.js`): the unified category (`getEventCategory` →
 `ALERT_CATEGORIES`, e.g. `🌧️ Chuva e Alagamentos`), plus the raw
 `alertType`/`tipo` suffix (`• <tipo>`) when it differs from `type`.
 
@@ -481,10 +484,27 @@ availability, forecast failure count, error strings). Rules:
 ### 8.3 Delivery Target
 
 Alerts go **only** to allowlisted administrator chats (`sendToAdmins` in
-`src/telegram.js`), chunked by `splitTelegramMessage` to stay under Telegram's
+`src/bot/telegram.js`), chunked by `splitTelegramMessage` to stay under Telegram's
 4096-character limit, and attach the action-tray inline keyboard
-(🚨 Alertas Ativos / 🏠 Painel). Delivery result shape:
+(🚨 Alertas Ativos / 📧 Enviar comunicado / 🏠 Painel). Delivery result shape:
 `{ sent: [{chatId, chunks}], failed: [{chatId, error}] }`.
+
+### 8.4 Admin-Triggered Email Comunicados
+
+From any alert surface, an admin can tap **📧 Enviar comunicado por e-mail**.
+The flow is driven by the **last scan snapshot** (never re-fetches sources):
+
+1. `renderEmailCompose` shows hazard summary, impacted zone, recipient
+   (`ALERT_EMAIL_TO`, placeholder fallback), and the current institution
+   message — the default (`DEFAULT_EMAIL_CUSTOM_MESSAGE`) on first use, the
+   last saved value afterwards (`system_settings.email_custom_message`).
+2. The admin sends with the current message (`action:email_send`), edits it
+   via bot text (`action:email_edit` → next admin message is saved by
+   `saveEmailCustomMessage` and becomes the new default), or skips it
+   (`action:email_send_plain`).
+3. `sendAlertEmail` renders MJML (`renderAlertEmail`) and delivers through
+   `EmailService` (Ethereal preview URL in dev, SMTP in production).
+   Failures are contained as `{ ok: false, error }` and shown in-chat.
 
 ---
 
@@ -517,6 +537,15 @@ aggregation, presentation selection, and badge logic, and additionally shows
 the applied thresholds, radius, municipality coverage, and any data-quality
 warnings. All timestamps shown to users are `America/Sao_Paulo`.
 
+The email comunicado (`renderAlertEmail` in `src/bot/email_templates.js`) carries
+the same aggregated hazards with an email badge per tier (RED `#C62828`,
+ORANGE `#EF6C00`, YELLOW `#F9A825`, UNKNOWN `#6A1B9A`), the impacted-zone line,
+timeframes, trigger reasons, and the institution message in a quoted box
+(omitted when skipped). Subject contract:
+`🚨 <top hazard type> — Charqueadas/RS (<N> alerta(s))`. The MJML must compile
+strictly with zero errors and no `{{placeholder}}` leaks; the plain-text part
+mirrors the HTML content.
+
 ---
 
 ## 10. Error Containment Guarantees
@@ -535,6 +564,9 @@ Required behavior for the 24/7 process (enforced by tests and review):
   into data-quality degradation).
 - Telegram delivery failures are caught per chat and surfaced through
   `delivery.failed`; they never terminate the process.
+- Email comunicado failures (missing SMTP config, transport errors, empty
+  snapshot) are contained inside `sendAlertEmail` as `{ ok: false, error }`
+  and reported in-chat; the bot loop and monitor cycles are unaffected.
 
 ---
 
@@ -542,16 +574,18 @@ Required behavior for the 24/7 process (enforced by tests and review):
 
 | Pipeline concern | Owning module | Key exports | Locking tests |
 | :--- | :--- | :--- | :--- |
-| INMET fetching, city catalog, warning matching, emoji | `src/inmet_client.js` | `getSurroundingCities`, `getRegionalRiskWarnings`, `getRegionalForecasts`, `getAlertEmoji`, `extractWarningGeocodeSet`, `warningAffectsCity` | `tests/inmet_client.test.js` |
-| Defesa Civil GraphQL fetching + telemetry thresholds | `src/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
-| Tier model, normalization, 24h evaluation, identity, aggregation | `src/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `getAlertTypeLabel` | `tests/monitor_service.test.js` |
-| Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitor_service.test.js` |
-| Thresholds menus, badges, presentation copy, message layout | `src/telegram_bot.js` | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport` | `tests/telegram.test.js` |
-| Admin delivery + chunking | `src/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/telegram.test.js` |
-| Persistence of cycles/alerts/settings/fetches + retention | `src/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/log_database.test.js` |
-| Admin allowlist & invites (5-min, hash) | `src/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/admin_store.test.js` |
-| DB driver | `src/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/database_driver.test.js` |
-| Seeded defaults | `migrations/002_seed_default_settings.sql` | — | `tests/migrate.test.js` |
+| INMET fetching, city catalog, warning matching, emoji | `src/clients/inmet_client.js` | `getSurroundingCities`, `getRegionalRiskWarnings`, `getRegionalForecasts`, `getAlertEmoji`, `extractWarningGeocodeSet`, `warningAffectsCity` | `tests/clients/inmet_client.test.js` |
+| Defesa Civil GraphQL fetching + telemetry thresholds | `src/clients/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
+| Tier model, normalization, 24h evaluation, identity, aggregation | `src/monitoring/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `getAlertTypeLabel` | `tests/monitoring/monitor_service.test.js` |
+| Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitoring/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitoring/monitor_service.test.js` |
+| Thresholds menus, badges, presentation copy, message layout | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `renderEmailCompose`, `sendAlertEmail` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js` |
+| Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |
+| Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
+| Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
+| Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
+| Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |
+| DB driver | `src/helpers/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/helpers/database_driver.test.js` |
+| Seeded defaults | `migrations/002_seed_default_settings.sql` | — | `tests/helpers/migrate.test.js` |
 
 ---
 
@@ -587,7 +621,7 @@ that violate them.
    America/Sao_Paulo; user-facing timestamps are rendered in
    `America/Sao_Paulo` with `pt-BR` formatting. Parse only through
    `parseWarningDate` / `parseForecastDate`.
-8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/log_database.js:534` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitor_service.js:361`.
+8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/model/log_database.js:534` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitoring/monitor_service.js:361`.
 9. **Documentation parity.** Any PR that changes filtering, thresholds, colors,
    wording, or delivery semantics updates this file in the same commit and adds
    or amends deterministic unit tests (mocked `fetch`, fake bot objects — no

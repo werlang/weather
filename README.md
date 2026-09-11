@@ -25,23 +25,34 @@ ifsul/weather/
 ├── migrations/
 │   └── 001_initial_schema.sql        # Initial schema migration
 ├── src/
-│   ├── inmet_client.js               # Reusable Node 26 API client for INMET & IBGE
-│   ├── database_driver.js            # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
-│   ├── migrate.js                    # Versioned SQLite database migration runner
-│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics
-│   ├── risk_analyzer.js              # Shared risk analysis and CLI argument parsing utilities
-│   ├── monitor_service.js            # Long-running 24h risk monitoring service
-│   ├── telegram.js                   # grammY wrapper and administrator delivery client
-│   ├── telegram_bot.js                # Telegram commands, authorization, and alert formatting
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
+│   ├── bot/                          # Telegram interface (grammY)
+│   │   ├── telegram.js               # grammY wrapper and administrator delivery client
+│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email flow
+│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome
+│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email)
+│   │   └── email_templates.js        # Alert MJML renderer + institution custom-message store
+│   ├── clients/                      # Upstream data sources
+│   │   ├── inmet_client.js           # Reusable Node 26 API client for INMET & IBGE
+│   │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
+│   ├── monitoring/                   # Risk domain + 24/7 coordinator
+│   │   ├── risk_analyzer.js          # Shared risk analysis and CLI argument parsing utilities
+│   │   └── monitor_service.js        # Long-running 24h risk monitoring service
+│   ├── model/                        # SQLite persistence
+│   │   ├── log_database.js           # Native Node 26 SQLite log database & telemetry analytics
+│   │   └── admin_store.js            # Admin allowlist & 5-min invite codes
+│   └── helpers/                      # Cross-cutting infrastructure
+│       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│       ├── migrate.js                # Versioned SQLite database migration runner
+│       └── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+├── scripts/
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
-└── tests/
-    ├── database_driver.test.js       # Unit tests for SQLite query-builder & CRUD driver
-    ├── migrate.test.js               # Unit tests for SQL migrations & schema_migrations
-    ├── inmet_client.test.js          # Unit tests for INMET client
-    ├── log_database.test.js          # Unit tests for SQLite log database
-    ├── monitor_service.test.js       # Unit tests for 24h window risk monitoring service
-    └── telegram.test.js               # Unit tests for Telegram config, delivery, and commands
+└── tests/                            # Mirrors src/ groups (unit only, :memory: DB)
+    ├── bot/                          # Telegram, email action, email template tests
+    ├── clients/                      # INMET + Defesa Civil client tests
+    ├── monitoring/                   # 24h window risk monitoring service tests
+    ├── model/                        # SQLite log database + admin invite tests
+    └── helpers/                      # Driver, migrations, email transport tests
 ```
 
 ---
@@ -83,10 +94,10 @@ docker compose -f compose.dev.yaml up --build
 ### 3. Run Standalone Regional Risk CLI Report (Default 50km or Custom Distance)
 ```bash
 # Default (50 km radius):
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js
 
 # Custom Distance (e.g. 100 km radius):
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js 100
 ```
 
 ### 4. Inspect SQLite API Fetch Logs & Telemetry

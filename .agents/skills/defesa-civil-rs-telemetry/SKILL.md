@@ -169,7 +169,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
 ## 5. Secondary Risk Verification Algorithm
 
 The canonical implementation is `evaluateDefesaCivilRisks()` in
-`src/defesa_civil_client.js`. It evaluates three independent rule groups per station:
+`src/clients/defesa_civil_client.js`. It evaluates three independent rule groups per station:
 rain accumulation, wind gusts, and river level/trend (using the per-station official
 quotas from §3.1). The simplified shape of the algorithm:
 

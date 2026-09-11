@@ -15,7 +15,7 @@
 
 ## 2. Module Map — `src/` (12 files, individually checked)
 
-### 2.1 `src/admin_store.js` — 430 LOC (new, not in `AGENTS.md:71`)
+### 2.1 `src/model/admin_store.js` — 430 LOC (new, not in `AGENTS.md:71`)
 **Exports:** `INVITE_CODE_LENGTH=8`, `INVITE_CODE_CHARSET`, `INVITE_CODE_REGEX=/^[A-Z0-9]{8}$/`, `INVITE_EXPIRY_MS=300000`, `hashInviteCode()`, `generateInviteCode()`, `normalizeInviteCode()`, `isValidInviteCodeFormat()`, `extractInviteCodeFromText()`, `getPersistedAdminChatIds()`, `addPersistedAdminChatId()`, `removePersistedAdminChatId()`, `getActiveInviteCode()`, `getActiveInvites()`, `createAdminInviteCode()`, `clearInviteCode()`, `consumeInviteCode()` (`reasons` `invalid_format|invalid_chat_id|already_admin|invalid_code|expired|revoked|error`).
 
 **Flow:** `randomInt` → `normalize` → `hash(sha256)` → `code_hash+code_prefix` → `Sqlite.withTransaction` insert `admin_invites`; `consume` extract→hash→txn checks `revoked/used/expires_at` → `upsert admin_users` + `update used_by`.
@@ -27,7 +27,7 @@
 * Plaintext `code_plain` stored alongside hash defeats hashing.
 * `clearInviteCode` revokes all via `used_by IS NULL` then fallback `find` without filter — inconsistent.
 
-### 2.2 `src/database_driver.js` — 623 LOC (core, correct boundary)
+### 2.2 `src/helpers/database_driver.js` — 623 LOC (core, correct boundary)
 **Exports:** `DatabaseError`, `Sqlite` static: `connect()`, `close()`, `ping()`, `exec()`, `insert()`, `upsert()`, `update()`, `delete()`, `find()`, `findOne()`, `get()`, `count()`, `getWhereStatements()`, `withTransaction()`, `raw()`, `formatRaw()`, `format()`, helpers `like/between/ne/lt/gt`.
 
 **Findings:**
@@ -37,7 +37,7 @@
 * `formatRaw` splits on `?` fails if `?` inside string literal.
 * `withTransaction` uses `BEGIN TRANSACTION` not `IMMEDIATE`, no retry on `SQLITE_BUSY`.
 
-### 2.3 `src/defesa_civil_client.js` — 316 LOC
+### 2.3 `src/clients/defesa_civil_client.js` — 316 LOC
 **Exports:** `DEFESA_CIVIL_GRAPHQL_URL`, `CHARQUEADAS_STATION_CODE='DCRS-00032'`, `REGIONAL_STATIONS[6]` with `alertLevelM/floodLevelM`, `TAGS_DATA_QUERY`, `getDefesaCivilTelemetry()`, `evaluateDefesaCivilRisks()`.
 
 **Findings:**
@@ -46,7 +46,7 @@
 * Default stations `['DCRS-00032','00093','00076','00054']` omits `00033,00122` defined in `REGIONAL_STATIONS`.
 * No `AbortSignal` timeout — can block 24/7 loop.
 
-### 2.4 `src/inmet_client.js` — 297 LOC
+### 2.4 `src/clients/inmet_client.js` — 297 LOC
 **Exports:** `CHARQUEADAS_IBGE_CODE`, `BASE_PREVMET_URL`, `BASE_TEMPO_URL`, `BASE_IBGE_API_URL`, `CHARQUEADAS_SURROUNDING_CITIES_100KM[38]`, `httpGet()`, `getSurroundingCities()`, `getCityForecast()`, `getRegionalForecasts()`, `getActiveRiskWarnings()`, `getRegionalRiskWarnings()`, `getAutomaticStations()`, `getAlertEmoji()`.
 
 **Findings:**
@@ -56,7 +56,7 @@
 * `getCityForecast` returns `{}` on 404 — masks error, downstream must detect `Object.keys===0`.
 * `getAlertEmoji` strict `=== '#FF0000'` but `toUpperCase` fixes, duplication with `risk_analyzer`.
 
-### 2.5 `src/log_database.js` — 653 LOC (largest, SRP violation)
+### 2.5 `src/model/log_database.js` — 653 LOC (largest, SRP violation)
 **Exports:** `DEFAULT_DB_PATH`, `getDatabase()`, `extractEndpoint()`, `logFetch()`, `logAlert()`, `logMonitorCycle()`, `getRecentFetchLogs()`, `getRecentAlertLogs()`, `getFetchStats()`, `saveSystemSetting()`, `getSystemSetting()`, `logUnknownAlert()`, `loadAllSettings()`, `getLogRetentionHours()`, `cleanupOldLogs()`, `closeDatabase()` + CLI.
 
 **Findings:**
@@ -66,7 +66,7 @@
 * Orphaned doc block before `saveSystemSetting` (actually `closeDatabase`).
 * 5 concerns in one file — should split.
 
-### 2.6 `src/migrate.js` — 152 LOC
+### 2.6 `src/helpers/migrate.js` — 152 LOC
 **Exports:** `DEFAULT_MIGRATIONS_DIR`, `splitSqlStatements()`, `migrateSync()`, `migrate()`.
 
 **Findings:**
@@ -74,7 +74,7 @@
 * `find('schema_migrations', {}, {view:['version']})` wrong API — second arg should be filter.
 * `localeCompare numeric` locale-dependent, no checksum verification.
 
-### 2.7 `src/monitor_regional_risks.js` — 224 LOC CLI
+### 2.7 `scripts/monitor_regional_risks.js` — 224 LOC CLI
 **Purpose:** On-demand regional CLI report.
 
 **Findings:**
@@ -83,7 +83,7 @@
 * `parseRadiusArg` reads `process.argv` globally — not injectable.
 * No `logMonitorCycle` audit, unlike service.
 
-### 2.8 `src/monitor_service.js` — 531 LOC (scheduler + coordinator)
+### 2.8 `src/monitoring/monitor_service.js` — 531 LOC (scheduler + coordinator)
 **Exports:** `parseCategoryTier()`, `parseMonitorConfig()`, `onHighRiskEventDetected()`, `createAlertDispatcher()`, `performRegionalRiskMonitoring()`, `startMonitoringService()`, `saveLastScanSnapshot()`, `getLastScanSnapshot()` (+ re-exports).
 
 **Findings:**
@@ -93,7 +93,7 @@
 * `updateConfig` reschedule only for interval, radius change waits interval.
 * `process.on('SIGINT')` not `once` — leak if called twice in tests.
 
-### 2.9 `src/risk_analyzer.js` — 574 LOC (core business logic)
+### 2.9 `src/monitoring/risk_analyzer.js` — 574 LOC (core business logic)
 **Exports:** `SEVERITY_LEVELS`, `ALERT_CATEGORIES`, `getEventCategory()`, `normalizeSeverityTier()`, `parseWarningDate()`, `getRiskEventKey()`, `parseRadiusArg()`, `parseForecastDate()`, `analyzeForecastRisks()`, `evaluateHighRisksIn24hWindow()`, `aggregateRiskEvents()`.
 
 **Findings:**
@@ -104,7 +104,7 @@
 * `getEventCategory` order `rio` before `chuva` → `rio de chuva` → `rio` not `chuva`.
 * `evaluateHighRisksIn24hWindow` period slicing off-by-1ms.
 
-### 2.10 `src/telegram_bot.js` — 1832 LOC (presentation, largest)
+### 2.10 `src/bot/telegram_bot.js` — 1832 LOC (presentation, largest)
 **Exports:** `CARD_HEADER/DIVIDER`, `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `getTierBadge()`, `getTierShortBadge()`, `BOT_COMMANDS[6]`, `renderSeverityBadge()`, `buildInviteRequiredMessage()`, `buildRegularWelcomeMessage()`, class `WeatherTelegramBot` (30+ methods).
 
 **Findings:**
@@ -117,7 +117,7 @@
 * `renderAdminsMenu` expiry race shows `0m 0s`.
 * Telegram markdown not escaped for `details`.
 
-### 2.11 `src/telegram.js` — 313 LOC (grammY wrapper)
+### 2.11 `src/bot/telegram.js` — 313 LOC (grammY wrapper)
 **Exports:** `InlineKeyboard`, `TELEGRAM_MAX_MESSAGE_LENGTH=4096`, `parseTelegramAdminChatIds()`, `parseTelegramConfig()`, `splitTelegramMessage()`, `TelegramBotClient` (isAdminChat, addAdminChatId, getAdminChatIds, onCommand/onText/onCallbackQuery/onError, sendToAdmins, setMyCommands, start/stop).
 
 **Findings:**
@@ -165,12 +165,12 @@
 | `Dockerfile:1` | 3 stages base/dev/prod | `COPY package.json` only, not `package-lock.json` → always `npm install`; dev vs prod identical except `NODE_ENV`; no `EXPOSE/HEALTHCHECK/USER` |
 | `compose.yaml:1` | Prod daemon `app` | Service `app` vs `AGENTS.md:151` `weather-bot` log example fails |
 | `compose.dev.yaml:1` | Dev live volume | `restart: unless-stopped` loops on syntax error; `command: npm start` vs `SKILL.md:35` `sleep infinity` docs diverge |
-| `.env.example:1` | 8 vars | Now `TELEGRAM_BOT_TOKEN` only + `LOG_RETENTION_HOURS=168` `src/log_database.js:514`; missing `IBGE_API_URL`, `TELEGRAM_BOT_USERNAME`, `INMET_MIN_SEVERITY` fallback |
-| `docs/ALERT_METHODOLOGY.md:1` | Canonical normative (570 lines) | Very high fidelity; missing `UNKNOWN:4` tier table `src/risk_analyzer.js:19` + `LOG_RETENTION_HOURS` retention `src/log_database.js:534` not documented |
+| `.env.example:1` | 8 vars | Now `TELEGRAM_BOT_TOKEN` only + `LOG_RETENTION_HOURS=168` `src/model/log_database.js:514`; missing `IBGE_API_URL`, `TELEGRAM_BOT_USERNAME`, `INMET_MIN_SEVERITY` fallback |
+| `docs/ALERT_METHODOLOGY.md:1` | Canonical normative (570 lines) | Very high fidelity; missing `UNKNOWN:4` tier table `src/monitoring/risk_analyzer.js:19` + `LOG_RETENTION_HOURS` retention `src/model/log_database.js:534` not documented |
 | `docs/DEFESA_CIVIL_RS_API_DOCUMENTATION.md:1` | GraphQL spec, 6 stations | Endpoint + `REGIONAL_STATIONS:27` + `TAGS_DATA_QUERY:35` match; WS `nowcasting` aspirational not implemented (poll only) |
-| `docs/INMET_API_DOCUMENTATION.md:1` | Forecast/warnings/stations | `User-Agent` `src/inmet_client.js:14` matches; `hoje/amanha` normalization `src/inmet_client.js:188` correct |
-| `docs/METEOROLOGICAL_RISKS_GUIDE.md:1` | Intro guide, 10 cities | **Stale** `LINE 32` fixed `INMET strictly RED` contradicts configurable `ALERT_METHODOLOGY.md:206` + `src/risk_analyzer.js:348`; city list 10 vs actual 38 `src/inmet_client.js:19` |
-| `docs/TELEGRAM_BOT_SCOPE.md:1` | UI benchmarking, DB-only bootstrap | Now correct `DB-only bootstrap` `TELEGRAM_BOT_SCOPE.md:77`, `CARD_HEADER` `src/telegram_bot.js:31`, `UNKNOWN` badge doc |
+| `docs/INMET_API_DOCUMENTATION.md:1` | Forecast/warnings/stations | `User-Agent` `src/clients/inmet_client.js:14` matches; `hoje/amanha` normalization `src/clients/inmet_client.js:188` correct |
+| `docs/METEOROLOGICAL_RISKS_GUIDE.md:1` | Intro guide, 10 cities | **Stale** `LINE 32` fixed `INMET strictly RED` contradicts configurable `ALERT_METHODOLOGY.md:206` + `src/monitoring/risk_analyzer.js:348`; city list 10 vs actual 38 `src/clients/inmet_client.js:19` |
+| `docs/TELEGRAM_BOT_SCOPE.md:1` | UI benchmarking, DB-only bootstrap | Now correct `DB-only bootstrap` `TELEGRAM_BOT_SCOPE.md:77`, `CARD_HEADER` `src/bot/telegram_bot.js:31`, `UNKNOWN` badge doc |
 | Skills (6) | `inmet-weather-monitor`, `defesa-civil-rs-telemetry`, etc. | `inmet-weather-monitor/SKILL.md:88` thresholds `38°C/20%` diverge from `risk_analyzer.js:257` `40°C/12%`; `grammy-architecture.md:18` lists `/jacui//chatid` not in `BOT_COMMANDS:100`; command docs stale |
 
 ---
@@ -179,20 +179,20 @@
 
 ### HIGH (hurts after merge)
 
-* **H1 `src/log_database.js:554` SQL injection via string interpolation** `DELETE ... '${cutoff}'` — cutoff is ISO but pattern violates param quoting; should use `?` placeholder via driver.
-* **H2 `src/monitor_service.js:196` `createAlertDispatcher` freeze on `deliveryFailed` or `!dataComplete`** — same alerts resent every cycle (spam) or stale never cleared.
-* **H3 `src/defesa_civil_client.js:221` river `0` → `null` coercion** — valid dry river `0` treated as missing, absolute flood check `src/defesa_civil_client.js:280` skipped.
-* **H4 `src/database_driver.js:51` global singleton `connected` ignores `path` change** — parallel `tests` using `:memory:` vs file can clobber; `migrate.js:60` forces `close` workaround.
-* **H5 `src/telegram_bot.js:1832` monolith `registerHandlers` 600 lines 40 branches** — Repeated Switches, not table-driven, hard to test.
+* **H1 `src/model/log_database.js:554` SQL injection via string interpolation** `DELETE ... '${cutoff}'` — cutoff is ISO but pattern violates param quoting; should use `?` placeholder via driver.
+* **H2 `src/monitoring/monitor_service.js:196` `createAlertDispatcher` freeze on `deliveryFailed` or `!dataComplete`** — same alerts resent every cycle (spam) or stale never cleared.
+* **H3 `src/clients/defesa_civil_client.js:221` river `0` → `null` coercion** — valid dry river `0` treated as missing, absolute flood check `src/clients/defesa_civil_client.js:280` skipped.
+* **H4 `src/helpers/database_driver.js:51` global singleton `connected` ignores `path` change** — parallel `tests` using `:memory:` vs file can clobber; `migrate.js:60` forces `close` workaround.
+* **H5 `src/bot/telegram_bot.js:1832` monolith `registerHandlers` 600 lines 40 branches** — Repeated Switches, not table-driven, hard to test.
 
 ### MEDIUM
 
 * **M1 `src/inmet_client.test.js:55` live fetch without mock** — violates `AGENTS.md:33` unit-only, flaky offline.
-* **M2 `src/admin_store.js:268` plaintext `code_plain` alongside hash** — DB leak = code leak.
-* **M3 `src/monitor_service.js:62` snapshot truncate 20 without `truncated:true` flag** — regular `Ver Últimos Alertas` hides events silently.
-* **M4 `src/telegram_bot.js:354` `isAdmin` double DB read per message** — performance, should cache `admin_users`.
-* **M5 `src/log_database.js:434` `cleanupOldLogs` double-count `before-after`** — concurrent inserts between counts under-count deleted.
-* **M6 `src/migrate.js:35` `splitSqlStatements` strips `--` inside strings, `split(';')` fails inside literals.**
+* **M2 `src/model/admin_store.js:268` plaintext `code_plain` alongside hash** — DB leak = code leak.
+* **M3 `src/monitoring/monitor_service.js:62` snapshot truncate 20 without `truncated:true` flag** — regular `Ver Últimos Alertas` hides events silently.
+* **M4 `src/bot/telegram_bot.js:354` `isAdmin` double DB read per message** — performance, should cache `admin_users`.
+* **M5 `src/model/log_database.js:434` `cleanupOldLogs` double-count `before-after`** — concurrent inserts between counts under-count deleted.
+* **M6 `src/helpers/migrate.js:35` `splitSqlStatements` strips `--` inside strings, `split(';')` fails inside literals.**
 * **M7 `docs/METEOROLOGICAL_RISKS_GUIDE.md:32` fixed RED policy contradicts configurable thresholds.**
 
 ### LOW / Nits
@@ -211,9 +211,41 @@
 2. **Service name mismatch** `compose.yaml:3` vs `AGENTS.md:151` → fix log example to `app`
 3. **Healthcheck missing** — no `HEALTHCHECK` in `Dockerfile`, no `depends_on` in `compose.yaml`, `unless-stopped` will restart-crash-loop on missing token `src/weather_bot.js:21` throw.
 4. **No `engines` pin** `package.json:7` despite `AGENTS.md:13` Node 26.
-5. **Retention not in `ALERT_METHODOLOGY.md`** — `LOG_RETENTION_HOURS` `src/log_database.js:514` every scan `src/monitor_service.js:361` not documented as normative.
+5. **Retention not in `ALERT_METHODOLOGY.md`** — `LOG_RETENTION_HOURS` `src/model/log_database.js:514` every scan `src/monitoring/monitor_service.js:361` not documented as normative.
 
 ---
 
 *Evidence file saved, all modules checked. Runtime checks (Telegram visual, live INMET/Defesa) not verifiable statically are marked above as gaps, not failures.*
 
+
+---
+
+## 6. Addendum 2026-09-11 — Folder Restructure (project-template inspired)
+
+The flat `src/*.js` layout was regrouped following the `project-template`
+`api/` conventions (`model/`, `helpers/`, `templates/`, `scripts/`, grouped
+tests). Basenames kept for history; only directories changed.
+
+```
+src/weather_bot.js            (unchanged entry point)
+src/bot/telegram.js           (moved, unchanged)
+src/bot/telegram_bot.js       (orchestrator; presentation + keyboards extracted)
+src/bot/presentation.js       (NEW: CARD_*, *_OPTIONS, badges, BOT_COMMANDS, welcome)
+src/bot/keyboards.js          (NEW: 13 build*Keyboard pure functions)
+src/bot/email_templates.js    (moved, unchanged)
+src/clients/inmet_client.js | defesa_civil_client.js
+src/monitoring/risk_analyzer.js | monitor_service.js
+src/model/log_database.js | admin_store.js
+src/helpers/database_driver.js | migrate.js | email_client.js
+scripts/monitor_regional_risks.js
+tests/{bot,clients,monitoring,model,helpers}/*.test.js  (mirrors src/)
+```
+
+* `src/bot/telegram_bot.js` 2085 → ~1500 LOC; public `WeatherTelegramBot` API
+  unchanged (H5 partially addressed; `registerHandlers` router still stateful).
+* `src/helpers/migrate.js` `DEFAULT_MIGRATIONS_DIR` adjusted to `../../migrations`.
+* `package.json` test glob is now `tests/**/*.test.js`; CLI scripts point at new paths.
+* Test hermeticity hardened: all suites force `DB_PATH=':memory:'` so the
+  developer's real `database/weather_logs.db` is never touched (previously
+  `startMonitoringService`'s immediate cycle and `logFetch` wrote into it).
+* 157/157 unit tests pass; real DB verified byte-identical after a full run.

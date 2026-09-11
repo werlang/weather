@@ -11,7 +11,7 @@ Because `inmet_client.js` uses native `fetch`, mock HTTP responses by temporaril
 ```javascript
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { getCityForecast, getActiveRiskWarnings } from '../src/inmet_client.js';
+import { getCityForecast, getActiveRiskWarnings } from '../src/clients/inmet_client.js';
 
 describe('INMET Client Mocking', () => {
   it('mocks 5-day forecast response deterministically', async () => {
@@ -168,8 +168,8 @@ Use lightweight dependency injection without bringing in heavy mock libraries:
 ```javascript
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { TelegramBotClient } from '../src/telegram.js';
-import { WeatherTelegramBot } from '../src/telegram_bot.js';
+import { TelegramBotClient } from '../src/bot/telegram.js';
+import { WeatherTelegramBot } from '../src/bot/telegram_bot.js';
 
 /**
  * Creates a controllable fake bot matching grammY's core interface.
@@ -243,7 +243,7 @@ Avoid relying on `new Date()` directly in core business logic. Accept an optiona
 ```javascript
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateHighRisksIn24hWindow } from '../src/monitor_service.js';
+import { evaluateHighRisksIn24hWindow } from '../src/monitoring/monitor_service.js';
 
 describe('24h Window Evaluation with Frozen Clock', () => {
   it('correctly evaluates window starting at fixed timestamp', () => {

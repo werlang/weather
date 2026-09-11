@@ -8,7 +8,7 @@
  */
 
 import { randomInt, createHash } from 'node:crypto';
-import { Sqlite } from './database_driver.js';
+import { Sqlite } from '../helpers/database_driver.js';
 import { getDatabase } from './log_database.js';
 
 /** Length of generated invite codes. */

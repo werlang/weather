@@ -52,11 +52,11 @@ For detailed recipes and troubleshooting, see **[Docker Runbooks Reference](refe
 
 * **Run Standalone Regional Risk CLI Report (Default 50 km):**
   ```bash
-  docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js
+  docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js
   ```
 * **Run Regional Risk CLI Report with Custom Radius (e.g., 100 km):**
   ```bash
-  docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
+  docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js 100
   ```
 * **Run Console-Only Diagnostic Monitor:**
   ```bash
@@ -87,13 +87,13 @@ For module boundaries and design blueprints, see **[Architecture Rules Reference
 ### KISS, YAGNI & Rule of Three
 - **KISS (Keep It Simple, Stupid):** Prefer flat, straightforward functional pipelines over deep object hierarchies.
 - **YAGNI (You Aren't Gonna Need It):** Implement only the features and configurations needed right now. Do not add speculative caching layers or multi-provider abstractions without actual use.
-- **Rule of Three:** Copy-paste logic twice for localized variants. On the 3rd repetition, extract a well-tested, shared utility function in `src/risk_analyzer.js` or `src/inmet_client.js`.
+- **Rule of Three:** Copy-paste logic twice for localized variants. On the 3rd repetition, extract a well-tested, shared utility function in `src/monitoring/risk_analyzer.js` or `src/clients/inmet_client.js`.
 
 ---
 
 ## 4. Defensive Error Containment in 24/7 Long-Running Services
 
-The monitoring daemon (`src/weather_bot.js` / `src/monitor_service.js`) runs continuously and must never crash due to transient external failures:
+The monitoring daemon (`src/weather_bot.js` / `src/monitoring/monitor_service.js`) runs continuously and must never crash due to transient external failures:
 
 1. **Contain External Network Failures:** INMET or Defesa Civil APIs frequently return HTTP 502/503, connection timeouts, or malformed JSON during severe storms.
    - Wrap remote calls in `try ... catch`.
@@ -112,6 +112,6 @@ The monitoring daemon (`src/weather_bot.js` / `src/monitor_service.js`) runs con
 
 When reviewing code, implementing refactors, or diagnosing defects:
 1. **Identify Failure Modes:** Look for unhandled date formats (`DD/MM/YYYY` vs ISO), missing field fallbacks (`resumo`, `aviso_cor`), or unhandled Promise rejections.
-2. **Write Failing Regression Test First:** Add a reproducible unit test in `tests/*.test.js` before applying fixes.
+2. **Write Failing Regression Test First:** Add a reproducible unit test in `tests/<group>/*.test.js` before applying fixes.
 3. **Validate in Docker:** Run `docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test`.
 4. **Atomic Git Commit:** Stage only affected files and commit with conventional commit format (`fix(inmet): ...`, `feat(telegram): ...`).

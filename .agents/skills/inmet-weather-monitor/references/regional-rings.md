@@ -76,7 +76,7 @@ Strategic upstream river basins (Vale do Taquari, Vale do Rio Pardo, Serra Gaúc
 
 ---
 
-## 5. JavaScript Constant Definition (`src/inmet_client.js`)
+## 5. JavaScript Constant Definition (`src/clients/inmet_client.js`)
 
 ```javascript
 export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [

@@ -12,12 +12,12 @@ import {
     getRegionalRiskWarnings,
     getRegionalForecasts,
     getAlertEmoji
-} from './inmet_client.js';
+} from '../src/clients/inmet_client.js';
 
 import {
     parseRadiusArg,
     analyzeForecastRisks
-} from './risk_analyzer.js';
+} from '../src/monitoring/risk_analyzer.js';
 
 async function main() {
     const radiusKm = parseRadiusArg();

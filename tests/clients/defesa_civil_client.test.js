@@ -1,14 +1,18 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+
+// Keep unit tests hermetic: the Defesa Civil client persists fetch telemetry
+// through the default database path, which must never be the developer's file.
+process.env.DB_PATH = ':memory:';
 import {
     getDefesaCivilTelemetry,
     evaluateDefesaCivilRisks,
     CHARQUEADAS_STATION_CODE,
     REGIONAL_STATIONS,
     TAGS_DATA_QUERY
-} from '../src/defesa_civil_client.js';
-import { evaluateHighRisksIn24hWindow } from '../src/risk_analyzer.js';
-import { getDatabase } from '../src/log_database.js';
+} from '../../src/clients/defesa_civil_client.js';
+import { evaluateHighRisksIn24hWindow } from '../../src/monitoring/risk_analyzer.js';
+import { getDatabase } from '../../src/model/log_database.js';
 
 describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
     let testDb;

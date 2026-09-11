@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+
+// Keep unit tests hermetic: the INMET client persists fetch telemetry through
+// the default database path, which must never be the developer's real file.
+process.env.DB_PATH = ':memory:';
 import {
   CHARQUEADAS_IBGE_CODE,
   BASE_PREVMET_URL,
@@ -11,7 +15,7 @@ import {
   getAlertEmoji,
   extractWarningGeocodeSet,
   warningAffectsCity
-} from '../src/inmet_client.js';
+} from '../../src/clients/inmet_client.js';
 
 describe('INMET Client Constants & Config', () => {
   it('defines correct IBGE code for Charqueadas', () => {

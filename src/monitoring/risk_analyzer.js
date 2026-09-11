@@ -6,9 +6,9 @@
  * @module riskAnalyzer
  */
 
-import { getAlertEmoji } from './inmet_client.js';
-import { evaluateDefesaCivilRisks } from './defesa_civil_client.js';
-import { logUnknownAlert } from './log_database.js';
+import { getAlertEmoji } from '../clients/inmet_client.js';
+import { evaluateDefesaCivilRisks } from '../clients/defesa_civil_client.js';
+import { logUnknownAlert } from '../model/log_database.js';
 
 /**
  * Severity ranking map for comparison.

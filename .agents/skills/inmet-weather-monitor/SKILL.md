@@ -27,7 +27,7 @@ For the 38 surrounding cities categorized by distance ring, see [Regional Munici
 
 ### 1. Querying 5-Day Municipality Forecasts
 
-Use `getCityForecast(ibgeCode)` from `src/inmet_client.js`:
+Use `getCityForecast(ibgeCode)` from `src/clients/inmet_client.js`:
 
 ```javascript
 import { getCityForecast, CHARQUEADAS_IBGE_CODE } from './inmet_client.js';
@@ -83,7 +83,7 @@ The continuous monitor evaluates two distinct risk streams for the upcoming 24-h
    - Checks if any regional city within configured radius is listed in `warning.geocodes` or `warning.municipios`.
 
 2. **Forecast Telemetry Analysis (`FORECAST_ANALYSIS`):**
-   - Evaluates forecast condition summaries and numerical parameters (`src/risk_analyzer.js:210` `analyzeForecastRisks()`, canonical `docs/ALERT_METHODOLOGY.md:282`):
+   - Evaluates forecast condition summaries and numerical parameters (`src/monitoring/risk_analyzer.js:210` `analyzeForecastRisks()`, canonical `docs/ALERT_METHODOLOGY.md:282`):
      - **Storms / Tempests:** `resumo` containing `ciclone`/`temporal`/`tempestade` or `granizo+chuva`.
      - **Extreme Cold / Frost:** `temp_min <=0°C` (HIGH sub-zero) or `<=4°C` + `geada` (MODERATE) or `<=8°C` (LOW); `resumo` `neve`/`chuva congelada`.
      - **Extreme Heat / Heatwave:** `temp_max >=40°C` (HIGH) or `>=34°C` (MODERATE).
@@ -95,5 +95,5 @@ The continuous monitor evaluates two distinct risk streams for the upcoming 24-h
 ## Defensive Coding & Reliability Rules
 
 - **User-Agent Header:** INMET API requires a valid browser `User-Agent` (e.g. `Mozilla/5.0...`). Native Node 26 `fetch` requests must include standard headers defined in `inmet_client.js`.
-- **Date Format Handling:** Dates from INMET come in Brazilian format (`DD/MM/YYYY`) for forecasts and ISO-like strings (`YYYY-MM-DD HH:MM`) for alerts. Always parse through `parseForecastDate` in `src/risk_analyzer.js`.
+- **Date Format Handling:** Dates from INMET come in Brazilian format (`DD/MM/YYYY`) for forecasts and ISO-like strings (`YYYY-MM-DD HH:MM`) for alerts. Always parse through `parseForecastDate` in `src/monitoring/risk_analyzer.js`.
 - **Error Boundaries:** Weather APIs can intermittently return 502/503 or empty responses. All client calls must return fallback structures (`{}` or `[]`) rather than throwing unhandled exceptions in long-running loops.

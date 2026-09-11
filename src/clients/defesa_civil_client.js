@@ -7,7 +7,7 @@
  * @module defesaCivilClient
  */
 
-import { logFetch } from './log_database.js';
+import { logFetch } from '../model/log_database.js';
 
 export const DEFESA_CIVIL_GRAPHQL_URL = process.env.DEFESA_CIVIL_GRAPHQL_URL || 'https://redehidrometeorologica.defesacivil.rs.gov.br/graphql';
 export const DEFESA_CIVIL_CLIENT_NAME = 'casa-militar-defesa-civil-rs';

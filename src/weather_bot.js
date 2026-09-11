@@ -3,10 +3,10 @@
 import {
     parseTelegramConfig,
     TelegramBotClient
-} from './telegram.js';
-import { WeatherTelegramBot } from './telegram_bot.js';
-import { startMonitoringService } from './monitor_service.js';
-import { getPersistedAdminChatIds } from './admin_store.js';
+} from './bot/telegram.js';
+import { WeatherTelegramBot } from './bot/telegram_bot.js';
+import { startMonitoringService } from './monitoring/monitor_service.js';
+import { getPersistedAdminChatIds } from './model/admin_store.js';
 
 /**
  * Starts the canonical weather monitor and its Telegram interface.

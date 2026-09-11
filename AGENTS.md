@@ -27,11 +27,11 @@ Every AI agent working in this repository **must strictly follow these rules at 
   docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 
   # Run on-demand regional risk CLI tool
-  docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 50
+  docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js 50
   ```
 
 ### 2. Unit Tests Only by Default
-* Automated AI verification cycles must execute **unit tests only** (`node --test tests/*.test.js`).
+* Automated AI verification cycles must execute **unit tests only** (`npm test`, i.e. `node --test "tests/**/*.test.js"`).
 * **Never execute browser, Playwright, end-to-end, or live network integration suites** unless explicitly instructed by the user.
 * All unit tests must use deterministic mocking (monkey-patching `globalThis.fetch`, injecting fake bot objects) without external mocking libraries.
 
@@ -45,7 +45,7 @@ Every AI agent working in this repository **must strictly follow these rules at 
 * Every exported function, class, and method must have complete JSDoc docstrings with `@param` and `@returns` descriptions.
 
 ### 5. Error Containment in 24/7 Services
-* The background monitoring loop (`src/monitor_service.js`) and Telegram alert dispatcher (`src/telegram_bot.js`) must be resilient. External network glitches, API timeouts, or Telegram delivery failures must be caught, logged, and contained without terminating the long-running process.
+* The background monitoring loop (`src/monitoring/monitor_service.js`) and Telegram alert dispatcher (`src/bot/telegram_bot.js`) must be resilient. External network glitches, API timeouts, or Telegram delivery failures must be caught, logged, and contained without terminating the long-running process.
 
 ---
 
@@ -76,30 +76,38 @@ ifsul/weather/
 │   ├── 006_admin_invites.sql         # Admin invites & users tables
 │   └── 007_cleanup_legacy_settings.sql# Legacy key cleanup
 ├── src/
-│   ├── inmet_client.js               # INMET & IBGE HTTP client (native fetch)
-│   ├── defesa_civil_client.js        # Defesa Civil RS GraphQL telemetry & river quotas
-│   ├── admin_store.js                # Admin allowlist & 5-min invite codes (admin_users/invites)
-│   ├── database_driver.js            # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
-│   ├── migrate.js                    # Versioned SQLite database migration runner
-│   ├── log_database.js               # Native Node 26 SQLite log database & telemetry analytics + retention
-│   ├── risk_analyzer.js              # Business logic: risk parsing, 24h window evaluation
-│   ├── monitor_service.js            # 24/7 background scheduler and risk coordinator + last_scan snapshot
-│   ├── telegram.js                   # grammY wrapper, DB allowlist auth, splitMessage (<4096)
-│   ├── telegram_bot.js               # Bot command handlers, alert layout formatter, invite/bootstrap
 │   ├── weather_bot.js                # Process composition entry point & signal handling
+│   ├── bot/                          # Telegram interface (grammY)
+│   │   ├── telegram.js               # grammY wrapper, DB allowlist auth, splitMessage (<4096)
+│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email flow
+│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome
+│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email)
+│   │   └── email_templates.js        # Alert MJML renderer + institution custom-message store
+│   ├── clients/                      # Upstream data sources (network I/O lives here)
+│   │   ├── inmet_client.js           # INMET & IBGE HTTP client (native fetch)
+│   │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
+│   ├── monitoring/                   # Risk domain: pure analysis + 24/7 coordinator
+│   │   ├── risk_analyzer.js          # Business logic: risk parsing, 24h window evaluation
+│   │   └── monitor_service.js        # 24/7 background scheduler and risk coordinator + last_scan snapshot
+│   ├── model/                        # SQLite persistence (no network I/O)
+│   │   ├── log_database.js           # Native Node 26 SQLite log database & telemetry analytics + retention
+│   │   └── admin_store.js            # Admin allowlist & 5-min invite codes (admin_users/invites)
+│   └── helpers/                      # Cross-cutting infrastructure (no domain logic)
+│       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│       ├── migrate.js                # Versioned SQLite database migration runner
+│       └── email_client.js           # SMTP transport (Ethereal dev, SMTP prod, MJML compile)
+├── scripts/
 │   └── monitor_regional_risks.js     # On-demand CLI regional report generator
-├── tests/
-│   ├── database_driver.test.js       # Unit tests for SQLite query-builder & CRUD driver
-│   ├── migrate.test.js               # Unit tests for SQL migrations & schema_migrations
-│   ├── inmet_client.test.js          # Unit tests for INMET client & regional rings
-│   ├── log_database.test.js          # Unit tests for SQLite log database
-│   ├── monitor_service.test.js       # Unit tests for risk analyzer & 24h window logic
-│   ├── telegram.test.js              # Unit tests for grammY wrapper & command handling
-│   └── admin_store.test.js           # Unit tests for admin invites & bootstrap
+├── tests/                            # Mirrors src/ groups (unit only, :memory: DB)
+│   ├── bot/                          # telegram, email action, email templates tests
+│   ├── clients/                      # INMET + Defesa Civil client tests
+│   ├── monitoring/                   # Risk analyzer & 24h window logic tests
+│   ├── model/                        # Log database + admin invite tests
+│   └── helpers/                      # Driver, migrations, email transport tests
 ├── Dockerfile                        # Multi-stage Docker build (base, dev, prod)
 ├── compose.yaml                      # Production Docker Compose specification
 ├── compose.dev.yaml                  # Development Compose specification (live volume mount)
-├── package.json                      # Scripts & single production dependency (grammy)
+├── package.json                      # Scripts & production dependencies (grammy, nodemailer, mjml, html-to-text)
 ├── TODO.md                           # Active feature roadmap
 └── README.md                         # Public repository documentation
 ```
@@ -108,16 +116,21 @@ ifsul/weather/
 
 | Module | Allowed Responsibilities | Forbidden Responsibilities |
 | :--- | :--- | :--- |
-| `src/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
-| `src/defesa_civil_client.js` | Fetching Defesa Civil RS GraphQL telemetry, river quotas, rain/wind thresholds. | Telegram messaging, scheduling, INMET parsing. |
-| `src/admin_store.js` | Admin allowlist (`admin_users`) & invite codes (`admin_invites`, 5-min, hash), DB-only bootstrap. | Telegram delivery, forecast parsing, risk algorithms. |
-| `src/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
-| `src/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
-| `src/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
-| `src/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching, `UNKNOWN` tier. | Network I/O, Telegram delivery, formatting CLI UI. |
-| `src/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
-| `src/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
-| `src/telegram_bot.js` | Registering `/start`, `/help`, `/status`, `/config`, invite/bootstrap, formatting plain-text alert templates, `Ver Últimos Alertas` read-only. | Socket handling, low-level grammY polling. |
+| `src/clients/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
+| `src/clients/defesa_civil_client.js` | Fetching Defesa Civil RS GraphQL telemetry, river quotas, rain/wind thresholds. | Telegram messaging, scheduling, INMET parsing. |
+| `src/model/admin_store.js` | Admin allowlist (`admin_users`) & invite codes (`admin_invites`, 5-min, hash), DB-only bootstrap. | Telegram delivery, forecast parsing, risk algorithms. |
+| `src/helpers/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
+| `src/helpers/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
+| `src/model/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
+| `src/monitoring/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching, `UNKNOWN` tier. | Network I/O, Telegram delivery, formatting CLI UI. |
+| `src/monitoring/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
+| `src/bot/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
+| `src/bot/telegram_bot.js` | Orchestrator: `/start`, `/help`, `/status`, `/config`, invite/bootstrap, alert renderers, email comunicado flow, callback routing. Delegates keyboards/presentation to sibling modules. | Socket handling, low-level grammY polling, upstream fetching. |
+| `src/bot/presentation.js` | Pure UI atoms: card dividers, severity options/badges, `BOT_COMMANDS`, welcome copy. No dependencies. | Chat state, DB access, network I/O. |
+| `src/bot/keyboards.js` | Pure InlineKeyboard builders (main, settings, categories, alerts, email). | Callback handling, message sending. |
+| `src/bot/email_templates.js` | Alert MJML renderer + institution custom-message store (`system_settings`). | SMTP transport, Telegram delivery. |
+| `src/helpers/email_client.js` | SMTP transport: Ethereal dev preview, production SMTP, strict MJML compile. | Template copy, recipient policy beyond `ALERT_EMAIL_TO`. |
+| `scripts/monitor_regional_risks.js` | On-demand CLI regional report (report-only, no thresholds/delivery). | Alert dispatch, threshold logic. |
 | `src/weather_bot.js` | Composing Telegram bot and monitor service, handling `SIGINT`/`SIGTERM` graceful stop. | Domain logic, low-level HTTP requests. |
 
 
@@ -148,13 +161,13 @@ All commands are run using Docker:
 docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 
 # 2. Run a specific unit test file
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/telegram.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/bot/telegram.test.js
 
 # 3. Run on-demand regional risk CLI report (default 50km radius)
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js
 
 # 4. Run on-demand regional risk CLI report (custom 100km radius)
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js 100
 
 # 5. Build and run production service via Docker Compose
 docker compose up --build -d
@@ -173,9 +186,9 @@ docker compose -f compose.dev.yaml up --build
 When implementing new roadmap features, preserve the architecture:
 
 1. **Defesa Civil RS Telemetry Fusion:**
-   - Integrate station `DCRS-00032` (Charqueadas) river level and sub-hourly precipitation telemetry into `src/risk_analyzer.js` as a secondary ground-truth verification stream.
+   - Integrate station `DCRS-00032` (Charqueadas) river level and sub-hourly precipitation telemetry into `src/monitoring/risk_analyzer.js` as a secondary ground-truth verification stream.
 2. **Self-Service Alert Subscriptions:**
-   - Add `/inscrever` and `/sair` commands in `src/telegram_bot.js`.
+   - Add `/inscrever` and `/sair` commands in `src/bot/telegram_bot.js`.
    - Maintain a separate subscriber store so citizens can receive alerts without acquiring administrator privileges.
 3. **Interactive Telegram Admin Management:**
    - Add `/addadmin`, `/deladmin`, and `/listadmins` commands accessible only to verified administrators.

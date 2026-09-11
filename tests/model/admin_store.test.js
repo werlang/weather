@@ -13,9 +13,10 @@ import {
     clearInviteCode,
     consumeInviteCode,
     addPersistedAdminChatId
-} from '../src/admin_store.js';
-import { Sqlite } from '../src/database_driver.js';
-import { getDatabase } from '../src/log_database.js';
+} from '../../src/model/admin_store.js';
+import { Sqlite } from '../../src/helpers/database_driver.js';
+import { getDatabase } from '../../src/model/log_database.js';
+import { buildRegularKeyboard, buildSettingsKeyboard } from '../../src/bot/keyboards.js';
 
 describe('Admin Invite Store — invite code generation and allowlist', () => {
     let originalDbPath;
@@ -148,9 +149,9 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('non-admin text with valid invite code becomes admin via WeatherTelegramBot', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
-        const { createAdminInviteCode } = await import('../src/admin_store.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
+        const { createAdminInviteCode } = await import('../../src/model/admin_store.js');
         const fakeBot = {
             commandHandlers: new Map(),
             eventHandlers: new Map(),
@@ -179,7 +180,7 @@ describe('Admin Invite Telegram flow (unit)', () => {
         assert.ok(client.isAdminChat('999'), '999 should now be in in-memory allowlist');
         assert.ok(bot.isAdmin({ chat: { id: 999 } }), 'isAdmin should recognize new admin');
         // Code should be single-use
-        const { getActiveInviteCode: getActive } = await import('../src/admin_store.js');
+        const { getActiveInviteCode: getActive } = await import('../../src/model/admin_store.js');
         assert.equal(getActive(), null);
         // Second non-admin trying same code should get invalid
         let secondReply = null;
@@ -193,8 +194,8 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('non-admin regular text receives invite prompt, not menu', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
         const fakeBot = {
             commandHandlers: new Map(),
             eventHandlers: new Map(),
@@ -219,13 +220,13 @@ describe('Admin Invite Telegram flow (unit)', () => {
         // Should offer regular keyboard with last_scan, not admin menu
         const kb = replyOpts?.reply_markup || bot.telegram; // fallback
         // Verify bot has regular keyboard builder
-        const regularKb = WeatherTelegramBot.buildRegularKeyboard();
+        const regularKb = buildRegularKeyboard();
         assert.ok(regularKb.inline_keyboard.some(row => row.some(b => b.callback_data === 'action:last_scan')));
     });
 
     it('admin can generate invite code via Config → Convidar Administrador', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
         const fakeBot = {
             commandHandlers: new Map(),
             eventHandlers: new Map(),
@@ -263,13 +264,13 @@ describe('Admin Invite Telegram flow (unit)', () => {
         assert.match(edited.msg, /CÓDIGO DE CONVITE GERADO/);
         assert.match(edited.msg, /[A-Z0-9]{8}/);
         // Settings keyboard should contain invite button
-        const settingsKb = WeatherTelegramBot.buildSettingsKeyboard({ inmetMinSeverity: 'RED', defesaCivilMinSeverity: 'ORANGE' });
+        const settingsKb = buildSettingsKeyboard({ inmetMinSeverity: 'RED', defesaCivilMinSeverity: 'ORANGE' });
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(b => b.callback_data === 'menu:admins')));
     });
 
     it('non-admin command receives invite prompt (not command output)', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
         const fakeBot = {
             commandHandlers: new Map(),
             eventHandlers: new Map(),
@@ -293,9 +294,9 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('regular user can view last scan without triggering live scan', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
-        const { saveLastScanSnapshot } = await import('../src/monitor_service.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
+        const { saveLastScanSnapshot } = await import('../../src/monitoring/monitor_service.js');
         const fakeBot = {
             commandHandlers: new Map(),
             eventHandlers: new Map(),
@@ -335,9 +336,9 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('invite code expires after 5 minutes', async () => {
-        const { createAdminInviteCode, getActiveInviteCode, consumeInviteCode } = await import('../src/admin_store.js');
-        const { Sqlite } = await import('../src/database_driver.js');
-        const { getDatabase } = await import('../src/log_database.js');
+        const { createAdminInviteCode, getActiveInviteCode, consumeInviteCode } = await import('../../src/model/admin_store.js');
+        const { Sqlite } = await import('../../src/helpers/database_driver.js');
+        const { getDatabase } = await import('../../src/model/log_database.js');
         const code = createAdminInviteCode('123');
         // Manually expire by updating expires_at to past
         const db = getDatabase();
@@ -355,7 +356,7 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('invite code extraction supports surrounding text', async () => {
-        const { createAdminInviteCode, consumeInviteCode } = await import('../src/admin_store.js');
+        const { createAdminInviteCode, consumeInviteCode } = await import('../../src/model/admin_store.js');
         const code = createAdminInviteCode('123');
         // Paste with surrounding text
         const result = consumeInviteCode(`my code is ${code} please`, '777');
@@ -367,9 +368,9 @@ describe('Admin Invite Telegram flow (unit)', () => {
     });
 
     it('admin generate shows shareable link and start payload shows accept/refuse', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
-        const { createAdminInviteCode } = await import('../src/admin_store.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
+        const { createAdminInviteCode } = await import('../../src/model/admin_store.js');
         // Set bot username for link generation
         const prevUsername = process.env.TELEGRAM_BOT_USERNAME;
         process.env.TELEGRAM_BOT_USERNAME = 'test_weather_bot';
@@ -445,16 +446,16 @@ describe('Admin Invite Telegram flow (unit)', () => {
         });
         assert.match(rejectedMsg, /CONVITE RECUSADO/);
         // Rejected code should still be active (not consumed)
-        const { getActiveInviteCode } = await import('../src/admin_store.js');
+        const { getActiveInviteCode } = await import('../../src/model/admin_store.js');
         assert.ok(getActiveInviteCode(), 'rejected code should remain active');
         if (prevUsername === undefined) delete process.env.TELEGRAM_BOT_USERNAME;
         else process.env.TELEGRAM_BOT_USERNAME = prevUsername;
     });
 
     it('first user to /start with no admin gets bootstrap accept/refuse (same flow as valid code)', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
-        const { getPersistedAdminChatIds } = await import('../src/admin_store.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
+        const { getPersistedAdminChatIds } = await import('../../src/model/admin_store.js');
         // Ensure no persisted admins (fresh :memory: DB already empty)
         assert.deepEqual(getPersistedAdminChatIds(), []);
         const fakeBot = {
@@ -507,10 +508,10 @@ describe('Admin Invite Telegram flow (unit)', () => {
         assert.doesNotMatch(secondReply, /CONFIGURAÇÃO INICIAL/);
         // Reject path (when no admin, fresh DB, test reject separately)
         // Reset DB for reject test
-        const { Sqlite } = await import('../src/database_driver.js');
+        const { Sqlite } = await import('../../src/helpers/database_driver.js');
         Sqlite.close();
         process.env.DB_PATH = ':memory:';
-        const { getDatabase } = await import('../src/log_database.js');
+        const { getDatabase } = await import('../../src/model/log_database.js');
         getDatabase();
         const fakeBot2 = {
             commandHandlers: new Map(),

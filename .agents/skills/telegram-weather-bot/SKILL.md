@@ -20,13 +20,13 @@ The Telegram integration follows a strict 3-tier module separation:
         ┌────────────────┴────────────────┐
         ▼                                 ▼
 ┌────────────────────────┐       ┌────────────────────────┐
-│  src/telegram_bot.js   │       │ src/monitor_service.js │
+│  src/bot/telegram_bot.js   │       │ src/monitoring/monitor_service.js │
 │ (Commands, formatting, │       │  (24h risk evaluation, │
 │ alert delivery logic)  │       │   periodic scheduler)  │
 └───────────┬────────────┘       └────────────────────────┘
             ▼
 ┌────────────────────────┐
-│    src/telegram.js     │
+│    src/bot/telegram.js     │
 │ (grammY client wrapper,│
 │  allowlist, chunking)  │
 └────────────────────────┘

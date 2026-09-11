@@ -10,13 +10,29 @@ The codebase in `src/` is cleanly divided into specialized layers:
 
 ```
 src/
-├── inmet_client.js          # Raw HTTP clients for INMET & IBGE + municipality catalog
-├── risk_analyzer.js         # Pure risk heuristics, severity classification & CLI args
-├── monitor_service.js       # Periodic polling loop & 24h risk evaluation orchestration
-├── telegram.js              # Low-level grammY wrapper, auth check, msg chunking
-├── telegram_bot.js          # Telegram bot handlers (/status, /start) & alert formatting
-├── weather_bot.js           # Canonical entry point uniting monitor & Telegram daemon
-└── monitor_regional_risks.js# CLI tool for on-demand console risk reporting
+├── weather_bot.js                # Canonical entry point uniting monitor & Telegram daemon
+├── bot/                          # Telegram interface (grammY)
+│   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking
+│   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email flow
+│   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome)
+│   ├── keyboards.js              # Pure InlineKeyboard builders
+│   └── email_templates.js        # Alert MJML renderer + custom-message store
+├── clients/                      # Raw HTTP clients (INMET/IBGE, Defesa Civil RS)
+│   ├── inmet_client.js           # INMET forecasts/warnings + municipality catalog
+│   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
+├── monitoring/                   # Risk domain + 24/7 coordinator
+│   ├── risk_analyzer.js          # Pure risk heuristics, severity classification & CLI args
+│   └── monitor_service.js        # Periodic polling loop & 24h risk evaluation orchestration
+├── model/                        # SQLite persistence (no network I/O)
+│   ├── log_database.js           # Fetch/alert/cycle logs, settings, retention
+│   └── admin_store.js            # Admin allowlist & invite codes
+└── helpers/                      # Cross-cutting infrastructure (no domain logic)
+    ├── database_driver.js        # Generic SQLite query-builder & CRUD driver
+    ├── migrate.js                # Versioned migration runner (migrations/ at repo root)
+    └── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+scripts/
+└── monitor_regional_risks.js     # CLI tool for on-demand console risk reporting
+tests/                            # Mirrors src/ groups (bot, clients, monitoring, model, helpers)
 ```
 
 ### Responsibility Rules:
@@ -65,7 +81,7 @@ export function evaluateHighRisksIn24hWindow({ regionalWarnings = [], regionalFo
    - Use built-in Node 26 capabilities (`node:test`, `fetch`, `AbortController`) rather than installing external dependencies.
 3. **Rule of Three:**
    - If a logic snippet (e.g., date parsing or radius filtering) is used in two places, duplicating it locally is acceptable.
-   - When the same pattern appears a 3rd time, extract a shared helper into `src/risk_analyzer.js` or `src/inmet_client.js` and add dedicated unit tests.
+   - When the same pattern appears a 3rd time, extract a shared helper into `src/monitoring/risk_analyzer.js` or `src/clients/inmet_client.js` and add dedicated unit tests.
 
 ---
 

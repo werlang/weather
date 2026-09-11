@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { Sqlite } from '../src/database_driver.js';
+import { Sqlite } from '../../src/helpers/database_driver.js';
 import {
     splitSqlStatements,
     migrateSync,
     migrate,
     DEFAULT_MIGRATIONS_DIR
-} from '../src/migrate.js';
+} from '../../src/helpers/migrate.js';
 
 describe('Database Migration Workflow & SQL Parser', () => {
     describe('splitSqlStatements', () => {

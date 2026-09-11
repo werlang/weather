@@ -4,7 +4,7 @@
 
 Telegram is the canonical operational interface for this weather-monitoring service for **Charqueadas - RS** (IBGE `4305355`) and surrounding municipalities (25–100 km radius). The bot combines 24/7 continuous risk monitoring with an interactive, high-contrast dashboard for administrators.
 
-The monitor service (`src/monitor_service.js`) fetches meteorological data from INMET and real-time telemetry from Defesa Civil RS, evaluating severe weather risks in 24-hour windows. The Telegram bot presentation layer (`src/telegram_bot.js` & `src/telegram.js`) handles user interactions, runtime settings, visual cards, alert formatting, and delivery.
+The monitor service (`src/monitoring/monitor_service.js`) fetches meteorological data from INMET and real-time telemetry from Defesa Civil RS, evaluating severe weather risks in 24-hour windows. The Telegram bot presentation layer (`src/bot/telegram_bot.js` & `src/bot/telegram.js`) handles user interactions, runtime settings, visual cards, alert formatting, and delivery.
 
 ---
 
@@ -53,8 +53,13 @@ Provider threshold buttons in the settings menu also display the current color c
 Broadcast emergency alerts include quick jump action buttons attached directly to the alert message:
 ```text
 [ 🚨 Alertas Ativos ]
+[ 📧 Enviar comunicado por e-mail ]
 [ 🏠 Abrir Painel Principal ]
 ```
+Tapping 📧 opens the email comunicado composer (`action:email_compose`):
+preview of hazards + impacted zone + recipient, then send with the current
+institution message, edit it via bot text (saved as the new default in
+`system_settings.email_custom_message`), or send without it.
 
 ---
 
@@ -98,7 +103,7 @@ Runtime settings live in the SQLite `system_settings` table and are seeded with 
 
 | Module | Allowed Responsibilities |
 | :--- | :--- |
-| `src/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split paginated messages (<4096 characters), register `setMyCommands`. |
-| `src/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting. |
+| `src/bot/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split paginated messages (<4096 characters), register `setMyCommands`. |
+| `src/bot/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting. |
 | `src/weather_bot.js` | Process composition, signal handling (`SIGINT`/`SIGTERM`), coordinating bot + monitor startup. |
-| `src/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |
+| `src/monitoring/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |

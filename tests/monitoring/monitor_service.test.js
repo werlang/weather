@@ -1,5 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+
+// Keep unit tests hermetic: monitoring cycles persist snapshots, cycle logs,
+// alerts, and unknown-source rows through the default database path, which
+// must never be the developer's real database file.
+process.env.DB_PATH = ':memory:';
 import {
   parseMonitorConfig,
   parseForecastDate,
@@ -8,11 +13,11 @@ import {
   startMonitoringService,
   createAlertDispatcher,
   performRegionalRiskMonitoring
-} from '../src/monitor_service.js';
-import { analyzeForecastRisks, parseRadiusArg, getEventCategory } from '../src/risk_analyzer.js';
-import { getSurroundingCities } from '../src/inmet_client.js';
-import { Sqlite } from '../src/database_driver.js';
-import { getDatabase } from '../src/log_database.js';
+} from '../../src/monitoring/monitor_service.js';
+import { analyzeForecastRisks, parseRadiusArg, getEventCategory } from '../../src/monitoring/risk_analyzer.js';
+import { getSurroundingCities } from '../../src/clients/inmet_client.js';
+import { Sqlite } from '../../src/helpers/database_driver.js';
+import { getDatabase } from '../../src/model/log_database.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
   it('parseRadiusArg uses CLI args or the default and ignores environment variables', () => {
@@ -134,7 +139,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
   });
 
   it('escalates unrecognized INMET colors and forecast summaries as UNKNOWN', async () => {
-    const { evaluateHighRisksIn24hWindow, analyzeForecastRisks } = await import('../src/risk_analyzer.js');
+    const { evaluateHighRisksIn24hWindow, analyzeForecastRisks } = await import('../../src/monitoring/risk_analyzer.js');
     const originalDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
@@ -195,7 +200,7 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
       assert.strictEqual(benignEvents.length, 0);
 
       // 4. Only genuinely unknown signals are registered for future analysis
-      const { getDatabase } = await import('../src/log_database.js');
+      const { getDatabase } = await import('../../src/model/log_database.js');
       const rows = getDatabase().find('unknown_alert_sources');
       const texts = rows.map(row => row.raw_text).join(' | ');
       const severities = rows.map(row => row.raw_severity).join(' | ');

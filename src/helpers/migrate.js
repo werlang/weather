@@ -17,7 +17,7 @@ import { Sqlite } from './database_driver.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export const DEFAULT_MIGRATIONS_DIR = path.join(__dirname, '../migrations');
+export const DEFAULT_MIGRATIONS_DIR = path.join(__dirname, '../../migrations');
 
 /**
  * Splits SQL migration source into ordered statements, respecting

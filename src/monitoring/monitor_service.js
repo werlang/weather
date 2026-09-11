@@ -14,9 +14,9 @@ import {
     getSurroundingCities,
     getRegionalRiskWarnings,
     getRegionalForecasts
-} from './inmet_client.js';
+} from '../clients/inmet_client.js';
 
-import { getDefesaCivilTelemetry } from './defesa_civil_client.js';
+import { getDefesaCivilTelemetry } from '../clients/defesa_civil_client.js';
 
 import {
     parseForecastDate,
@@ -36,7 +36,7 @@ import {
     getSystemSetting,
     loadAllSettings,
     cleanupOldLogs
-} from './log_database.js';
+} from '../model/log_database.js';
 
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
 

@@ -39,7 +39,7 @@
       "expected_criteria": [
         "Uses Docker command with node:26-alpine",
         "Mounts workspace volume $(pwd):/app or /Users/pablowerlang/Documents/Workspaces/ifsul/weather:/app",
-        "Runs node src/monitor_regional_risks.js with --radius=100",
+        "Runs node scripts/monitor_regional_risks.js with --radius=100",
         "Mentions constraint of no host Node/Python"
       ]
     }

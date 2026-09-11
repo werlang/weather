@@ -1,17 +1,32 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+
+// Keep unit tests hermetic: the bot constructor syncs admins from the default
+// database path, which must never be the developer's real database file.
+process.env.DB_PATH = ':memory:';
 import {
     parseTelegramAdminChatIds,
     parseTelegramConfig,
     splitTelegramMessage,
     TelegramBotClient,
     TELEGRAM_MAX_MESSAGE_LENGTH
-} from '../src/telegram.js';
+} from '../../src/bot/telegram.js';
 import {
-    WeatherTelegramBot,
+    WeatherTelegramBot
+} from '../../src/bot/telegram_bot.js';
+import {
     INMET_SEVERITY_OPTIONS,
     DEFESA_CIVIL_SEVERITY_OPTIONS
-} from '../src/telegram_bot.js';
+} from '../../src/bot/presentation.js';
+import {
+    buildMainMenuKeyboard,
+    buildSettingsKeyboard,
+    buildIntervalKeyboard,
+    buildRadiusKeyboard,
+    buildInmetLevelKeyboard,
+    buildDefesaCivilLevelKeyboard,
+    buildAlertActionKeyboard
+} from '../../src/bot/keyboards.js';
 
 function createFakeBot() {
     const bot = {
@@ -117,7 +132,7 @@ describe('Telegram configuration and wrapper', () => {
 
 describe('Weather Telegram bot presentation & keyboards', () => {
     it('builds interactive button keyboards with expected independent institute options', () => {
-        const mainKb = WeatherTelegramBot.buildMainMenuKeyboard();
+        const mainKb = buildMainMenuKeyboard();
         assert.ok(mainKb);
         assert.ok(Array.isArray(mainKb.inline_keyboard));
         assert.ok(mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:status')));
@@ -128,7 +143,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.ok(!mainKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:chatid')));
 
         // Settings buttons must show the current color circle of each provider.
-        const settingsKb = WeatherTelegramBot.buildSettingsKeyboard({
+        const settingsKb = buildSettingsKeyboard({
             inmetMinSeverity: 'RED',
             defesaCivilMinSeverity: 'ORANGE'
         });
@@ -137,17 +152,17 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:inmet_level' && btn.text.includes('🔴 Vermelho'))));
         assert.ok(settingsKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:defesa_civil_level' && btn.text.includes('🟠 Laranja'))));
 
-        const intervalKb = WeatherTelegramBot.buildIntervalKeyboard(15);
+        const intervalKb = buildIntervalKeyboard(15);
         assert.ok(intervalKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('15 min') && btn.text.includes('✅'))));
 
-        const radiusKb = WeatherTelegramBot.buildRadiusKeyboard(50);
+        const radiusKb = buildRadiusKeyboard(50);
         assert.ok(radiusKb.inline_keyboard.some(row => row.some(btn => btn.text.includes('50 km') && btn.text.includes('✅'))));
 
-        const inmetKb = WeatherTelegramBot.buildInmetLevelKeyboard('RED');
+        const inmetKb = buildInmetLevelKeyboard('RED');
         assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:RED' && btn.text.includes('✅'))));
         assert.ok(inmetKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_inmet:OFF')));
 
-        const dcKb = WeatherTelegramBot.buildDefesaCivilLevelKeyboard('ORANGE');
+        const dcKb = buildDefesaCivilLevelKeyboard('ORANGE');
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:ORANGE' && btn.text.includes('✅'))));
         assert.ok(dcKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'set_dc:OFF')));
 
@@ -257,7 +272,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
     });
 
     it('builds alert action tray and renders UI visual components properly', async () => {
-        const { renderSeverityBadge, BOT_COMMANDS } = await import('../src/telegram_bot.js');
+        const { renderSeverityBadge, BOT_COMMANDS } = await import('../../src/bot/presentation.js');
 
         // Severity badge
         assert.match(renderSeverityBadge('Grande Perigo'), /🔴 GRANDE PERIGO/);
@@ -273,7 +288,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.match(renderSeverityBadge('YELLOW'), /🟡 PERIGO POTENCIAL/);
 
         // Alert action keyboard
-        const alertKb = WeatherTelegramBot.buildAlertActionKeyboard();
+        const alertKb = buildAlertActionKeyboard();
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:active_alerts')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'menu:main')));
 
@@ -334,7 +349,7 @@ describe('Weather Telegram bot presentation & keyboards', () => {
     });
 
     it('aggregates per-city alerts and respects the chosen threat level', async () => {
-        const { aggregateRiskEvents } = await import('../src/risk_analyzer.js');
+        const { aggregateRiskEvents } = await import('../../src/monitoring/risk_analyzer.js');
         const events = [
             { source: 'FORECAST_ANALYSIS', type: 'Geada / Frio Típico de Inverno', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', affectedCities: ['Charqueadas'], timeframe: 'Janela de 24h (21/08/2026, manhã)', triggerReason: 'x', details: 'Temp. Mínima: 3°C em Charqueadas' },
             { source: 'FORECAST_ANALYSIS', type: 'Geada / Frio Típico de Inverno', severity: 'MODERATE', colorTier: 'ORANGE', emoji: '🟠', affectedCities: ['Eldorado do Sul'], timeframe: 'Janela de 24h (21/08/2026, manhã)', triggerReason: 'x', details: 'Temp. Mínima: 4°C em Eldorado do Sul' },
@@ -396,8 +411,8 @@ describe('Weather Telegram bot presentation & keyboards', () => {
     });
 
     it('registers bot commands with Telegram API menu autocomplete', async () => {
-        const { TelegramBotClient } = await import('../src/telegram.js');
-        const { WeatherTelegramBot } = await import('../src/telegram_bot.js');
+        const { TelegramBotClient } = await import('../../src/bot/telegram.js');
+        const { WeatherTelegramBot } = await import('../../src/bot/telegram_bot.js');
         const fakeBot = createFakeBot();
         let registeredCommands = null;
         fakeBot.api.setMyCommands = async cmds => { registeredCommands = cmds; };

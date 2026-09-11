@@ -31,18 +31,18 @@ docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test
 ### Run a Specific Test File
 ```bash
 # INMET Client unit tests
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/inmet_client.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/clients/inmet_client.test.js
 
 # 24h Risk Monitoring Service unit tests
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/monitor_service.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/monitoring/monitor_service.test.js
 
 # Telegram wrapper & bot unit tests
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/telegram.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test tests/bot/telegram.test.js
 ```
 
 ### Run Tests Matching a Name Pattern
 ```bash
-docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test --test-name-pattern="24-Hour" tests/monitor_service.test.js
+docker run --rm -v $(pwd):/app -w /app node:26-alpine node --test --test-name-pattern="24-Hour" tests/monitoring/monitor_service.test.js
 ```
 
 ---
@@ -53,12 +53,12 @@ Follow the strict three-phase loop for any behavior change or bug fix:
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ 1. RED: Write failing unit test in tests/*.test.js      │
+│ 1. RED: Write failing unit test in tests/<group>/*.test.js      │
 │    Run test in Docker -> Witness expected failure      │
 └──────────────────────────┬─────────────────────────────┘
                            │
 ┌──────────────────────────▼─────────────────────────────┐
-│ 2. GREEN: Write minimal code in src/*.js               │
+│ 2. GREEN: Write minimal code in src/<group>/*.js               │
 │    Run test in Docker -> Verify suite turns green      │
 └──────────────────────────┬─────────────────────────────┘
                            │

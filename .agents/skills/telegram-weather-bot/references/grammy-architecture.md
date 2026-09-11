@@ -4,8 +4,8 @@
 
 | File | Primary Responsibility |
 | :--- | :--- |
-| `src/telegram.js` | Direct grammY wrapper. Parses `TELEGRAM_BOT_TOKEN` (admin is DB `admin_users` bootstrap), provides `splitMessage(text, 4096)`, `sendToAdmins(text)`, `start({ onStart })`, and `stop(signal)`. |
-| `src/telegram_bot.js` | High-level OOP bot layer (`WeatherTelegramBot`). Manages interactive menus, inline keyboards, visual gauges, card templates, command routes, and `sendHighRiskAlerts` / `createAlertCallback`. |
+| `src/bot/telegram.js` | Direct grammY wrapper. Parses `TELEGRAM_BOT_TOKEN` (admin is DB `admin_users` bootstrap), provides `splitMessage(text, 4096)`, `sendToAdmins(text)`, `start({ onStart })`, and `stop(signal)`. |
+| `src/bot/telegram_bot.js` | High-level OOP bot layer (`WeatherTelegramBot`). Manages interactive menus, inline keyboards, visual gauges, card templates, command routes, and `sendHighRiskAlerts` / `createAlertCallback`. |
 | `src/weather_bot.js` | Process composition entry point. Initializes `WeatherTelegramBot`, binds alert callback to `startMonitoringService`, and coordinates graceful process exit. |
 
 ---
@@ -33,7 +33,7 @@ Fallback  | Admin Only         | Friendly guidance with main dashboard inline bu
 To test bot command responses and alert delivery without contacting the Telegram Bot API servers, use fake bot client objects:
 
 ```javascript
-import { WeatherTelegramBot } from '../src/telegram_bot.js';
+import { WeatherTelegramBot } from '../src/bot/telegram_bot.js';
 
 // In-memory test client implementing TelegramBotClient interface
 const recordedMessages = [];

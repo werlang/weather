@@ -9,14 +9,14 @@ This guide provides operational runbooks for developing, running, testing, and m
 | Task | Command |
 | :--- | :--- |
 | **Run Unit Tests** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine npm test` |
-| **Regional CLI Report (50km)** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js` |
-| **Regional CLI Report (100km)** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine node src/monitor_regional_risks.js 100` |
+| **Regional CLI Report (50km)** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js` |
+| **Regional CLI Report (100km)** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine node scripts/monitor_regional_risks.js 100` |
 | **Console Monitor Daemon** | `docker run --rm -v $(pwd):/app -w /app node:26-alpine npm run monitor:console` |
 | **Production Daemon (Start)** | `docker compose up -d --build` |
 | **Production Daemon (Logs)** | `docker compose logs -f app` |
 | **Production Daemon (Stop)** | `docker compose down` |
 | **Development Stack (Start)** | `docker compose -f compose.dev.yaml up -d --build` |
-| **Development Stack (Exec)** | `docker compose -f compose.dev.yaml exec app node src/monitor_regional_risks.js 75` |
+| **Development Stack (Exec)** | `docker compose -f compose.dev.yaml exec app node scripts/monitor_regional_risks.js 75` |
 
 ---
 

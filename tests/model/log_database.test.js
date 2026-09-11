@@ -13,8 +13,8 @@ import {
     getSystemSetting,
     loadAllSettings,
     closeDatabase
-} from '../src/log_database.js';
-import { httpGet } from '../src/inmet_client.js';
+} from '../../src/model/log_database.js';
+import { httpGet } from '../../src/clients/inmet_client.js';
 
 describe('SQLite Log Database Schema & Basics', () => {
     let testDb;

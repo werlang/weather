@@ -9,9 +9,9 @@
  */
 
 import { InlineKeyboard, splitTelegramMessage } from './telegram.js';
-import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring, getLastScanSnapshot } from './monitor_service.js';
-import { getFetchStats, saveSystemSetting } from './log_database.js';
-import { aggregateRiskEvents, normalizeSeverityTier, getAlertTypeLabel, ALERT_CATEGORIES } from './risk_analyzer.js';
+import { onHighRiskEventDetected, parseMonitorConfig, performRegionalRiskMonitoring, getLastScanSnapshot } from '../monitoring/monitor_service.js';
+import { getFetchStats, saveSystemSetting } from '../model/log_database.js';
+import { aggregateRiskEvents, normalizeSeverityTier, getAlertTypeLabel, ALERT_CATEGORIES } from '../monitoring/risk_analyzer.js';
 import {
     INVITE_CODE_REGEX,
     normalizeInviteCode,
@@ -22,115 +22,39 @@ import {
     getPersistedAdminChatIds,
     addPersistedAdminChatId,
     clearInviteCode
-} from './admin_store.js';
+} from '../model/admin_store.js';
+import { getAlertEmailRecipient, getEmailService } from '../helpers/email_client.js';
+import {
+    DEFAULT_EMAIL_CUSTOM_MESSAGE,
+    getEmailCustomMessage,
+    saveEmailCustomMessage,
+    renderAlertEmail
+} from './email_templates.js';
+import {
+    CARD_HEADER,
+    CARD_DIVIDER,
+    getTierBadge,
+    BOT_COMMANDS,
+    renderSeverityBadge,
+    buildRegularWelcomeMessage
+} from './presentation.js';
+import {
+    buildMainMenuKeyboard,
+    buildRegularKeyboard,
+    buildSettingsKeyboard,
+    buildAdminsKeyboard,
+    buildCategoriesKeyboard,
+    buildCategoryLevelKeyboard,
+    buildIntervalKeyboard,
+    buildRadiusKeyboard,
+    buildInmetLevelKeyboard,
+    buildDefesaCivilLevelKeyboard,
+    buildAlertActionKeyboard,
+    buildActiveAlertsKeyboard,
+    buildEmailComposeKeyboard
+} from './keyboards.js';
 
 
-/**
- * Unicode visual divider constants for high-contrast card UI.
- */
-export const CARD_HEADER = '━━━━━━━━━━━━━━━━━━━━━━━━━';
-export const CARD_DIVIDER = '─────────────────────────';
-
-
-
-
-/**
- * INMET independent severity options.
- */
-export const INMET_SEVERITY_OPTIONS = [
-    { id: 'RED', label: '🔴 Vermelho (Grande Perigo)', desc: 'Apenas alertas extremos com risco à vida e bens.' },
-    { id: 'ORANGE', label: '🟠 Laranja (Perigo) ou superior', desc: 'Inclui tempestades e chuvas intensas moderadas/severas.' },
-    { id: 'YELLOW', label: '🟡 Amarelo (Perigo Potencial) ou superior', desc: 'Modo informativo amplo para qualquer aviso.' },
-    { id: 'OFF', label: '🚫 Desativar Alertas INMET', desc: 'Não emite alertas automáticos originados do INMET.' }
-];
-
-/**
- * Defesa Civil RS independent severity options.
- */
-export const DEFESA_CIVIL_SEVERITY_OPTIONS = [
-    { id: 'RED', label: '🔴 Vermelho (Alerta Máximo)', desc: 'Precipitação torrencial extrema e inundações iminentes.' },
-    { id: 'ORANGE', label: '🟠 Laranja (Alerta / Severo) ou superior', desc: 'Chuva >= 30mm/h, ventos >= 75km/h, subida rápida do Jacuí.' },
-    { id: 'YELLOW', label: '🟡 Amarelo (Atenção) ou superior', desc: 'Chuva moderada >= 15mm/h ou ventos >= 50km/h.' },
-    { id: 'OFF', label: '🚫 Desativar Alertas Defesa Civil', desc: 'Não emite alertas automáticos da Defesa Civil RS.' }
-];
-
-/**
- * Alert-category independent severity options (same 4-tier model as institutes).
- */
-export const CATEGORY_SEVERITY_OPTIONS = [
-    { id: 'RED', label: '🔴 Vermelho (Grande Perigo)', desc: 'Apenas eventos críticos com risco elevado.' },
-    { id: 'ORANGE', label: '🟠 Laranja (Perigo) ou superior', desc: 'Inclui eventos moderados a severos.' },
-    { id: 'YELLOW', label: '🟡 Amarelo (Perigo Potencial) ou superior', desc: 'Modo informativo para qualquer severidade.' },
-    { id: 'OFF', label: '🚫 Desativado', desc: 'Silencia todos os alertas desta categoria.' }
-];
-
-/**
- * Formats a severity tier into a readable emoji badge.
- * 
- * @param {string} tier 
- * @returns {string}
- */
-export function getTierBadge(tier) {
-    const normalized = String(tier || '').toUpperCase();
-    if (normalized === 'RED') return '🔴 Vermelho (Grande Perigo)';
-    if (normalized === 'ORANGE') return '🟠 Laranja (Alerta / Perigo)';
-    if (normalized === 'YELLOW') return '🟡 Amarelo (Atenção / Potencial)';
-    return '🚫 Desativado';
-}
-
-
-/**
- * Maps a severity tier to its short colored circle badge for compact menu buttons.
- *
- * @param {string} tier
- * @returns {string}
- */
-export function getTierShortBadge(tier) {
-    const normalized = String(tier || '').toUpperCase();
-    if (normalized === 'RED') return '🔴 Vermelho';
-    if (normalized === 'ORANGE') return '🟠 Laranja';
-    if (normalized === 'YELLOW') return '🟡 Amarelo';
-    return '🚫 Desativado';
-}
-
-
-/**
- * Standard Telegram Bot command menu definition for autocomplete.
- */
-export const BOT_COMMANDS = [
-    { command: 'start', description: '🌤️ Painel meteorológico e menu interativo' },
-    { command: 'menu', description: '🌤️ Abrir painel principal' },
-    { command: 'status', description: '📊 Status do monitor e do banco de dados' },
-    { command: 'alertas', description: '🚨 Avisos e alertas ativos (INMET + Defesa Civil RS)' },
-    { command: 'config', description: '⚙️ Ajustes de intervalo, raio e alertas' },
-    { command: 'help', description: '📖 Ajuda e guia operacional' }
-];
-
-/**
- * Maps a severity string or canonical tier to a high-contrast visual badge.
- * Understands Portuguese severity names, canonical tiers (RED/ORANGE/YELLOW),
- * and the analyzer's English gradings (HIGH/MODERATE/LOW).
- *
- * @param {string} severity
- * @returns {string}
- */
-export function renderSeverityBadge(severity = '') {
-    const lower = String(severity).toLowerCase();
-    const upper = String(severity).toUpperCase();
-    if (upper === 'UNKNOWN' || lower.includes('não classificad')) {
-        return '❓ DESCONHECIDO — REVISAR';
-    }
-    if (upper === 'RED' || lower.includes('grande perigo') || lower.includes('máximo') || lower.includes('extremo') || lower.includes('red') || lower.includes('high')) {
-        return '🔴 GRANDE PERIGO (CRÍTICO)';
-    }
-    if (upper === 'YELLOW' || lower.includes('potencial') || lower.includes('amarelo') || lower.includes('yellow') || lower.includes('atenção') || lower.includes('low')) {
-        return '🟡 PERIGO POTENCIAL (MODERADO)';
-    }
-    if (upper === 'ORANGE' || lower.includes('perigo') || lower.includes('laranja') || lower.includes('orange') || lower.includes('alerta') || lower.includes('moderate')) {
-        return '🟠 PERIGO (SEVERO)';
-    }
-    return '🟢 NORMAL / MONITORAMENTO';
-}
 
 /**
  * Resolves an event's canonical alert tier for the message-level presentation.
@@ -197,40 +121,6 @@ function getAlertPresentation(events) {
     };
 }
 
-/**
- * Invite-code prompt shown to non-admin users.
- * Also serves as friendly hello for regular users — includes last-scan hint.
- *
- * @returns {string}
- */
-export function buildInviteRequiredMessage() {
-    return buildRegularWelcomeMessage();
-}
-
-/**
- * Builds friendly hello for regular (non-admin) users with last-scan hint.
- * Keeps "restrito ao administrador" phrase for backward compat with existing tests
- * and clear permission messaging.
- *
- * @returns {string}
- */
-export function buildRegularWelcomeMessage() {
-    return [
-        '👋 Olá! Bem-vindo ao Monitor Meteorológico — Charqueadas / RS',
-        CARD_HEADER,
-        'Sou o bot de monitoramento 24/7 de riscos (INMET + Defesa Civil RS).',
-        'Este bot está restrito ao administrador configurado para ajustes e varreduras ao vivo,',
-        'mas você pode consultar os últimos alertas já verificados sem gerar nova varredura.',
-        '',
-        '🔑 Para acesso completo, peça a um administrador um código de convite',
-        '   em: ⚙️ Configurações → 👥 Convidar Administrador',
-        '   O código tem 8 caracteres A-Z0-9 e expira em 5 minutos (uso único).',
-        '   Basta colar o código aqui como mensagem (pode estar dentro de frase).',
-        '',
-        CARD_DIVIDER,
-        '💡 Toque em “🚨 Ver Últimos Alertas” abaixo para ver o último scan.'
-    ].join('\n');
-}
 
 /**
  * Encapsulates the Weather Telegram bot UI, lifecycle, and callback routing.
@@ -243,14 +133,24 @@ export class WeatherTelegramBot {
      * @param {object} [options.monitorService] - Running monitor service instance for dynamic config updates.
      * @param {() => string} [options.getStatus] - Custom status text provider.
      * @param {Console} [options.logger=console] - Logger instance.
+     * @param {object|null} [options.emailService] - Injected mail service (defaults to lazy singleton).
+     * @param {object|null} [options.emailStore] - Custom-message store seam `{ getCustomMessage, saveCustomMessage }`.
+     * @param {() => object|null} [options.getSnapshot] - Last-scan snapshot provider seam.
      */
-    constructor({ telegram, monitorService = null, getStatus = null, logger = console }) {
+    constructor({ telegram, monitorService = null, getStatus = null, logger = console, emailService = null, emailStore = null, getSnapshot = null }) {
         if (!telegram) throw new Error('A Telegram bot client is required.');
 
         this.telegram = telegram;
         this.monitorService = monitorService;
         this.getStatus = getStatus;
         this.logger = logger;
+        this.emailService = emailService;
+        this.emailStore = emailStore || {
+            getCustomMessage: () => getEmailCustomMessage(),
+            saveCustomMessage: message => saveEmailCustomMessage(message)
+        };
+        this.getSnapshot = getSnapshot || (() => getLastScanSnapshot());
+        this._emailEditPending = new Set();
         this._adminCache = { ids: null, expires: 0 };
 
         this.localState = parseMonitorConfig();
@@ -390,7 +290,7 @@ export class WeatherTelegramBot {
      */
     replyInviteRequired(ctx) {
         return ctx.reply(buildRegularWelcomeMessage(), {
-            reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+            reply_markup: buildRegularKeyboard()
         });
     }
 
@@ -426,7 +326,7 @@ export class WeatherTelegramBot {
                 '',
                 CARD_DIVIDER,
                 '🔒 O código foi invalidado (uso único).'
-            ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+            ].join('\n'), { reply_markup: buildMainMenuKeyboard() });
         }
         if (result.reason === 'already_admin') {
             this.telegram.addAdminChatId(chatId);
@@ -434,7 +334,7 @@ export class WeatherTelegramBot {
                 'ℹ️ Você já é administrador.',
                 CARD_HEADER,
                 'Use /start para abrir o painel principal.'
-            ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+            ].join('\n'), { reply_markup: buildMainMenuKeyboard() });
         }
         if (result.reason === 'expired') {
             return ctx.reply([
@@ -492,14 +392,6 @@ export class WeatherTelegramBot {
      *
      * @returns {InlineKeyboard}
      */
-    static buildMainMenuKeyboard() {
-        return new InlineKeyboard()
-            .text('🔍 Status & Varredura', 'action:status')
-            .text('🚨 Alertas Ativos', 'action:active_alerts')
-            .row()
-            .text('⚙️ Configurações', 'menu:settings')
-            .text('❓ Ajuda & Comandos', 'action:help');
-    }
 
     /**
      * Builds the friendly keyboard for regular (non-admin) users.
@@ -507,12 +399,6 @@ export class WeatherTelegramBot {
      *
      * @returns {InlineKeyboard}
      */
-    static buildRegularKeyboard() {
-        return new InlineKeyboard()
-            .text('🚨 Ver Últimos Alertas', 'action:last_scan')
-            .row()
-            .text('ℹ️ Sobre o Bot', 'action:regular_about');
-    }
 
     /**
      * Builds the settings overview inline keyboard, showing the current color
@@ -525,26 +411,6 @@ export class WeatherTelegramBot {
      * @param {Record<string,string>} [config.categoryMinSeverities] - Per-category tier map.
      * @returns {InlineKeyboard}
      */
-    static buildSettingsKeyboard(config = {}) {
-        const total = Object.keys(ALERT_CATEGORIES).length;
-        const tierMap = config.categoryMinSeverities || {};
-        const enabledCount = Object.values(tierMap).filter(tier => normalizeSeverityTier(tier) !== 'OFF').length;
-        // If no map provided (should not happen), assume all active
-        const displayCount = Object.keys(tierMap).length === 0 ? total : enabledCount;
-        return new InlineKeyboard()
-            .text('⏱️ Alterar Intervalo', 'menu:interval')
-            .text('📍 Alterar Raio Regional', 'menu:radius')
-            .row()
-            .text(`🚨 Categorias de Alerta: ${displayCount}/${total}`, 'menu:categories')
-            .row()
-            .text(`🏛️ Limiar INMET: ${getTierShortBadge(config.inmetMinSeverity)}`, 'menu:inmet_level')
-            .row()
-            .text(`🛡️ Limiar Defesa Civil: ${getTierShortBadge(config.defesaCivilMinSeverity)}`, 'menu:defesa_civil_level')
-            .row()
-            .text('👥 Convidar Administrador', 'menu:admins')
-            .row()
-            .text('⬅️ Voltar ao Menu Principal', 'menu:main');
-    }
 
     /**
      * Builds the admin invite management keyboard.
@@ -553,16 +419,6 @@ export class WeatherTelegramBot {
      * @param {{ hasActiveCode: boolean }} [options]
      * @returns {InlineKeyboard}
      */
-    static buildAdminsKeyboard({ hasActiveCode = false } = {}) {
-        const kb = new InlineKeyboard();
-        kb.text('🎟️ Gerar Código de Convite (8 caracteres)', 'action:generate_invite').row();
-        if (hasActiveCode) {
-            kb.text('🔁 Regenerar Código', 'action:generate_invite').row();
-            kb.text('🚫 Revogar Código Ativo', 'action:revoke_invite').row();
-        }
-        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
     /**
      * Builds the alert-category selection keyboard with per-category intensity badges.
@@ -571,16 +427,6 @@ export class WeatherTelegramBot {
      * @param {Record<string,string>} [categoryMinSeverities] - Per-category tier map.
      * @returns {InlineKeyboard}
      */
-    static buildCategoriesKeyboard(categoryMinSeverities = {}) {
-        const kb = new InlineKeyboard();
-        for (const [categoryId, definition] of Object.entries(ALERT_CATEGORIES)) {
-            const tier = categoryMinSeverities[categoryId] ?? 'YELLOW';
-            const badge = getTierShortBadge(tier);
-            kb.text(`${definition.emoji} ${definition.label}: ${badge}`, `menu:category:${categoryId}`).row();
-        }
-        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
     /**
      * Builds the intensity level selection keyboard for a single alert category.
@@ -589,17 +435,6 @@ export class WeatherTelegramBot {
      * @param {string} [currentLevel='YELLOW'] - Current tier for this category.
      * @returns {InlineKeyboard}
      */
-    static buildCategoryLevelKeyboard(categoryId, currentLevel = 'YELLOW') {
-        const kb = new InlineKeyboard();
-        const norm = String(currentLevel || '').toUpperCase();
-        CATEGORY_SEVERITY_OPTIONS.forEach(opt => {
-            const isCurrent = norm === opt.id;
-            const label = `${isCurrent ? '✅ ' : ''}${opt.label}`;
-            kb.text(label, `set_cat:${categoryId}:${opt.id}`).row();
-        });
-        kb.text('⬅️ Voltar às Categorias', 'menu:categories');
-        return kb;
-    }
 
     /**
      * Renders the alert-categories management text with per-category tier badges.
@@ -900,20 +735,6 @@ export class WeatherTelegramBot {
      * @param {number} [currentMinutes=15]
      * @returns {InlineKeyboard}
      */
-    static buildIntervalKeyboard(currentMinutes = 15) {
-        const intervals = [5, 15, 30, 60];
-        const kb = new InlineKeyboard();
-
-        intervals.forEach((mins, idx) => {
-            const isCurrent = Math.round(currentMinutes) === mins;
-            const label = `${isCurrent ? '✅ ' : '⏱️ '}${mins} min`;
-            kb.text(label, `set_interval:${mins}`);
-            if (idx % 2 === 1) kb.row();
-        });
-
-        kb.row().text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
     /**
      * Builds the radius selection inline keyboard with active indicator.
@@ -921,25 +742,6 @@ export class WeatherTelegramBot {
      * @param {number} [currentRadius=50]
      * @returns {InlineKeyboard}
      */
-    static buildRadiusKeyboard(currentRadius = 50) {
-        const radii = [
-            { km: 25, name: '25 km' },
-            { km: 50, name: '50 km' },
-            { km: 75, name: '75 km' },
-            { km: 100, name: '100 km' }
-        ];
-        const kb = new InlineKeyboard();
-
-        radii.forEach((r, idx) => {
-            const isCurrent = Math.round(currentRadius) === r.km;
-            const label = `${isCurrent ? '✅ ' : '📍 '}${r.name}`;
-            kb.text(label, `set_radius:${r.km}`);
-            if (idx % 2 === 1) kb.row();
-        });
-
-        kb.row().text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
     /**
      * Builds the INMET severity level selection keyboard.
@@ -947,17 +749,6 @@ export class WeatherTelegramBot {
      * @param {string} [currentLevel='RED']
      * @returns {InlineKeyboard}
      */
-    static buildInmetLevelKeyboard(currentLevel = 'RED') {
-        const kb = new InlineKeyboard();
-        const norm = String(currentLevel || '').toUpperCase();
-        INMET_SEVERITY_OPTIONS.forEach(opt => {
-            const isCurrent = norm === opt.id;
-            const label = `${isCurrent ? '✅ ' : ''}${opt.label}`;
-            kb.text(label, `set_inmet:${opt.id}`).row();
-        });
-        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
     /**
      * Builds the Defesa Civil RS severity level selection keyboard.
@@ -965,29 +756,170 @@ export class WeatherTelegramBot {
      * @param {string} [currentLevel='ORANGE']
      * @returns {InlineKeyboard}
      */
-    static buildDefesaCivilLevelKeyboard(currentLevel = 'ORANGE') {
-        const kb = new InlineKeyboard();
-        const norm = String(currentLevel || '').toUpperCase();
-        DEFESA_CIVIL_SEVERITY_OPTIONS.forEach(opt => {
-            const isCurrent = norm === opt.id;
-            const label = `${isCurrent ? '✅ ' : ''}${opt.label}`;
-            kb.text(label, `set_dc:${opt.id}`).row();
-        });
-        kb.text('⬅️ Voltar às Configurações', 'menu:settings');
-        return kb;
-    }
 
 
     /**
      * Builds the action tray keyboard attached to broadcast alerts.
+     * Includes the admin email comunicado action driven by the last scan.
      *
      * @returns {InlineKeyboard}
      */
-    static buildAlertActionKeyboard() {
-        return new InlineKeyboard()
-            .text('🚨 Alertas Ativos', 'action:active_alerts')
-            .row()
-            .text('🏠 Abrir Painel Principal', 'menu:main');
+
+    /**
+     * Builds the on-demand active-alerts keyboard with the email action.
+     *
+     * @param {string} [refreshLabel='🔄 Atualizar'] - Refresh button label.
+     * @returns {InlineKeyboard}
+     */
+
+    /**
+     * Builds the email compose keyboard: send with the current message,
+     * edit it, skip it, or go back to the alerts.
+     *
+     * @param {boolean} [canSend=true] - Whether active alerts exist.
+     * @returns {InlineKeyboard}
+     */
+
+    /**
+     * Renders the email compose preview from the last scan snapshot.
+     * Shows hazard summary, impacted zone, recipient, and the current
+     * institution message (default on first use, last saved afterwards).
+     *
+     * @returns {{ canSend: boolean, events: Array<object>, customMessage: string, recipient: string, text: string }}
+     */
+    renderEmailCompose() {
+        let snapshot = null;
+        try {
+            snapshot = this.getSnapshot();
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] renderEmailCompose snapshot error:', err.message);
+        }
+        const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+        const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
+        if (events.length === 0) {
+            return {
+                canSend: false,
+                events: [],
+                customMessage: '',
+                recipient,
+                text: [
+                    '📧 COMUNICADO POR E-MAIL',
+                    CARD_HEADER,
+                    '🟢 Nenhum alerta ativo no último scan — nada a comunicar.',
+                    '',
+                    'Aguarde o próximo ciclo automático ou toque em Voltar para atualizar os alertas.'
+                ].join('\n')
+            };
+        }
+        let customMessage = DEFAULT_EMAIL_CUSTOM_MESSAGE;
+        try {
+            customMessage = this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] renderEmailCompose custom message error:', err.message);
+        }
+        const aggregated = aggregateRiskEvents(events);
+        const uniqueCities = [...new Set(events.flatMap(event => event.affectedCities || []))];
+        const lines = [
+            '📧 COMUNICADO POR E-MAIL',
+            CARD_HEADER,
+            `🚨 ${aggregated.length} tipo(s) agrupados — ${events.length} ocorrência(s) em ${uniqueCities.length} município(s)`,
+            `📍 Zona impactada: ${uniqueCities.join(', ') || 'Não informada'}`,
+            `👥 Destinatário: ${recipient}`,
+            ''
+        ];
+        aggregated.forEach((event, index) => {
+            lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico'}`);
+            lines.push(`   Severidade: ${renderSeverityBadge(event.severity)}`);
+        });
+        lines.push(
+            '',
+            CARD_DIVIDER,
+            '💬 Mensagem da instituição (será citada no e-mail):',
+            `"${customMessage}"`,
+            '',
+            'Toque em Enviar, edite a mensagem, ou envie sem mensagem personalizada.'
+        );
+        return { canSend: true, events, customMessage, recipient, text: lines.join('\n') };
+    }
+
+    /**
+     * Sends the alert comunicado email for the last scan snapshot.
+     * All failures are contained and reported as `{ ok: false }` — the bot
+     * loop never throws on mail errors.
+     *
+     * @param {object} [options]
+     * @param {boolean} [options.withCustomMessage=true] - Quote the institution message.
+     * @returns {Promise<{ ok: boolean, recipient?: string, subject?: string, hazardCount?: number, messageId?: string, previewUrl?: string, error?: string }>}
+     */
+    async sendAlertEmail({ withCustomMessage = true } = {}) {
+        try {
+            const snapshot = this.getSnapshot();
+            const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+            if (events.length === 0) {
+                return { ok: false, error: 'Nenhum alerta ativo no último scan.' };
+            }
+            let customMessage = '';
+            if (withCustomMessage) {
+                try {
+                    customMessage = this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
+                } catch {
+                    customMessage = DEFAULT_EMAIL_CUSTOM_MESSAGE;
+                }
+            }
+            const rendered = renderAlertEmail({ events, customMessage });
+            const service = this.emailService || getEmailService();
+            const recipient = getAlertEmailRecipient();
+            const result = await service.send({
+                to: recipient,
+                subject: rendered.subject,
+                mjml: rendered.mjml,
+                text: rendered.text
+            });
+            return {
+                ok: true,
+                recipient,
+                subject: rendered.subject,
+                hazardCount: rendered.hazardCount,
+                messageId: result?.messageId,
+                ...(result?.previewUrl ? { previewUrl: result.previewUrl } : {})
+            };
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] sendAlertEmail failed:', err.message);
+            return { ok: false, error: err.message };
+        }
+    }
+
+    /**
+     * Renders the email send result for display to the administrator.
+     *
+     * @param {{ ok: boolean, recipient?: string, subject?: string, messageId?: string, previewUrl?: string, error?: string }} result - Send result.
+     * @returns {string} Result message.
+     */
+    static renderEmailResult(result) {
+        if (result?.ok) {
+            const lines = [
+                '✅ E-MAIL ENVIADO',
+                CARD_HEADER,
+                `👥 Para: ${result.recipient || '—'}`,
+                `📨 Assunto: ${result.subject || '—'}`,
+                `🚨 Alertas comunicados: ${result.hazardCount ?? '—'}`,
+                ''
+            ];
+            if (result.previewUrl) {
+                lines.push(`🔍 Prévia (ambiente dev):`, result.previewUrl, '');
+            } else if (result.messageId) {
+                lines.push(`🆔 ID da mensagem: ${result.messageId}`, '');
+            }
+            lines.push(CARD_DIVIDER, '💡 A mensagem da instituição foi citada no corpo do e-mail junto ao resumo do perigo e à zona impactada.');
+            return lines.join('\n');
+        }
+        return [
+            '❌ FALHA AO ENVIAR E-MAIL',
+            CARD_HEADER,
+            `Motivo: ${result?.error || 'erro desconhecido'}`,
+            '',
+            'Verifique as variáveis SMTP_* / EMAIL_TESTING no .env e tente novamente.'
+        ].join('\n');
     }
 
     // =========================================================================
@@ -1242,7 +1174,7 @@ export class WeatherTelegramBot {
     async sendHighRiskAlerts(events, sentAt = new Date()) {
         const delivery = await this.telegram.sendToAdmins(
             WeatherTelegramBot.formatHighRiskAlert(events, sentAt),
-            { reply_markup: WeatherTelegramBot.buildAlertActionKeyboard() }
+            { reply_markup: buildAlertActionKeyboard() }
         );
 
         if (delivery?.failed?.length > 0) {
@@ -1300,7 +1232,7 @@ export class WeatherTelegramBot {
                 return this.replyUnauthorized(ctx);
             }
             const text = this.renderMainMenu();
-            return ctx.reply(text, { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+            return ctx.reply(text, { reply_markup: buildMainMenuKeyboard() });
         };
 
         this.telegram.onCommand('start', handleStart);
@@ -1332,7 +1264,7 @@ export class WeatherTelegramBot {
         this.telegram.onCommand('status', async ctx => {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
             return ctx.reply(this.renderStatusReport(), {
-                reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                reply_markup: buildMainMenuKeyboard()
             });
         });
 
@@ -1340,7 +1272,7 @@ export class WeatherTelegramBot {
         this.telegram.onCommand('config', ctx => {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
             return ctx.reply(this.renderSettingsMenu(), {
-                reply_markup: WeatherTelegramBot.buildSettingsKeyboard(this.getConfig())
+                reply_markup: buildSettingsKeyboard(this.getConfig())
             });
         });
 
@@ -1349,9 +1281,7 @@ export class WeatherTelegramBot {
             if (!this.isAdmin(ctx)) return this.replyUnauthorized(ctx);
             const report = await this.renderActiveAlertsReport();
             const chunks = splitTelegramMessage(report);
-            const kb = new InlineKeyboard()
-                .text('🔄 Atualizar Alertas', 'action:active_alerts')
-                .text('⬅️ Menu', 'menu:main');
+            const kb = buildActiveAlertsKeyboard('🔄 Atualizar Alertas');
             for (let i = 0; i < chunks.length; i += 1) {
                 const isLast = i === chunks.length - 1;
                 // eslint-disable-next-line no-await-in-loop
@@ -1389,7 +1319,7 @@ export class WeatherTelegramBot {
             if (data === 'action:regular_about') {
                 await answer();
                 return ctx.editMessageText?.(this.renderRegularAbout(), {
-                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                    reply_markup: buildRegularKeyboard()
                 });
             }
             if (data === 'action:regular_help') {
@@ -1413,7 +1343,7 @@ export class WeatherTelegramBot {
             if (data === 'menu:regular_main') {
                 await answer();
                 return ctx.editMessageText?.(buildRegularWelcomeMessage(), {
-                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                    reply_markup: buildRegularKeyboard()
                 });
             }
             // Invite accept/reject — allowed for non-admin (invitee) via link or paste
@@ -1427,7 +1357,7 @@ export class WeatherTelegramBot {
                 if (this.isAdmin(ctx)) {
                     await answer('Você já é administrador');
                     return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
-                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                        reply_markup: buildMainMenuKeyboard()
                     });
                 }
                 const chatId = String(ctx.chat?.id);
@@ -1450,13 +1380,13 @@ export class WeatherTelegramBot {
                         '',
                         CARD_DIVIDER,
                         '🔒 O código foi invalidado (uso único).'
-                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+                    ].join('\n'), { reply_markup: buildMainMenuKeyboard() });
                 }
                 if (result.reason === 'already_admin') {
                     this.telegram.addAdminChatId(chatId);
                     await answer('Já é administrador');
                     return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
-                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                        reply_markup: buildMainMenuKeyboard()
                     });
                 }
                 if (result.reason === 'expired') {
@@ -1496,7 +1426,7 @@ export class WeatherTelegramBot {
                     '',
                     CARD_DIVIDER,
                     'Você continua com acesso de leitura aos últimos alertas via “🚨 Ver Últimos Alertas”.'
-                ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
+                ].join('\n'), { reply_markup: buildRegularKeyboard() });
             }
             if (data === 'action:bootstrap_accept') {
                 const chatId = String(ctx.chat?.id);
@@ -1508,12 +1438,12 @@ export class WeatherTelegramBot {
                         CARD_HEADER,
                         'Peça um código de convite ao administrador atual em:',
                         '⚙️ Configurações → 👥 Convidar Administrador'
-                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
+                    ].join('\n'), { reply_markup: buildRegularKeyboard() });
                 }
                 if (this.isAdmin(ctx)) {
                     await answer('Já é administrador');
                     return ctx.editMessageText?.('ℹ️ Você já é administrador.', {
-                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                        reply_markup: buildMainMenuKeyboard()
                     });
                 }
                 const username = ctx.from?.username || null;
@@ -1535,11 +1465,11 @@ export class WeatherTelegramBot {
                         '',
                         CARD_DIVIDER,
                         '🔒 Você pode agora convidar outros administradores em ⚙️ Configurações → 👥 Convidar.'
-                    ].join('\n'), { reply_markup: WeatherTelegramBot.buildMainMenuKeyboard() });
+                    ].join('\n'), { reply_markup: buildMainMenuKeyboard() });
                 }
                 await answer('Falha ao promover');
                 return ctx.editMessageText?.('❌ Falha ao se tornar administrador. Tente novamente.', {
-                    reply_markup: WeatherTelegramBot.buildRegularKeyboard()
+                    reply_markup: buildRegularKeyboard()
                 });
             }
             if (data === 'action:bootstrap_reject') {
@@ -1552,7 +1482,7 @@ export class WeatherTelegramBot {
                     '',
                     CARD_DIVIDER,
                     'Você pode mudar de ideia e usar /start novamente enquanto não houver administrador.'
-                ].join('\n'), { reply_markup: WeatherTelegramBot.buildRegularKeyboard() });
+                ].join('\n'), { reply_markup: buildRegularKeyboard() });
             }
 
             if (!this.isAdmin(ctx)) {
@@ -1568,7 +1498,7 @@ export class WeatherTelegramBot {
                     await answer();
                     const active = (() => { try { return getActiveInviteCode(); } catch { return null; } })();
                     return ctx.editMessageText?.(this.renderAdminsMenu(), {
-                        reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: !!active })
+                        reply_markup: buildAdminsKeyboard({ hasActiveCode: !!active })
                     });
                 },
                 'action:generate_invite': async () => {
@@ -1587,19 +1517,19 @@ export class WeatherTelegramBot {
                     clearInviteCode();
                     await answer('🚫 Código revogado.');
                     return ctx.editMessageText?.(this.renderAdminsMenu(), {
-                        reply_markup: WeatherTelegramBot.buildAdminsKeyboard({ hasActiveCode: false })
+                        reply_markup: buildAdminsKeyboard({ hasActiveCode: false })
                     });
                 },
                 'menu:main': async () => {
                     await answer();
                     return ctx.editMessageText?.(this.renderMainMenu(), {
-                        reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                        reply_markup: buildMainMenuKeyboard()
                     });
                 },
                 'menu:settings': async () => {
                     await answer();
                     return ctx.editMessageText?.(this.renderSettingsMenu(), {
-                        reply_markup: WeatherTelegramBot.buildSettingsKeyboard(config)
+                        reply_markup: buildSettingsKeyboard(config)
                     });
                 },
                 'menu:interval': async () => {
@@ -1612,7 +1542,7 @@ export class WeatherTelegramBot {
                         'Selecione a nova frequência de monitoramento:'
                     ].join('\n');
                     return ctx.editMessageText?.(text, {
-                        reply_markup: WeatherTelegramBot.buildIntervalKeyboard(config.intervalMinutes)
+                        reply_markup: buildIntervalKeyboard(config.intervalMinutes)
                     });
                 },
                 'menu:radius': async () => {
@@ -1625,7 +1555,7 @@ export class WeatherTelegramBot {
                         'Selecione o novo raio de varredura:'
                     ].join('\n');
                     return ctx.editMessageText?.(text, {
-                        reply_markup: WeatherTelegramBot.buildRadiusKeyboard(config.radiusKm)
+                        reply_markup: buildRadiusKeyboard(config.radiusKm)
                     });
                 },
                 'menu:inmet_level': async () => {
@@ -1638,7 +1568,7 @@ export class WeatherTelegramBot {
                         'Selecione o nível mínimo para acionamento de alertas do INMET:'
                     ].join('\n');
                     return ctx.editMessageText?.(text, {
-                        reply_markup: WeatherTelegramBot.buildInmetLevelKeyboard(config.inmetMinSeverity)
+                        reply_markup: buildInmetLevelKeyboard(config.inmetMinSeverity)
                     });
                 },
                 'menu:defesa_civil_level': async () => {
@@ -1651,13 +1581,13 @@ export class WeatherTelegramBot {
                         'Selecione o nível mínimo para acionamento de alertas da Defesa Civil:'
                     ].join('\n');
                     return ctx.editMessageText?.(text, {
-                        reply_markup: WeatherTelegramBot.buildDefesaCivilLevelKeyboard(config.defesaCivilMinSeverity)
+                        reply_markup: buildDefesaCivilLevelKeyboard(config.defesaCivilMinSeverity)
                     });
                 },
                 'menu:categories': async () => {
                     await answer();
                     return ctx.editMessageText?.(this.renderCategoriesMenu(config.categoryMinSeverities), {
-                        reply_markup: WeatherTelegramBot.buildCategoriesKeyboard(config.categoryMinSeverities)
+                        reply_markup: buildCategoriesKeyboard(config.categoryMinSeverities)
                     });
                 }
             };
@@ -1670,7 +1600,7 @@ export class WeatherTelegramBot {
                     await answer();
                     const currentTier = config.categoryMinSeverities?.[categoryId] ?? 'YELLOW';
                     return ctx.editMessageText?.(this.renderCategoryLevelMenu(categoryId, currentTier), {
-                        reply_markup: WeatherTelegramBot.buildCategoryLevelKeyboard(categoryId, currentTier)
+                        reply_markup: buildCategoryLevelKeyboard(categoryId, currentTier)
                     });
                 }
                 await answer();
@@ -1687,7 +1617,7 @@ export class WeatherTelegramBot {
                     const fresh = this.getConfig();
                     const freshTier = fresh.categoryMinSeverities?.[categoryId] || normalized;
                     return ctx.editMessageText?.(this.renderCategoryLevelMenu(categoryId, freshTier), {
-                        reply_markup: WeatherTelegramBot.buildCategoryLevelKeyboard(categoryId, freshTier)
+                        reply_markup: buildCategoryLevelKeyboard(categoryId, freshTier)
                     });
                 }
                 await answer();
@@ -1707,7 +1637,7 @@ export class WeatherTelegramBot {
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildIntervalKeyboard(updated.intervalMinutes)
+                    reply_markup: buildIntervalKeyboard(updated.intervalMinutes)
                 });
             }
 
@@ -1725,7 +1655,7 @@ export class WeatherTelegramBot {
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildRadiusKeyboard(updated.radiusKm)
+                    reply_markup: buildRadiusKeyboard(updated.radiusKm)
                 });
             }
 
@@ -1743,7 +1673,7 @@ export class WeatherTelegramBot {
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildInmetLevelKeyboard(updated.inmetMinSeverity)
+                    reply_markup: buildInmetLevelKeyboard(updated.inmetMinSeverity)
                 });
             }
 
@@ -1761,7 +1691,7 @@ export class WeatherTelegramBot {
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildDefesaCivilLevelKeyboard(updated.defesaCivilMinSeverity)
+                    reply_markup: buildDefesaCivilLevelKeyboard(updated.defesaCivilMinSeverity)
                 });
             }
 
@@ -1769,7 +1699,7 @@ export class WeatherTelegramBot {
             if (data === 'action:status') {
                 await answer('🔍 Verificando status e banco...');
                 return ctx.editMessageText?.(this.renderStatusReport(), {
-                    reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    reply_markup: buildMainMenuKeyboard()
                 });
             }
 
@@ -1777,9 +1707,7 @@ export class WeatherTelegramBot {
                 await answer('🚨 Consultando INMET e Defesa Civil...');
                 const report = await this.renderActiveAlertsReport();
                 const chunks = splitTelegramMessage(report);
-                const kb = new InlineKeyboard()
-                    .text('🔄 Atualizar', 'action:active_alerts')
-                    .text('⬅️ Menu', 'menu:main');
+                const kb = buildActiveAlertsKeyboard();
                 if (chunks.length === 1) {
                     return ctx.editMessageText?.(chunks[0], { reply_markup: kb });
                 }
@@ -1792,6 +1720,44 @@ export class WeatherTelegramBot {
                 return;
             }
 
+            if (data === 'action:email_compose') {
+                await answer('📧 Preparando comunicado…');
+                this._emailEditPending.delete(String(ctx.chat?.id));
+                const compose = this.renderEmailCompose();
+                return ctx.editMessageText?.(compose.text, {
+                    reply_markup: buildEmailComposeKeyboard(compose.canSend)
+                });
+            }
+
+            if (data === 'action:email_edit') {
+                await answer('✏️ Envie a nova mensagem');
+                this._emailEditPending.add(String(ctx.chat?.id));
+                return ctx.editMessageText?.([
+                    '✏️ EDITAR MENSAGEM DA INSTITUIÇÃO',
+                    CARD_HEADER,
+                    'Envie agora, como texto, a nova mensagem que será citada no e-mail.',
+                    'Exemplo: “Boa tarde comunidade academica. As aulas estão dispensadas no turno da noite de hoje devido à tempestade.”',
+                    '',
+                    'A nova mensagem passa a ser o padrão dos próximos comunicados.',
+                    CARD_DIVIDER,
+                    'Aguardando sua mensagem… (ou volte para cancelar)'
+                ].join('\n'), {
+                    reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:email_compose')
+                });
+            }
+
+            if (data === 'action:email_send' || data === 'action:email_send_plain') {
+                await answer('📧 Enviando e-mail…');
+                this._emailEditPending.delete(String(ctx.chat?.id));
+                const result = await this.sendAlertEmail({ withCustomMessage: data === 'action:email_send' });
+                return ctx.editMessageText?.(WeatherTelegramBot.renderEmailResult(result), {
+                    reply_markup: new InlineKeyboard()
+                        .text('📧 Voltar ao comunicado', 'action:email_compose')
+                        .row()
+                        .text('⬅️ Menu', 'menu:main')
+                });
+            }
+
             if (data === 'action:help') {
                 await answer();
                 const text = [
@@ -1799,11 +1765,12 @@ export class WeatherTelegramBot {
                     CARD_HEADER,
                     '• Status & Varredura: Diagnóstico em tempo real das métricas do serviço.',
                     '• Alertas Ativos: Varredura imediata dos avisos do INMET e alertas da Defesa Civil RS.',
+                    '• 📧 Enviar comunicado: Nos alertas, comunica o perigo e a zona impactada por e-mail com mensagem institucional editável.',
                     '• Configurações: Altere raio, intervalo, limiares e categorias de alerta por tipo de evento.'
                 ].join('\n');
 
                 return ctx.editMessageText?.(text, {
-                    reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                    reply_markup: buildMainMenuKeyboard()
                 });
             }
         });
@@ -1816,8 +1783,35 @@ export class WeatherTelegramBot {
                 if (inviteResult) return inviteResult;
                 return this.replyInviteRequired(ctx);
             }
+            // Pending institution-message edit for the email comunicado flow.
+            const chatId = String(ctx.chat?.id);
+            if (this._emailEditPending.has(chatId)) {
+                const text = String(ctx.message?.text || '').trim();
+                if (!text) {
+                    return ctx.reply('⚠️ Mensagem vazia — envie o texto da nova mensagem ou volte ao comunicado.', {
+                        reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:email_compose')
+                    });
+                }
+                let saved = false;
+                try {
+                    saved = this.emailStore.saveCustomMessage(text);
+                } catch (err) {
+                    this.logger.error?.('[telegram_bot] email message save failed:', err.message);
+                }
+                this._emailEditPending.delete(chatId);
+                if (!saved) {
+                    return ctx.reply('❌ Não foi possível salvar a mensagem. Tente novamente.', {
+                        reply_markup: buildEmailComposeKeyboard(true)
+                    });
+                }
+                await ctx.reply('✅ Mensagem da instituição atualizada — ela passa a ser o padrão dos próximos comunicados.');
+                const compose = this.renderEmailCompose();
+                return ctx.reply(compose.text, {
+                    reply_markup: buildEmailComposeKeyboard(compose.canSend)
+                });
+            }
             return ctx.reply('Use os botões do menu interativo ou digite /help para ver os comandos rápidos.', {
-                reply_markup: WeatherTelegramBot.buildMainMenuKeyboard()
+                reply_markup: buildMainMenuKeyboard()
             });
         });
 
