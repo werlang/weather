@@ -7,7 +7,7 @@
 > behavior MUST update this document in the same change**, and unit tests must
 > lock the new behavior before merge.
 >
-> Last verified against source on 2026-09-11.
+> Last verified against source on 2026-09-21.
 
 ---
 
@@ -347,6 +347,14 @@ Notes:
   detection.
 - Events pass the Defesa Civil threshold gate from §4.1 (`colorTier` rank ≥
   configured rank).
+- Reporting policy: telemetry values are relayed verbatim as published by the
+  station. The pipeline applies thresholds but never discards or downscales
+  extreme readings (e.g. the 655 km/h gust on DCRS-00093 on 2026-09-21) —
+  plausibility judgment belongs to the reader.
+- Station-to-municipality mapping: a station label covering two municipalities
+  (DCRS-00093 "General Camara / Sao Jeronimo") is split on "/" so
+  `affectedCities` contains real municipality names and unique-city counts can
+  never exceed the monitored catalog (39-de-38 bug, 2026-09-21).
 
 #### 5.3.1 Official River Quotas & Threshold Provenance
 
@@ -392,6 +400,7 @@ dispatcher, aggregator, formatter, and persistence layer):
   eventId: '<provider id or null>',   // stable provider identifier, preferred for identity
   type: '<human hazard name>',        // INMET: descricao || tipo
   alertType: '<original provider type or null>', // INMET `tipo` (e.g. 'Chuvas Intensas'); null for other sources
+  category: '<chuva|temperatura|vento|umidade|rio>', // explicit producer classification (see below)
   severity: '<original label>',       // e.g. 'Grande Perigo', 'HIGH (Red Equivalent)', 'Alerta Máximo (Red)'
   colorTier: 'RED' | 'ORANGE' | 'YELLOW',
   emoji: '🔴' | '🟠' | '🟡' | '⚪',
@@ -406,6 +415,17 @@ The display alert type comes from `getAlertTypeLabel(event)`
 (`src/monitoring/risk_analyzer.js`): the unified category (`getEventCategory` →
 `ALERT_CATEGORIES`, e.g. `🌧️ Chuva e Alagamentos`), plus the raw
 `alertType`/`tipo` suffix (`• <tipo>`) when it differs from `type`.
+Category resolution is explicit-first: `getEventCategory(event)`
+(`src/monitoring/risk_analyzer.js`) returns `event.category` verbatim when it
+is a valid `ALERT_CATEGORIES` key. Producers attach it at creation —
+`classifyInmetWarningCategory(warning)` maps INMET `descricao`/`tipo` only
+(never free-text `riscos`/`details` boilerplate such as 'transporte
+rodoviario' or 'ventos superiores a 100 km/h'), `analyzeForecastRisks`
+labels each numeric finding (temperatura/umidade/vento), and
+`evaluateDefesaCivilRisks` labels each telemetry group (chuva/vento/rio).
+Free-text keyword matching (NFD diacritic-stripped, since JS `\b` is
+ASCII-only) is a legacy fallback for events without `category` (old
+snapshots, third-party shapes) and must never override an explicit value.
 
 After aggregation (§7) events may also carry `aggregatedCount`.
 
@@ -539,9 +559,11 @@ warnings. All timestamps shown to users are `America/Sao_Paulo`.
 
 The email comunicado (`renderAlertEmail` in `src/bot/email_templates.js`) carries
 the same aggregated hazards with an email badge per tier (RED `#C62828`,
-ORANGE `#EF6C00`, YELLOW `#F9A825`, UNKNOWN `#6A1B9A`), the impacted-zone line,
-timeframes, trigger reasons, and the institution message in a quoted box
-(omitted when skipped). Subject contract:
+ORANGE `#EF6C00`, YELLOW `#F9A825`, UNKNOWN `#6A1B9A`), the entity summary
+(`Resumo da entidade:` via `getAlertTypeLabel` — unified category plus the
+provider's original type), the impacted-zone line, timeframes, trigger reasons,
+and the institution message in a quoted box (omitted when skipped). Technical
+`Origem` source codes are never shown in the email. Subject contract:
 `🚨 <top hazard type> — Charqueadas/RS (<N> alerta(s))`. The MJML must compile
 strictly with zero errors and no `{{placeholder}}` leaks; the plain-text part
 mirrors the HTML content.
@@ -576,7 +598,7 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | :--- | :--- | :--- | :--- |
 | INMET fetching, city catalog, warning matching, emoji | `src/clients/inmet_client.js` | `getSurroundingCities`, `getRegionalRiskWarnings`, `getRegionalForecasts`, `getAlertEmoji`, `extractWarningGeocodeSet`, `warningAffectsCity` | `tests/clients/inmet_client.test.js` |
 | Defesa Civil GraphQL fetching + telemetry thresholds | `src/clients/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
-| Tier model, normalization, 24h evaluation, identity, aggregation | `src/monitoring/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `getAlertTypeLabel` | `tests/monitoring/monitor_service.test.js` |
+| Tier model, normalization, 24h evaluation, identity, aggregation | `src/monitoring/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `classifyInmetWarningCategory`, `getAlertTypeLabel` | `tests/monitoring/monitor_service.test.js` |
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitoring/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitoring/monitor_service.test.js` |
 | Thresholds menus, badges, presentation copy, message layout | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `renderEmailCompose`, `sendAlertEmail` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js` |
 | Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |

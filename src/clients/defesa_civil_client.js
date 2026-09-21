@@ -199,6 +199,13 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
  * River absolute-level rules use the per-station official quotas declared in
  * `REGIONAL_STATIONS`; stations without registered quotas fall back to
  * trend-only detection. See `docs/ALERT_METHODOLOGY.md` §5.3.1 for sources.
+ *
+ * Reporting policy: telemetry values are relayed verbatim as published by
+ * the station. The pipeline never discards or downscales extreme readings
+ * (e.g. the 655 km/h gust on DCRS-00093) — plausibility judgment belongs
+ * to the reader. Station labels covering two municipalities
+ * (e.g. "General Camara / Sao Jeronimo") are split so `affectedCities`
+ * contains real municipality names.
  * 
  * @param {Array<object>} stationsData - Array of station telemetry objects from GraphQL.
  * @returns {Array<object>} Detected Defesa Civil risk events.
@@ -211,6 +218,10 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         const code = station.codigo;
         const stationMeta = REGIONAL_STATIONS.find(s => s.code === code) || { name: station.name?.local || code };
         const cityName = stationMeta.name;
+        // A station label may cover two municipalities ("General Camara / Sao Jeronimo").
+        // Split on "/" so affectedCities uses real municipality names and unique-city
+        // counts never exceed the monitored catalog (39-de-38 bug, 2026-09-21).
+        const affectedCities = String(cityName || code).split('/').map(s => s.trim()).filter(Boolean);
         const data = station.data || {};
 
         const rain15min = (() => { const n = parseFloat(data.chuva?.acumulado?.min015?.value); return Number.isFinite(n) ? n : 0; })();
@@ -227,10 +238,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Chuva Torrencial Extrema (Telemetria)',
+                category: 'chuva',
                 severity: 'Alerta Máximo (Red)',
                 colorTier: 'RED',
                 emoji: '🔴',
-                affectedCities: [cityName],
+                affectedCities: [...affectedCities],
                 timeframe: 'Telemetria em Tempo Real',
                 details: `Acúmulo crítico registrado: ${rain1h} mm em 1h (${rain3h} mm em 3h) na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Precipitação extrema (${rain1h} mm/h) com risco iminente de alagamentos severos.`
@@ -239,10 +251,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Chuva Intensa / Risco de Alagamento (Telemetria)',
+                category: 'chuva',
                 severity: 'Alerta (Orange)',
                 colorTier: 'ORANGE',
                 emoji: '🟠',
-                affectedCities: [cityName],
+                affectedCities: [...affectedCities],
                 timeframe: 'Telemetria em Tempo Real',
                 details: `Acúmulo de chuva registrado: ${rain15min} mm em 15min / ${rain1h} mm em 1h / ${rain3h} mm em 3h / ${rain24h} mm em 24h na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Acúmulo de chuva com risco de saturação e alagamentos.`
@@ -254,10 +267,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Vendaval / Rajada Extrema (Telemetria)',
+                category: 'vento',
                 severity: 'Alerta Máximo (Red)',
                 colorTier: 'RED',
                 emoji: '🔴',
-                affectedCities: [cityName],
+                affectedCities: [...affectedCities],
                 timeframe: 'Telemetria em Tempo Real',
                 details: `Rajada de vento destrutiva registrada: ${windGust} km/h na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Rajadas de vento extremas (${windGust} km/h) com perigo de colapso estrutural e quedas de árvores.`
@@ -266,10 +280,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Vendaval / Rajadas Fortes (Telemetria)',
+                category: 'vento',
                 severity: 'Alerta (Orange)',
                 colorTier: 'ORANGE',
                 emoji: '🟠',
-                affectedCities: [cityName],
+                affectedCities: [...affectedCities],
                 timeframe: 'Telemetria em Tempo Real',
                 details: `Rajada de vento severa registrada: ${windGust} km/h na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Alerta de ventos fortes (${windGust} km/h) com risco a vias e transporte escolar.`
@@ -287,10 +302,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 risks.push({
                     source: 'DEFESA_CIVIL_RS',
                     type: `Elevação Crítica do ${riverName} (Telemetria)`,
+                    category: 'rio',
                     severity: 'Alerta Máximo (Red)',
                     colorTier: 'RED',
                     emoji: '🔴',
-                    affectedCities: [cityName],
+                    affectedCities: [...affectedCities],
                     timeframe: 'Telemetria em Tempo Real',
                     details: `Nível do rio: ${riverLevel}m${quotaInfo} com subida rápida de +${riverTrend}m/h na estação ${code} (${cityName}).`,
                     triggerReason: `Defesa Civil RS: Elevação acelerada do ${riverName} com risco de transbordamento.`
@@ -300,10 +316,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 risks.push({
                     source: 'DEFESA_CIVIL_RS',
                     type: `Elevação do ${riverName} (Telemetria)`,
+                    category: 'rio',
                     severity: 'Alerta (Orange)',
                     colorTier: 'ORANGE',
                     emoji: '🟠',
-                    affectedCities: [cityName],
+                    affectedCities: [...affectedCities],
                     timeframe: 'Telemetria em Tempo Real',
                     details: `Nível do rio: ${riverLevel}m${quotaInfo} com tendência de alta (+${riverTrend}m/h) na estação ${code} (${cityName}).`,
                     triggerReason: `Defesa Civil RS: Alerta de subida do ${riverName}.`

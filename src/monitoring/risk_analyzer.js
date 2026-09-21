@@ -38,21 +38,53 @@ export const ALERT_CATEGORIES = {
 };
 
 /**
- * Resolves the alert category of a normalized risk event by matching
- * keywords in its type/details. Defesa Civil river rules are checked
- * first, followed by temperature, humidity, wind, and rain keywords.
+ * Resolves the alert category of a normalized risk event.
+ * Producers attach an explicit `category` at creation (INMET mapping,
+ * forecast numerics, Defesa Civil telemetry groups); that value wins.
+ * Free-text keyword matching is a legacy fallback for events without one
+ * (old snapshots, third-party shapes) and must never override it.
  *
  * @param {object} event - Normalized risk event.
  * @returns {string} Category id (see ALERT_CATEGORIES).
  */
 export function getEventCategory(event = {}) {
-    const text = `${event.type || ''} ${event.details || ''} ${event.triggerReason || ''}`.toLowerCase();
+    if (event && typeof event.category === 'string' && ALERT_CATEGORIES[event.category]) {
+        return event.category;
+    }
+    const text = `${event.type || ''} ${event.details || ''} ${event.triggerReason || ''}`
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '');
 
-    if (/elevaç|elevac|\brio\b/.test(text)) return 'rio';
+    if (/elevac|\brio\b/.test(text)) return 'rio';
     if (/geada|frio|calor|temperatura|neve|congelamento/.test(text)) return 'temperatura';
     if (text.includes('umidade')) return 'umidade';
     if (/vento|vendaval|rajad/.test(text)) return 'vento';
     if (/chuva|tempestade|temporal|instabilidade|alagament|granizo/.test(text)) return 'chuva';
+    return 'chuva';
+}
+
+/**
+ * Classifies an INMET warning from its controlled vocabulary fields only
+ * (`descricao` / `tipo`, e.g. 'Tempestade', 'Vendaval', 'Onda de Calor').
+ * Free-text `riscos` / `details` boilerplate ('transporte rodoviário',
+ * 'ventos superiores a 100 km/h') is deliberately ignored: it describes
+ * consequences, not the hazard, and previously misclassified Tempestade
+ * as river level via a `\brio\b` match on 'rodoviário' (2026-09-21).
+ *
+ * @param {Record<string, any>} [warning={}] - Raw INMET warning object.
+ * @returns {string} Category id (see ALERT_CATEGORIES).
+ */
+export function classifyInmetWarningCategory(warning = {}) {
+    const text = `${warning.descricao || ''} ${warning.tipo || ''}`
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '');
+    if (/geada|frio|calor|temperatura|neve|congelamento/.test(text)) return 'temperatura';
+    if (text.includes('umidade')) return 'umidade';
+    if (/chuva|tempestade|temporal|trovoad|pancada|chuvoso|instabilidade|alagament|granizo/.test(text)) return 'chuva';
+    if (/vento|vendav|rajad|ciclone/.test(text)) return 'vento';
+    if (/elevac|\brio\b|enchente|inundac/.test(text)) return 'rio';
     return 'chuva';
 }
 
@@ -226,7 +258,7 @@ export function parseForecastDate(dateStr) {
  * @param {string} [context.city] - Nome do município.
  * @param {string} [context.dateStr] - Data da previsão (DD/MM/YYYY).
  * @param {string} [context.periodKey] - Chave do período (manha/tarde/noite).
- * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string, unknown?: boolean }>}
+ * @returns {Array<{ type: string, severity: 'LOW' | 'MODERATE' | 'HIGH', detail: string, category: string, unknown?: boolean }>}
  */
 export function analyzeForecastRisks(forecastDay, context = {}) {
     const risks = [];
@@ -243,18 +275,21 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         risks.push({
             type: 'Frio Extremo / Risco de Congelamento',
             severity: 'HIGH',
+            category: 'temperatura',
             detail: `Temp. Mínima Extrema: ${tempMin}°C (${forecastDay.resumo || 'Frio crítico com risco de congelamento'})`
         });
     } else if (tempMin !== undefined && tempMin <= 4) {
         risks.push({
             type: 'Geada / Frio Típico de Inverno',
             severity: 'MODERATE',
+            category: 'temperatura',
             detail: `Temp. Mínima: ${tempMin}°C (${forecastDay.resumo || 'Temperatura baixa típica'})`
         });
     } else if (tempMin !== undefined && tempMin <= 8) {
         risks.push({
             type: 'Aviso de Baixa Temperatura',
             severity: 'LOW',
+            category: 'temperatura',
             detail: `Temp. Mínima: ${tempMin}°C`
         });
     }
@@ -264,12 +299,14 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         risks.push({
             type: 'Onda de Calor Extrema / Risco à Saúde',
             severity: 'HIGH',
+            category: 'temperatura',
             detail: `Temp. Máxima Extrema: ${tempMax}°C (Risco de estresse térmico em salas de aula)`
         });
     } else if (tempMax !== undefined && tempMax >= 34) {
         risks.push({
             type: 'Calor Intenso',
             severity: 'MODERATE',
+            category: 'temperatura',
             detail: `Temp. Máxima: ${tempMax}°C`
         });
     }
@@ -279,12 +316,14 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         risks.push({
             type: 'Emergência de Baixa Umidade do Ar',
             severity: 'HIGH',
+            category: 'umidade',
             detail: `Umidade Mínima Crítica: ${humidityMin}% (Suspensão de atividades físicas)`
         });
     } else if (humidityMin !== undefined && humidityMin <= 25) {
         risks.push({
             type: 'Aviso de Baixa Umidade Relativa do Ar',
             severity: 'MODERATE',
+            category: 'umidade',
             detail: `Umidade Mínima: ${humidityMin}%`
         });
     }
@@ -294,12 +333,14 @@ export function analyzeForecastRisks(forecastDay, context = {}) {
         risks.push({
             type: 'Vendaval / Rajadas Destrutivas de Vento',
             severity: 'HIGH',
+            category: 'vento',
             detail: `Intensidade do vento: ${forecastDay.int_vento || forecastDay.resumo}`
         });
     } else if (windInt.includes('forte') || windInt.includes('rajadas')) {
         risks.push({
             type: 'Ventos Fortes / Rajadas de Vento',
             severity: 'MODERATE',
+            category: 'vento',
             detail: `Intensidade do vento: ${forecastDay.int_vento}`
         });
     }
@@ -399,6 +440,7 @@ export function evaluateHighRisksIn24hWindow({
                     eventId: warning.id_aviso || warning.codigo || null,
                     type: warning.descricao || warning.tipo || 'Aviso Meteorológico (INMET)',
                     alertType: warning.tipo || null,
+                    category: classifyInmetWarningCategory(warning),
                     severity: warning.severidade || severityFallback,
                     colorTier: warningTier,
                     emoji: warningTier === 'UNKNOWN' ? '❓' : getAlertEmoji(warning),
@@ -477,6 +519,7 @@ export function evaluateHighRisksIn24hWindow({
                             highRiskEvents.push({
                                 source: 'FORECAST_ANALYSIS',
                                 type: r.type,
+                                category: r.category || getEventCategory({ type: r.type, details: r.detail }),
                                 severity: 'Unknown (Não classificada)',
                                 colorTier: 'UNKNOWN',
                                 emoji: '❓',
@@ -490,6 +533,7 @@ export function evaluateHighRisksIn24hWindow({
                         highRiskEvents.push({
                             source: 'FORECAST_ANALYSIS',
                             type: r.type,
+                            category: r.category || getEventCategory({ type: r.type, details: r.detail }),
                             severity: r.severity === 'HIGH' ? 'HIGH (Red Equivalent)' : r.severity,
                             colorTier: r.severity === 'HIGH' ? 'RED' : (r.severity === 'MODERATE' ? 'ORANGE' : 'YELLOW'),
                             emoji: r.severity === 'HIGH' ? '🔴' : (r.severity === 'MODERATE' ? '🟠' : '🟡'),

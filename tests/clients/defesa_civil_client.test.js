@@ -276,6 +276,57 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks[0].type.includes('Elevação do Rio Jacuí')); // default river name
     });
 
+    it('reports extreme telemetry readings verbatim, including 655 km/h gusts', () => {
+        // Reporting policy: the service relays what the station published;
+        // plausibility judgment belongs to the reader, not the pipeline.
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00093',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 655.3499755859375 } },
+                    rio: { rio_nivel: { value: 3.0 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+        assert.strictEqual(risks.length, 1);
+        assert.strictEqual(risks[0].colorTier, 'RED');
+        assert.ok(risks[0].type.includes('Rajada Extrema'));
+        assert.ok(risks[0].details.includes('655.3499755859375'));
+    });
+
+    it('splits slash station labels into real municipality names for counting', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00093',
+                data: {
+                    chuva: { acumulado: {} },
+                    vento: { velocidade_maxima: { value: 80 } },
+                    rio: { rio_nivel: { value: 3.0 }, rio_nivel_tendencia: { value: 0 } }
+                }
+            }
+        ]);
+        assert.strictEqual(risks.length, 1);
+        assert.deepStrictEqual(risks[0].affectedCities, ['General Câmara', 'São Jerônimo']);
+    });
+
+    it('attaches explicit producer categories (chuva/vento/rio), never inferred', () => {
+        const risks = evaluateDefesaCivilRisks([
+            {
+                codigo: 'DCRS-00032',
+                data: {
+                    chuva: { acumulado: { h001: { value: 65 }, h003: { value: 90 } } },
+                    vento: { velocidade_maxima: { value: 105 } },
+                    rio: { rio_nivel: { value: 5.5 }, rio_nivel_tendencia: { value: 0.6 } }
+                }
+            }
+        ]);
+        assert.strictEqual(risks.length, 3);
+        assert.strictEqual(risks.find(r => r.type.includes('Chuva Torrencial')).category, 'chuva');
+        assert.strictEqual(risks.find(r => r.type.includes('Rajada Extrema')).category, 'vento');
+        assert.strictEqual(risks.find(r => r.type.includes('Elevação Crítica')).category, 'rio');
+    });
+
     it('can propagate telemetry failures to the monitoring coordinator', async () => {
         const originalFetch = globalThis.fetch;
         globalThis.fetch = async () => ({

@@ -14,7 +14,7 @@ import {
   createAlertDispatcher,
   performRegionalRiskMonitoring
 } from '../../src/monitoring/monitor_service.js';
-import { analyzeForecastRisks, parseRadiusArg, getEventCategory } from '../../src/monitoring/risk_analyzer.js';
+import { analyzeForecastRisks, parseRadiusArg, getEventCategory, classifyInmetWarningCategory } from '../../src/monitoring/risk_analyzer.js';
 import { getSurroundingCities } from '../../src/clients/inmet_client.js';
 import { Sqlite } from '../../src/helpers/database_driver.js';
 import { getDatabase } from '../../src/model/log_database.js';
@@ -263,6 +263,68 @@ describe('Monitor Service Configuration, Dynamic Updates & Radius Verification',
     for (const [event, expected] of cases) {
       assert.strictEqual(getEventCategory(event), expected, `category for ${event.type}`);
     }
+  });
+
+  it('never classifies INMET road boilerplate as river level (rodoviario false positive)', () => {
+    // Regression 2026-09-21: "transporte rodoviario" (INMET Tempestade boilerplate)
+    // matched \\brio\\b because JS \\b splits on accented a, mislabeling
+    // Tempestade as "Nivel dos Rios".
+    const tempestade = {
+      type: 'Tempestade',
+      details: 'Chuva superior a 60 mm/h ou maior que 100 mm/dia, ventos superiores a 100 km/h, e queda de granizo. Grande risco de danos em edificacoes, corte de energia eletrica, estragos em plantacoes, queda de arvores, alagamentos e transtornos no transporte rodoviario.',
+      triggerReason: 'INMET (Grande Perigo) ativo na regiao.'
+    };
+    assert.notStrictEqual(getEventCategory(tempestade), 'rio');
+    assert.strictEqual(getEventCategory({ type: 'x', details: 'transporte rodoviario' }), 'chuva');
+    // Legitimate river texts still classify as rio after diacritic stripping.
+    assert.strictEqual(getEventCategory({ type: 'Elevacao Critica do Rio Jacui (Telemetria)' }), 'rio');
+    assert.strictEqual(getEventCategory({ type: 'x', details: 'nivel do rio em 4.7m' }), 'rio');
+  });
+
+  it('prefers the explicit producer category over free-text keyword matching', () => {
+    // Sturdy classification: producers attach `category`; text is fallback only.
+    assert.strictEqual(getEventCategory({ category: 'rio', type: 'Tempestade', details: 'chuva e ventos' }), 'rio');
+    assert.strictEqual(getEventCategory({ category: 'chuva', type: 'Elevação Crítica', details: 'nível do rio em 4.7m' }), 'chuva');
+    assert.strictEqual(getEventCategory({ category: 'vento', type: 'Qualquer coisa', details: 'chuva forte' }), 'vento');
+    assert.strictEqual(getEventCategory({ category: 'INVALID', type: 'Vendaval / Rajadas Destrutivas de Vento' }), 'vento');
+  });
+
+  it('classifies INMET warnings from controlled descricao/tipo, never boilerplate details', () => {
+    // 'transporte rodoviário' + 'ventos' boilerplate in detalhes/riscos must not sway the result.
+    assert.strictEqual(classifyInmetWarningCategory({ descricao: 'Tempestade', tipo: 'Tempestade' }), 'chuva');
+    assert.strictEqual(classifyInmetWarningCategory({ descricao: 'Tempestade', tipo: null }), 'chuva');
+    assert.strictEqual(classifyInmetWarningCategory({ tipo: 'Vendaval' }), 'vento');
+    assert.strictEqual(classifyInmetWarningCategory({ tipo: 'Onda de Calor' }), 'temperatura');
+    assert.strictEqual(classifyInmetWarningCategory({ tipo: 'Geada' }), 'temperatura');
+    assert.strictEqual(classifyInmetWarningCategory({ tipo: 'Baixa Umidade' }), 'umidade');
+    assert.strictEqual(classifyInmetWarningCategory({ tipo: 'Chuvas Intensas' }), 'chuva');
+    assert.strictEqual(classifyInmetWarningCategory({ descricao: 'Possibilidade de Chuva Intensa com Vendavais' }), 'chuva');
+    assert.strictEqual(classifyInmetWarningCategory({}), 'chuva');
+  });
+
+  it('attaches explicit INMET chuva category even when details mention roads and wind', () => {
+    const events = evaluateHighRisksIn24hWindow({
+      regionalWarnings: [{
+        aviso_cor: '#FF0000',
+        severidade: 'Grande Perigo',
+        descricao: 'Tempestade',
+        tipo: 'Tempestade',
+        riscos: ['Chuva superior a 60 mm/h', 'ventos superiores a 100 km/h', 'transtornos no transporte rodoviário'],
+        affectedRegionalCities: ['Charqueadas']
+      }],
+      regionalForecasts: [],
+      defesaCivilTelemetry: []
+    });
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].category, 'chuva');
+    assert.strictEqual(getEventCategory(events[0]), 'chuva');
+  });
+
+  it('propagates forecast producer categories onto events', () => {
+    const risks = analyzeForecastRisks({ temp_min: -2, resumo: 'Frio' });
+    assert.ok(risks.length > 0 && risks.every(r => r.category === 'temperatura'));
+    assert.strictEqual(analyzeForecastRisks({ umidade_min: 10, resumo: 'Seco' })[0].category, 'umidade');
+    assert.strictEqual(analyzeForecastRisks({ int_vento: 'Ventos muito forte', resumo: 'Vento' })[0].category, 'vento');
   });
 
   it('startMonitoringService dynamically updates radius, interval timer, and independent threat levels at runtime', () => {
