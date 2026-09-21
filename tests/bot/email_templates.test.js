@@ -106,9 +106,13 @@ describe('Alert email rendering contract', () => {
             assert.match(part, /Rio Jacuí/);
             assert.match(part, /Charqueadas/);
             assert.match(part, /São Jerônimo/);
-            assert.match(part, /INMET_OFFICIAL_WARNING/);
-            assert.match(part, /DEFESA_CIVIL/);
+            assert.match(part, /Resumo da entidade/);
+            assert.match(part, /Ventos/);
+            assert.match(part, /Nível dos Rios/);
             assert.match(part, /aulas estão dispensadas/);
+            assert.doesNotMatch(part, /Origem/);
+            assert.doesNotMatch(part, /INMET_OFFICIAL_WARNING/);
+            assert.doesNotMatch(part, /DEFESA_CIVIL/);
         }
         assert.doesNotMatch(rendered.mjml, /\{\{[^}]+\}\}/);
         assert.doesNotMatch(rendered.text, /\{\{[^}]+\}\}/);

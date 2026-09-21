@@ -12,7 +12,7 @@
  */
 
 import { getSystemSetting, saveSystemSetting } from '../model/log_database.js';
-import { aggregateRiskEvents } from '../monitoring/risk_analyzer.js';
+import { aggregateRiskEvents, getAlertTypeLabel } from '../monitoring/risk_analyzer.js';
 
 /** SQLite `system_settings` key holding the last custom message. */
 export const EMAIL_CUSTOM_MESSAGE_KEY = 'email_custom_message';
@@ -199,8 +199,10 @@ const ALERT_EMAIL_MJML = `<mjml>
 
 /**
  * Renders the alert comunicado MJML, subject, and plain-text alternative.
- * Contract: hazard description, impacted zone, timeframe, and the quoted
- * institution custom message are always present; no `{{placeholder}}` leaks.
+ * Contract: hazard description, entity summary (Tipo via getAlertTypeLabel),
+ * impacted zone, timeframe, and the quoted institution custom message are
+ * always present; technical Origem source codes are never shown; no
+ * `{{placeholder}}` leaks.
  *
  * @param {object} [options] - Rendering options.
  * @param {Array<object>} options.events - Raw risk events (last scan snapshot).
@@ -231,7 +233,8 @@ export function renderAlertEmail({ events, customMessage = '', sentAt = new Date
         const eventCities = (event.affectedCities || []).length > 0 ? event.affectedCities.join(', ') : UNKNOWN_ZONE_LABEL;
         return [
             `<mj-text font-size="15px" font-weight="700" color="#212121" padding-top="12px">${escapeEmailHtml(`${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico'}`)}</mj-text>`,
-            `<mj-text font-size="13px" color="#424242">Severidade: ${escapeEmailHtml(eventBadge.label)} &#8226; Origem: ${escapeEmailHtml(event.source || 'Não informada')}</mj-text>`,
+            `<mj-text font-size="13px" color="#424242">Resumo da entidade: ${escapeEmailHtml(getAlertTypeLabel(event))}</mj-text>`,
+            `<mj-text font-size="13px" color="#424242">Severidade: ${escapeEmailHtml(eventBadge.label)}</mj-text>`,
             `<mj-text font-size="13px" color="#424242">Municípios: ${escapeEmailHtml(eventCities)}</mj-text>`,
             `<mj-text font-size="13px" color="#424242">Janela: ${escapeEmailHtml(event.timeframe || 'Não informada')}</mj-text>`,
             `<mj-text font-size="13px" color="#424242">Motivo: ${escapeEmailHtml(event.triggerReason || event.details || 'Não informado')}</mj-text>`,
@@ -289,7 +292,8 @@ export function renderAlertEmail({ events, customMessage = '', sentAt = new Date
         const eventCities = (event.affectedCities || []).length > 0 ? event.affectedCities.join(', ') : UNKNOWN_ZONE_LABEL;
         textBlocks.push(
             `${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico'}`,
-            `   Severidade: ${eventBadge.label} • Origem: ${event.source || 'Não informada'}`,
+            `   Resumo da entidade: ${getAlertTypeLabel(event)}`,
+            `   Severidade: ${eventBadge.label}`,
             `   Municípios: ${eventCities}`,
             `   Janela: ${event.timeframe || 'Não informada'}`,
             `   Motivo: ${event.triggerReason || event.details || 'Não informado'}`,
