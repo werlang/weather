@@ -526,6 +526,39 @@ The flow is driven by the **last scan snapshot** (never re-fetches sources):
    `EmailService` (Ethereal preview URL in dev, SMTP in production).
    Failures are contained as `{ ok: false, error }` and shown in-chat.
 
+### 8.5 Admin-Triggered SMS Dispatch
+
+A second admin-triggered channel mirrors §8.4 but targets the **subscriber
+list** rather than a single `ALERT_EMAIL_TO` address. It is deliberately *not*
+part of `createAlertCallback`: SMS never enters the at-least-once batch, so SMS
+failures cannot re-trigger Telegram delivery (§8.1 consequence preserved).
+
+1. Recipients live in `sms_subscribers` (migration `008`), managed by
+   administrators only — `addSmsSubscriber` normalizes every accepted Brazilian
+   spelling to E.164 (`55 + DDD + digits`), which makes `phone` the
+   idempotency key; `removeSmsSubscriber` deletes by any spelling of the number.
+2. `renderSmsCompose` (triggered by `action:sms_compose`) previews the **exact
+   body, recipient count, segment count, and estimated credits** before the
+   admin commits — every tap spends real balance.
+3. `sendAlertSms` (triggered by `action:sms_send`) rebuilds the body from the
+   last scan snapshot (never re-fetches sources) and dispatches to all numbers
+   in **one** `POST /v1/send` JSON array. Failures are contained as
+   `{ ok: false, error }` and partial delivery is reported
+   (`accepted` / `failed` / `credits`).
+4. The body comes from `renderAlertSms` (`src/bot/sms_templates.js`): plain
+   text, **no emoji** (emoji force UCS-2 → 70 chars/segment instead of 160),
+   and clause-dropping that guarantees ≤ 160 characters = **1 credit**.
+   The hazard name is clause 0 so it survives every truncation path.
+5. Credentials come from `getSmsConfig`: `SMSDEV_KEY` (≤128 chars, required in
+   production), `SMSDEV_BASE_URL` (https only, defaults to
+   `https://api.smsdev.com.br/v1`), and `SMS_TESTING=true` which skips the
+   network entirely — rejected when `NODE_ENV=production`, exactly like
+   `EMAIL_TESTING`.
+6. **No delivery receipts.** DLR polling (`/v1/dlr`) and callbacks are
+   intentionally out of scope; the gateway's `MENSAGEM NA FILA` acknowledgement
+   is the terminal state. Consequence: a number that cannot receive SMS is
+   discovered only through the `failed` count on the next attempt.
+
 ---
 
 ## 9. Message Formatting & Presentation
@@ -604,6 +637,10 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |
 | Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
+| SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
+| SMS subscriber list (admin-managed recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
+| Compact ≤160-char SMS body | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
+| SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |
 | DB driver | `src/helpers/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/helpers/database_driver.test.js` |
