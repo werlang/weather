@@ -51,6 +51,7 @@ export function buildSettingsKeyboard(config = {}) {
         .text(`🛡️ Limiar Defesa Civil: ${getTierShortBadge(config.defesaCivilMinSeverity)}`, 'menu:defesa_civil_level')
         .row()
         .text('👥 Convidar Administrador', 'menu:admins')
+        .text('📱 Inscritos SMS', 'menu:sms')
         .row()
         .text('⬅️ Voltar ao Menu Principal', 'menu:main');
 }
@@ -161,6 +162,7 @@ export function buildAlertActionKeyboard() {
         .text('🚨 Alertas Ativos', 'action:active_alerts')
         .row()
         .text('📧 Enviar comunicado por e-mail', 'action:email_compose')
+        .text('📱 Enviar SMS', 'action:sms_compose')
         .row()
         .text('🏠 Abrir Painel Principal', 'menu:main');
 }
@@ -171,7 +173,8 @@ export function buildActiveAlertsKeyboard(refreshLabel = '🔄 Atualizar') {
         .text(refreshLabel, 'action:active_alerts')
         .text('⬅️ Menu', 'menu:main')
         .row()
-        .text('📧 Enviar comunicado por e-mail', 'action:email_compose');
+        .text('📧 Enviar comunicado por e-mail', 'action:email_compose')
+        .text('📱 Enviar SMS', 'action:sms_compose');
 }
 
 
@@ -184,4 +187,41 @@ export function buildEmailComposeKeyboard(canSend = true) {
     }
     kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
     return kb;
+}
+
+
+/**
+ * Builds the SMS compose keyboard. Send only appears when there is both an
+ * active alert to report and at least one subscriber to receive it.
+ *
+ * @param {object} [options] - Availability flags.
+ * @param {boolean} [options.canSend=true] - Whether active alerts exist.
+ * @param {boolean} [options.hasSubscribers=true] - Whether the list is non-empty.
+ * @returns {InlineKeyboard}
+ */
+export function buildSmsComposeKeyboard({ canSend = true, hasSubscribers = true } = {}) {
+    const kb = new InlineKeyboard();
+    if (canSend && hasSubscribers) {
+        kb.text('📱 Enviar SMS agora', 'action:sms_send').row();
+    }
+    if (!hasSubscribers) {
+        kb.text('👥 Adicionar primeiro inscrito', 'menu:sms').row();
+    }
+    kb.text('👥 Inscritos SMS', 'menu:sms').row();
+    kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
+    return kb;
+}
+
+
+/**
+ * Builds the subscriber management keyboard.
+ *
+ * @returns {InlineKeyboard}
+ */
+export function buildSmsSubscribersKeyboard() {
+    return new InlineKeyboard()
+        .text('➕ Adicionar número', 'action:sms_add')
+        .text('📋 Listar inscritos', 'action:sms_list')
+        .row()
+        .text('⬅️ Voltar às Configurações', 'menu:settings');
 }

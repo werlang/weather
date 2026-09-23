@@ -24,6 +24,15 @@ import {
     clearInviteCode
 } from '../model/admin_store.js';
 import { getAlertEmailRecipient, getEmailService } from '../helpers/email_client.js';
+import { getSmsService } from '../helpers/sms_client.js';
+import { renderAlertSms } from './sms_templates.js';
+import {
+    addSmsSubscriber,
+    countSmsSubscribers,
+    getSmsNumbers,
+    listSmsSubscribers,
+    removeSmsSubscriber
+} from '../model/sms_subscriber_store.js';
 import {
     DEFAULT_EMAIL_CUSTOM_MESSAGE,
     getEmailCustomMessage,
@@ -51,7 +60,9 @@ import {
     buildDefesaCivilLevelKeyboard,
     buildAlertActionKeyboard,
     buildActiveAlertsKeyboard,
-    buildEmailComposeKeyboard
+    buildEmailComposeKeyboard,
+    buildSmsComposeKeyboard,
+    buildSmsSubscribersKeyboard
 } from './keyboards.js';
 
 
@@ -135,9 +146,10 @@ export class WeatherTelegramBot {
      * @param {Console} [options.logger=console] - Logger instance.
      * @param {object|null} [options.emailService] - Injected mail service (defaults to lazy singleton).
      * @param {object|null} [options.emailStore] - Custom-message store seam `{ getCustomMessage, saveCustomMessage }`.
+     * @param {object|null} [options.smsService] - Injected SMS service (defaults to lazy singleton).
      * @param {() => object|null} [options.getSnapshot] - Last-scan snapshot provider seam.
      */
-    constructor({ telegram, monitorService = null, getStatus = null, logger = console, emailService = null, emailStore = null, getSnapshot = null }) {
+    constructor({ telegram, monitorService = null, getStatus = null, logger = console, emailService = null, emailStore = null, smsService = null, getSnapshot = null }) {
         if (!telegram) throw new Error('A Telegram bot client is required.');
 
         this.telegram = telegram;
@@ -145,12 +157,14 @@ export class WeatherTelegramBot {
         this.getStatus = getStatus;
         this.logger = logger;
         this.emailService = emailService;
+        this.smsService = smsService;
         this.emailStore = emailStore || {
             getCustomMessage: () => getEmailCustomMessage(),
             saveCustomMessage: message => saveEmailCustomMessage(message)
         };
         this.getSnapshot = getSnapshot || (() => getLastScanSnapshot());
         this._emailEditPending = new Set();
+        this._smsAddPending = new Set();
         this._adminCache = { ids: null, expires: 0 };
 
         this.localState = parseMonitorConfig();
@@ -920,6 +934,222 @@ export class WeatherTelegramBot {
             '',
             'Verifique as variáveis SMTP_* / EMAIL_TESTING no .env e tente novamente.'
         ].join('\n');
+    }
+
+    // =========================================================================
+    // SMS DISPATCH (admin-triggered, subscriber list)
+    // =========================================================================
+
+    /**
+     * Renders the SMS compose preview from the last scan snapshot.
+     * Shows the exact compact body, the recipient count, and the credit cost,
+     * so the administrator sees what every tap will spend before sending.
+     *
+     * @returns {{ canSend: boolean, hasSubscribers: boolean, recipientCount: number, body: string, segments: number, credits: number, text: string }}
+     */
+    renderSmsCompose() {
+        let snapshot = null;
+        try {
+            snapshot = this.getSnapshot();
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] renderSmsCompose snapshot error:', err.message);
+        }
+        const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+        const subscriberCount = countSmsSubscribers();
+
+        if (events.length === 0) {
+            return {
+                canSend: false,
+                hasSubscribers: subscriberCount > 0,
+                recipientCount: subscriberCount,
+                body: '',
+                segments: 1,
+                credits: 0,
+                text: [
+                    '📱 ENVIO DE SMS',
+                    CARD_HEADER,
+                    '🟢 Nenhum alerta ativo no último scan — nada a comunicar.',
+                    '',
+                    `👥 Inscritos: ${subscriberCount}`,
+                    'Aguarde o próximo ciclo automático ou toque em Voltar.'
+                ].join('\n')
+            };
+        }
+
+        if (subscriberCount === 0) {
+            return {
+                canSend: false,
+                hasSubscribers: false,
+                recipientCount: 0,
+                body: '',
+                segments: 1,
+                credits: 0,
+                text: [
+                    '📱 ENVIO DE SMS',
+                    CARD_HEADER,
+                    '👥 Nenhum inscrito na lista de SMS — nada a enviar.',
+                    '',
+                    'Toque em Adicionar primeiro inscrito para cadastrar um número.',
+                    CARD_DIVIDER,
+                    '📋 Números ficam sob gestão de administradores no Configurações → Inscritos SMS.'
+                ].join('\n')
+            };
+        }
+
+        const rendered = renderAlertSms({ events });
+        const lines = [
+            '📱 ENVIO DE SMS',
+            CARD_HEADER,
+            `👥 Destinatários: ${subscriberCount}`,
+            `🧮 Segmentos por SMS: ${rendered.segments} — 💰 Créditos estimados: ${rendered.segments * subscriberCount}`,
+            `🚨 Alertas agrupados: ${rendered.hazardCount} (${rendered.occurrences} ocorrência(s))`,
+            '',
+            '📨 Corpo que será enviado:',
+            rendered.text,
+            '',
+            CARD_DIVIDER,
+            '💡 SMS é cobrado por crédito (160 caracteres). Envie apenas o necessário.'
+        ];
+        return {
+            canSend: true,
+            hasSubscribers: true,
+            recipientCount: subscriberCount,
+            body: rendered.text,
+            segments: rendered.segments,
+            credits: rendered.segments * subscriberCount,
+            text: lines.join('\n')
+        };
+    }
+
+    /**
+     * Sends the compact alert SMS to every subscriber.
+     * All failures are contained as `{ ok: false }` — the bot loop never
+     * throws on gateway errors, matching the email contract.
+     *
+     * @returns {Promise<{ ok: boolean, recipientCount?: number, accepted?: number, failed?: number, segments?: number, credits?: number, body?: string, error?: string, testing?: boolean }>}
+     */
+    async sendAlertSms() {
+        try {
+            const snapshot = this.getSnapshot();
+            const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+            if (events.length === 0) {
+                return { ok: false, error: 'Nenhum alerta ativo no último scan.' };
+            }
+
+            const numbers = getSmsNumbers();
+            if (numbers.length === 0) {
+                return { ok: false, error: 'Nenhum inscrito na lista de SMS.' };
+            }
+
+            const rendered = renderAlertSms({ events });
+            const service = this.smsService || getSmsService();
+            const result = await service.send({ numbers, body: rendered.text });
+
+            const accepted = Number(result?.accepted ?? 0);
+            const failed = Number(result?.failed ?? 0);
+            const firstFailure = Array.isArray(result?.results)
+                ? result.results.find(entry => String(entry?.situacao || '').toUpperCase() !== 'OK')
+                : null;
+
+            return {
+                ok: failed === 0 && accepted > 0,
+                recipientCount: numbers.length,
+                accepted,
+                failed,
+                segments: Number(result?.segments ?? rendered.segments),
+                credits: Number(result?.credits ?? rendered.segments * numbers.length),
+                body: rendered.text,
+                ...(result?.testing ? { testing: true } : {}),
+                ...(failed > 0 ? { error: firstFailure?.descricao || `${failed} mensagem(ns) recusada(s) pela operadora.` } : {})
+            };
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] sendAlertSms failed:', err.message);
+            return { ok: false, error: err.message };
+        }
+    }
+
+    /**
+     * Renders the SMS send result for display to the administrator.
+     *
+     * @param {{ ok: boolean, recipientCount?: number, accepted?: number, failed?: number, credits?: number, error?: string, testing?: boolean }} result - Send result.
+     * @returns {string} Result message.
+     */
+    static renderSmsResult(result) {
+        if (result?.ok) {
+            const lines = [
+                result.testing ? '🧪 SMS ENVIADO (MODO TESTE)' : '✅ SMS ENVIADO',
+                CARD_HEADER,
+                `👥 Destinatários: ${result.recipientCount ?? '—'}`,
+                `📨 Aceitos: ${result.accepted ?? '—'}`,
+                `🧮 Créditos consumidos: ${result.credits ?? '—'}`,
+                '',
+                '📨 Corpo enviado:',
+                result.body || '—'
+            ];
+            if (result.testing) {
+                lines.push('', CARD_DIVIDER, '💡 SMS_TESTING=true — nenhuma mensagem real foi entregue.');
+            }
+            return lines.join('\n');
+        }
+        return [
+            '❌ FALHA AO ENVIAR SMS',
+            CARD_HEADER,
+            `Motivo: ${result?.error || 'erro desconhecido'}`,
+            '',
+            ...(result?.accepted
+                ? [`📨 Entregues na operadora: ${result.accepted} de ${result.recipientCount}.`, '']
+                : []),
+            'Verifique SMSDEV_KEY / SMS_TESTING no .env e o saldo da conta SMS Dev.'
+        ].join('\n');
+    }
+
+    /**
+     * Renders the subscriber management screen.
+     *
+     * @param {Array<{ phone: string, label: string|null }>} subscribers - Stored subscribers.
+     * @returns {string} Screen text.
+     */
+    static renderSmsSubscribers(subscribers = []) {
+        if (subscribers.length === 0) {
+            return [
+                '📱 INSCRITOS SMS',
+                CARD_HEADER,
+                '👥 Lista vazia — nenhum número cadastrado.',
+                '',
+                'Toque em ➕ Adicionar número e envie o telefone como texto.',
+                CARD_DIVIDER,
+                '💡 Aceitos: 43999998888, (43) 99999-8888 ou +55 43 99999-8888.'
+            ].join('\n');
+        }
+        const lines = [
+            '📱 INSCRITOS SMS',
+            CARD_HEADER,
+            `👥 Total: ${subscribers.length}`,
+            ''
+        ];
+        subscribers.forEach((entry, index) => {
+            lines.push(`${index + 1}. ${entry.phone}${entry.label ? ` — ${entry.label}` : ''}`);
+        });
+        lines.push('', CARD_DIVIDER, 'Use Remover ao lado de um número para excluí-lo da lista.');
+        return lines.join('\n');
+    }
+
+    /**
+     * Builds the subscriber list keyboard with one remove button per number.
+     *
+     * @param {Array<{ phone: string }>} subscribers - Stored subscribers.
+     * @returns {import('./telegram.js').InlineKeyboard}
+     */
+    static buildSmsRemoveKeyboard(subscribers = []) {
+        const kb = new InlineKeyboard();
+        subscribers.forEach(entry => {
+            kb.text(`🗑️ ${entry.phone}`, `action:sms_remove:${entry.phone}`).row();
+        });
+        return kb
+            .text('➕ Adicionar número', 'action:sms_add')
+            .text('📋 Atualizar lista', 'action:sms_list')
+            .row()
+            .text('⬅️ Voltar', 'menu:settings');
     }
 
     // =========================================================================
@@ -1758,6 +1988,86 @@ export class WeatherTelegramBot {
                 });
             }
 
+            // ---- SMS: subscriber list management (admin-triggered channel) ----
+            if (data === 'menu:sms') {
+                await answer('📱 Carregando inscritos…');
+                this._smsAddPending.delete(String(ctx.chat?.id));
+                const subscribers = listSmsSubscribers();
+                return ctx.editMessageText?.(WeatherTelegramBot.renderSmsSubscribers(subscribers), {
+                    reply_markup: subscribers.length
+                        ? WeatherTelegramBot.buildSmsRemoveKeyboard(subscribers)
+                        : buildSmsSubscribersKeyboard()
+                });
+            }
+
+            if (data === 'action:sms_list') {
+                await answer('📋 Listando inscritos…');
+                this._smsAddPending.delete(String(ctx.chat?.id));
+                const subscribers = listSmsSubscribers();
+                return ctx.editMessageText?.(WeatherTelegramBot.renderSmsSubscribers(subscribers), {
+                    reply_markup: subscribers.length
+                        ? WeatherTelegramBot.buildSmsRemoveKeyboard(subscribers)
+                        : buildSmsSubscribersKeyboard()
+                });
+            }
+
+            if (data === 'action:sms_add') {
+                await answer('➕ Envie o número');
+                this._smsAddPending.add(String(ctx.chat?.id));
+                return ctx.editMessageText?.([
+                    '➕ ADICIONAR INSCRITO SMS',
+                    CARD_HEADER,
+                    'Envie agora, como texto, o número que deve receber os alertas.',
+                    'Exemplo: 43999998888, (43) 99999-8888 ou +55 43 99999-8888',
+                    '',
+                    'O número é normalizado para o formato internacional automaticamente.',
+                    CARD_DIVIDER,
+                    'Aguardando o número… (ou volte para cancelar)'
+                ].join('\n'), {
+                    reply_markup: new InlineKeyboard().text('⬅️ Voltar sem adicionar', 'menu:sms')
+                });
+            }
+
+            if (data.startsWith('action:sms_remove:')) {
+                const phone = data.slice('action:sms_remove:'.length);
+                await answer('🗑️ Removendo…');
+                const removed = removeSmsSubscriber(phone);
+                const subscribers = listSmsSubscribers();
+                const header = removed
+                    ? `🗑️ Número ${phone} removido da lista.`
+                    : `⚠️ Não foi possível remover ${phone}.`;
+                return ctx.editMessageText?.(`${header}\n\n${WeatherTelegramBot.renderSmsSubscribers(subscribers)}`, {
+                    reply_markup: subscribers.length
+                        ? WeatherTelegramBot.buildSmsRemoveKeyboard(subscribers)
+                        : buildSmsSubscribersKeyboard()
+                });
+            }
+
+            // ---- SMS: compose preview and dispatch ----
+            if (data === 'action:sms_compose') {
+                await answer('📱 Preparando SMS…');
+                this._smsAddPending.delete(String(ctx.chat?.id));
+                const compose = this.renderSmsCompose();
+                return ctx.editMessageText?.(compose.text, {
+                    reply_markup: buildSmsComposeKeyboard({
+                        canSend: compose.canSend,
+                        hasSubscribers: compose.hasSubscribers
+                    })
+                });
+            }
+
+            if (data === 'action:sms_send') {
+                await answer('📱 Enviando SMS…');
+                this._smsAddPending.delete(String(ctx.chat?.id));
+                const result = await this.sendAlertSms();
+                return ctx.editMessageText?.(WeatherTelegramBot.renderSmsResult(result), {
+                    reply_markup: new InlineKeyboard()
+                        .text('📱 Voltar ao SMS', 'action:sms_compose')
+                        .row()
+                        .text('⬅️ Menu', 'menu:main')
+                });
+            }
+
             if (data === 'action:help') {
                 await answer();
                 const text = [
@@ -1783,8 +2093,30 @@ export class WeatherTelegramBot {
                 if (inviteResult) return inviteResult;
                 return this.replyInviteRequired(ctx);
             }
-            // Pending institution-message edit for the email comunicado flow.
+            // Pending subscriber number for the SMS list (admin-triggered channel).
             const chatId = String(ctx.chat?.id);
+            if (this._smsAddPending.has(chatId)) {
+                const text = String(ctx.message?.text || '').trim();
+                this._smsAddPending.delete(chatId);
+                const result = addSmsSubscriber(text, { addedBy: chatId });
+                if (!result.ok) {
+                    const reason = result.reason === 'already_present'
+                        ? 'esse número já está na lista.'
+                        : 'número inválido — envie 43999998888, (43) 99999-8888 ou +55 43 99999-8888.';
+                    return ctx.reply(`❌ Não foi possível adicionar: ${reason}`, {
+                        reply_markup: buildSmsSubscribersKeyboard()
+                    });
+                }
+                const subscribers = listSmsSubscribers();
+                await ctx.reply(`✅ Número ${result.phone} adicionado à lista de SMS.`);
+                return ctx.reply(WeatherTelegramBot.renderSmsSubscribers(subscribers), {
+                    reply_markup: subscribers.length
+                        ? WeatherTelegramBot.buildSmsRemoveKeyboard(subscribers)
+                        : buildSmsSubscribersKeyboard()
+                });
+            }
+
+            // Pending institution-message edit for the email comunicado flow.
             if (this._emailEditPending.has(chatId)) {
                 const text = String(ctx.message?.text || '').trim();
                 if (!text) {
