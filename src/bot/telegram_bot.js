@@ -31,7 +31,8 @@ import {
     countSmsSubscribers,
     getSmsNumbers,
     listSmsSubscribers,
-    removeSmsSubscriber
+    removeSmsSubscriber,
+    removeSmsSubscribersByChatId
 } from '../model/sms_subscriber_store.js';
 import {
     DEFAULT_EMAIL_CUSTOM_MESSAGE,
@@ -45,7 +46,18 @@ import {
     getTierBadge,
     BOT_COMMANDS,
     renderSeverityBadge,
-    buildRegularWelcomeMessage
+    buildRegularWelcomeMessage,
+    SUBSCRIPTION_KEYWORD,
+    CONSENT_CANCEL_LABEL,
+    buildConsentRequestMessage,
+    buildConsentGrantedMessage,
+    buildConsentDeclinedMessage,
+    buildConsentCancelledMessage,
+    buildContactPromptMessage,
+    buildSubscriptionSuccessMessage,
+    buildForeignContactMessage,
+    buildContactRejectedMessage,
+    buildWithdrawalMessage
 } from './presentation.js';
 import {
     buildMainMenuKeyboard,
@@ -62,7 +74,9 @@ import {
     buildActiveAlertsKeyboard,
     buildEmailComposeKeyboard,
     buildSmsComposeKeyboard,
-    buildSmsSubscribersKeyboard
+    buildSmsSubscribersKeyboard,
+    buildConsentKeyboard,
+    buildConsentContactKeyboard
 } from './keyboards.js';
 
 
@@ -165,6 +179,8 @@ export class WeatherTelegramBot {
         this.getSnapshot = getSnapshot || (() => getLastScanSnapshot());
         this._emailEditPending = new Set();
         this._smsAddPending = new Set();
+        // Chats that agreed to the term and are waiting to share their number.
+        this._consentContactPending = new Set();
         this._adminCache = { ids: null, expires: 0 };
 
         this.localState = parseMonitorConfig();
@@ -1430,6 +1446,20 @@ export class WeatherTelegramBot {
     // =========================================================================
 
     /**
+     * Opens the official SMS subscription consent term.
+     * Deliberately public — a citizen must be able to authorize alerts without
+     * holding (or ever seeking) administrator rights.
+     *
+     * @param {object} ctx - grammY context.
+     * @returns {Promise<object>} Telegram reply result.
+     */
+    startSubscriptionConsent(ctx) {
+        return ctx.reply(buildConsentRequestMessage(), {
+            reply_markup: buildConsentKeyboard()
+        });
+    }
+
+    /**
      * Registers all command handlers and callback query routes on the Telegram client.
      */
     registerHandlers() {
@@ -1440,6 +1470,12 @@ export class WeatherTelegramBot {
             const payloadRaw = ctx.match !== undefined
                 ? String(ctx.match)
                 : String(ctx.message?.text || '').split(/\s+/).slice(1).join(' ');
+            // The subscription keyword must be tested before invite extraction:
+            // "inscrever" contains an 8-char A-Z0-9 run and would otherwise be
+            // mistaken for an invite code.
+            if (payloadRaw.trim().toLowerCase() === SUBSCRIPTION_KEYWORD) {
+                return this.startSubscriptionConsent(ctx);
+            }
             const payloadCode = payloadRaw ? (extractInviteCodeFromText(payloadRaw) || normalizeInviteCode(payloadRaw)) : null;
             const isInvitePayload = payloadCode && INVITE_CODE_REGEX.test(payloadCode);
             if (!this.isAdmin(ctx)) {
@@ -1467,6 +1503,19 @@ export class WeatherTelegramBot {
 
         this.telegram.onCommand('start', handleStart);
         this.telegram.onCommand('menu', handleStart);
+
+        // Command: /inscrever -> citizen SMS subscription consent term (public)
+        this.telegram.onCommand(SUBSCRIPTION_KEYWORD, ctx => this.startSubscriptionConsent(ctx));
+
+        // Command: /sair -> withdraw the consent recorded by this chat (public)
+        this.telegram.onCommand('sair', ctx => {
+            const chatId = String(ctx.chat?.id);
+            this._consentContactPending.delete(chatId);
+            const removed = removeSmsSubscribersByChatId(chatId);
+            return ctx.reply(buildWithdrawalMessage(removed), {
+                reply_markup: { remove_keyboard: true }
+            });
+        });
 
         // Command: /help -> Help and Command List (admin only; non-admins get invite prompt)
         this.telegram.onCommand('help', ctx => {
@@ -1713,6 +1762,24 @@ export class WeatherTelegramBot {
                     CARD_DIVIDER,
                     'Você pode mudar de ideia e usar /start novamente enquanto não houver administrador.'
                 ].join('\n'), { reply_markup: buildRegularKeyboard() });
+            }
+
+            // Consent flow — intentionally public: citizens subscribe to SMS
+            // alerts without administrator rights, so it is routed before the
+            // admin gate below.
+            if (data === 'consent:agree') {
+                const consentChatId = String(ctx.chat?.id);
+                this._consentContactPending.add(consentChatId);
+                await answer('✅ Consentimento registrado');
+                await ctx.editMessageText?.(buildConsentGrantedMessage());
+                return ctx.reply(buildContactPromptMessage(), {
+                    reply_markup: buildConsentContactKeyboard()
+                });
+            }
+            if (data === 'consent:decline') {
+                this._consentContactPending.delete(String(ctx.chat?.id));
+                await answer('Cadastro não realizado');
+                return ctx.editMessageText?.(buildConsentDeclinedMessage());
             }
 
             if (!this.isAdmin(ctx)) {
@@ -2085,16 +2152,73 @@ export class WeatherTelegramBot {
             }
         });
 
+        // Contact handler: the citizen delivers their number through Telegram's
+        // native share-contact button. A row is written only while a consent
+        // agreed in this same chat is still pending, so every stored number
+        // has an explicit authorization behind it.
+        this.telegram.onContact(async ctx => {
+            const chatId = String(ctx.chat?.id);
+            const shared = String(ctx.message?.contact?.phone_number || '').trim();
+            if (!shared) return undefined;
+
+            if (!this._consentContactPending.has(chatId)) {
+                // Unsolicited contact: nothing is captured, show the term first.
+                return this.startSubscriptionConsent(ctx);
+            }
+
+            const senderId = ctx.from?.id !== undefined && ctx.from?.id !== null ? String(ctx.from.id) : null;
+            const owner = ctx.message.contact.user_id !== undefined && ctx.message.contact.user_id !== null
+                ? String(ctx.message.contact.user_id)
+                : senderId;
+            if (owner !== senderId) {
+                // A third party's contact card can never be captured.
+                return ctx.reply(buildForeignContactMessage(), {
+                    reply_markup: buildConsentContactKeyboard()
+                });
+            }
+
+            const result = addSmsSubscriber(shared, {
+                label: ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name || null),
+                addedBy: chatId
+            });
+
+            if (result.ok) {
+                this._consentContactPending.delete(chatId);
+                return ctx.reply(buildSubscriptionSuccessMessage({ phone: result.phone }), {
+                    reply_markup: { remove_keyboard: true }
+                });
+            }
+            if (result.reason === 'already_present') {
+                this._consentContactPending.delete(chatId);
+                return ctx.reply(buildSubscriptionSuccessMessage({ already: true }), {
+                    reply_markup: { remove_keyboard: true }
+                });
+            }
+            // invalid_phone / store error: consent stays pending for a retry.
+            return ctx.reply(buildContactRejectedMessage(), {
+                reply_markup: buildConsentContactKeyboard()
+            });
+        });
+
         // Text handler: non-admins can redeem invite codes (A-Z0-9 8 chars); otherwise invite prompt
         this.telegram.onText(async ctx => {
+            const chatId = String(ctx.chat?.id);
+            const rawText = String(ctx.message?.text || '').trim();
+            // Cancel button of the contact keyboard — reply keyboards deliver
+            // plain text, so the abort arrives here instead of a callback.
+            if (this._consentContactPending.has(chatId) && rawText === CONSENT_CANCEL_LABEL) {
+                this._consentContactPending.delete(chatId);
+                return ctx.reply(buildConsentCancelledMessage(), {
+                    reply_markup: { remove_keyboard: true }
+                });
+            }
             if (!this.isAdmin(ctx)) {
-                const text = String(ctx.message?.text || '').trim();
+                const text = rawText;
                 const inviteResult = await this.tryConsumeInviteCode(ctx, text);
                 if (inviteResult) return inviteResult;
                 return this.replyInviteRequired(ctx);
             }
             // Pending subscriber number for the SMS list (admin-triggered channel).
-            const chatId = String(ctx.chat?.id);
             if (this._smsAddPending.has(chatId)) {
                 const text = String(ctx.message?.text || '').trim();
                 this._smsAddPending.delete(chatId);

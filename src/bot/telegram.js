@@ -1,6 +1,6 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, Keyboard } from 'grammy';
 
-export { InlineKeyboard };
+export { InlineKeyboard, Keyboard };
 
 /** Telegram's documented maximum text-message size. */
 export const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
@@ -209,6 +209,19 @@ export class TelegramBotClient {
      */
     onText(handler) {
         this.bot.on('message:text', handler);
+        return this;
+    }
+
+    /**
+     * Registers a contact-message handler on the wrapped bot.
+     * Contact cards are how the consent flow receives a shared phone number;
+     * Telegram delivers them as `message:contact`, never as `message:text`.
+     *
+     * @param {Function} handler - grammY context handler.
+     * @returns {TelegramBotClient} This client for composition.
+     */
+    onContact(handler) {
+        this.bot.on('message:contact', handler);
         return this;
     }
 

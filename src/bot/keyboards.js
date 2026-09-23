@@ -6,12 +6,13 @@
  * @module botKeyboards
  */
 
-import { InlineKeyboard } from './telegram.js';
+import { InlineKeyboard, Keyboard } from './telegram.js';
 import {
     INMET_SEVERITY_OPTIONS,
     DEFESA_CIVIL_SEVERITY_OPTIONS,
     CATEGORY_SEVERITY_OPTIONS,
-    getTierShortBadge
+    getTierShortBadge,
+    CONSENT_CANCEL_LABEL
 } from './presentation.js';
 import { ALERT_CATEGORIES, normalizeSeverityTier } from '../monitoring/risk_analyzer.js';
 
@@ -224,4 +225,32 @@ export function buildSmsSubscribersKeyboard() {
         .text('📋 Listar inscritos', 'action:sms_list')
         .row()
         .text('⬅️ Voltar às Configurações', 'menu:settings');
+}
+
+
+/**
+ * Builds the agree/refuse inline keyboard attached to the consent term.
+ * The two callbacks are public: citizens subscribe without admin rights.
+ *
+ * @returns {InlineKeyboard}
+ */
+export function buildConsentKeyboard() {
+    return new InlineKeyboard()
+        .text('✅ Concordo', 'consent:agree')
+        .text('❌ Recusar', 'consent:decline');
+}
+
+
+/**
+ * Builds the native share-contact reply keyboard for the second consent step.
+ * `request_contact` is only offered by Telegram on a reply keyboard (never on
+ * an inline one), so this is what turns the tap into the phone-number capture.
+ *
+ * @returns {Keyboard}
+ */
+export function buildConsentContactKeyboard() {
+    return new Keyboard()
+        .requestContact('📱 Compartilhar meu número')
+        .row()
+        .text(CONSENT_CANCEL_LABEL);
 }

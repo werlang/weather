@@ -428,7 +428,8 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         const ok = await bot.initCommands();
         assert.strictEqual(ok, true);
         assert.ok(Array.isArray(registeredCommands));
-        assert.strictEqual(registeredCommands.length, 6);
+        // start, menu, inscrever, sair, status, alertas, config, help
+        assert.strictEqual(registeredCommands.length, 8);
     });
 
     it('handles interactive button navigation and independent institute adjustments', async () => {
