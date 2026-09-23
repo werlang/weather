@@ -332,23 +332,19 @@ export class WeatherTelegramBot {
      */
     renderDispatchConfig() {
         const dispatches = this.getDispatches();
-        const state = enabled => (enabled ? '✅ ARMADO' : '⬜ DESARMADO');
+        const state = enabled => (enabled ? '✅ ATIVO' : '⬜ DESATIVADO');
         const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
-        const smsTesting = (() => {
-            try { return (this.smsService || getSmsService()).config?.testing === true; } catch { return false; }
-        })();
         const adminCount = (() => { try { return this.telegram.getAdminChatIds().length; } catch { return 0; } })();
         return [
             '⚙️ CONFIGURAÇÃO DE DISPAROS',
             CARD_HEADER,
-            'Ligue e desligue cada meio. Em produção todos ficam armados.',
+            'Ligue e desligue cada meio. Em produção todos ficam ATIVOs.',
             '',
             `📧 E-mail (comunicado): ${state(dispatches.email)}`,
             `   Destinatário: ${recipient} — cita a mensagem da instituição.`,
             '',
             `📱 SMS para inscritos: ${state(dispatches.sms)}`,
             `   👥 Inscritos: ${countSmsSubscribers()} — envia a mesma mensagem.`,
-            ...(smsTesting ? ['', '🧪 SMS_TESTING=true — nenhum SMS real sai deste ambiente.'] : []),
             '',
             CARD_DIVIDER,
             '🤖 Alertas automáticos (Telegram): sempre ativos',
@@ -384,8 +380,6 @@ export class WeatherTelegramBot {
             ` ${mark(dispatches.email)} 📧 E-mail (comunicado)`,
             ` ${mark(dispatches.sms)} 📱 SMS para inscritos`,
             '',
-            '🤖 Alertas automáticos (Telegram) são obrigatórios e disparam sozinhos.',
-            '',
             CARD_DIVIDER,
             '🚀 Enviar disparo entrega nos meios configurados de uma vez só.',
             '⚙️ Alterne os meios em Ver configurações.'
@@ -405,7 +399,7 @@ export class WeatherTelegramBot {
      * @returns {string} Receipt text.
      */
     static renderDispatchResult({ email = null, sms = null, emailArmed = true, smsArmed = true } = {}) {
-        const off = '⬜ Canal desarmado — ative em ⚙️ Configurações → Disparos.';
+        const off = '⬜ Canal DESATIVADO — ative em ⚙️ Configurações → Disparos.';
         const lines = [
             '🚀 DISPARO DE ALERTA',
             CARD_HEADER,
@@ -1004,9 +998,6 @@ export class WeatherTelegramBot {
         const rendered = renderAlertSms({ events, message });
         const aggregated = aggregateRiskEvents(events);
         const uniqueCities = [...new Set(events.flatMap(event => event.affectedCities || []))];
-        const smsTesting = (() => {
-            try { return (this.smsService || getSmsService()).config?.testing === true; } catch { return false; }
-        })();
 
         const lines = [
             '✉️ COMPOSIÇÃO DA MENSAGEM',
@@ -1037,7 +1028,6 @@ export class WeatherTelegramBot {
             subscriberCount === 0
                 ? '   👥 Nenhum inscrito na lista de SMS — nada a enviar.'
                 : `   👥 Destinatários: ${subscriberCount} — 🧮 ${rendered.segments} segmento(s) — 💰 ${rendered.segments * subscriberCount} crédito(s)`,
-            ...(smsTesting ? ['', '   🧪 SMS_TESTING=true — nenhum SMS real sai deste ambiente.'] : []),
             '',
             CARD_DIVIDER,
             '🤖 Telegram: alertas automáticos a cada ciclo — não usam esta mensagem.',
@@ -2151,9 +2141,6 @@ export class WeatherTelegramBot {
 
             if (data.startsWith('dispatch:toggle:')) {
                 const channel = data.split(':')[2];
-                if (channel === 'telegram') {
-                    return answer('🤖 Alertas automáticos do Telegram são obrigatórios para todo administrador.');
-                }
                 const labels = {
                     email: 'E-mail (comunicado)',
                     sms: 'SMS para inscritos'
@@ -2163,7 +2150,7 @@ export class WeatherTelegramBot {
                 }
                 const armed = !this.isDispatchEnabled(channel);
                 this.setDispatchEnabled(channel, armed);
-                await answer(`${labels[channel]}: ${armed ? '✅ armado' : '⬜ desarmado'}.`);
+                await answer(`${labels[channel]}: ${armed ? '✅ ATIVO' : '⬜ DESATIVADO'}.`);
                 return ctx.editMessageText?.(this.renderDispatchConfig(), {
                     reply_markup: buildDispatchConfigKeyboard(this.getDispatches())
                 });

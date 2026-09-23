@@ -209,8 +209,8 @@ describe('dispatch configuration screen', () => {
         const captured = await fireCallback(fakeBot, 'action:dispatch_config');
 
         assert.match(captured.edited, /CONFIGURAÇÃO DE DISPAROS/);
-        assert.match(captured.edited, /E-mail \(comunicado\): ✅ ARMADO/);
-        assert.match(captured.edited, /SMS para inscritos: ✅ ARMADO/);
+        assert.match(captured.edited, /E-mail \(comunicado\): ✅ ATIVO/);
+        assert.match(captured.edited, /SMS para inscritos: ✅ ATIVO/);
 
         const flat = flatCallbacks(captured.options.reply_markup);
         assert.ok(flat.includes('dispatch:toggle:email'));
@@ -226,7 +226,7 @@ describe('dispatch configuration screen', () => {
         assert.equal(bot.isDispatchEnabled('email'), false);
 
         const reopened = await fireCallback(fakeBot, 'action:dispatch_config');
-        assert.match(reopened.edited, /E-mail \(comunicado\): ⬜ DESARMADO/);
+        assert.match(reopened.edited, /E-mail \(comunicado\): ⬜ DESATIVADO/);
 
         await fireCallback(fakeBot, 'dispatch:toggle:email');
         assert.equal(bot.isDispatchEnabled('email'), true);
@@ -369,7 +369,7 @@ describe('one dispatch over every configured means', () => {
 
         assert.equal(emailService.sent.length, 0, 'a disarmed channel must stay silent');
         assert.equal(smsService.sent.length, 1);
-        assert.match(captured.edited, /desarmado/i);
+        assert.match(captured.edited, /DESATIVADO/i);
         assert.match(captured.edited, /SMS ENVIADO/);
     });
 
