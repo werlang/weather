@@ -25,14 +25,14 @@ ifsul/weather/
 │   └── weather_logs.db               # SQLite telemetry & audit log storage (git-ignored)
 ├── migrations/                       # Versioned SQL migrations (001–008)
 │   ├── 001_initial_schema.sql        # Initial schema migration
-│   └── 008_sms_subscribers.sql       # Admin-managed SMS subscriber list
+│   └── 008_sms_subscribers.sql       # SMS subscriber list (admin + citizen consent)
 ├── src/
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper and administrator delivery client
 │   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
-│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome
-│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS)
+│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy
+│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, email, SMS; reply: consent share-contact)
 │   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store
 │   │   └── sms_templates.js          # Compact ≤160-char SMS body renderer
 │   ├── clients/                      # Upstream data sources
@@ -44,7 +44,7 @@ ifsul/weather/
 │   ├── model/                        # SQLite persistence
 │   │   ├── log_database.js           # Native Node 26 SQLite log database & telemetry analytics
 │   │   ├── admin_store.js            # Admin allowlist & 5-min invite codes
-│   │   └── sms_subscriber_store.js   # Admin-managed SMS recipients (sms_subscribers, E.164)
+│   │   └── sms_subscriber_store.js   # SMS recipients (sms_subscribers, E.164) + per-chat withdrawal
 │   └── helpers/                      # Cross-cutting infrastructure
 │       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
 │       ├── migrate.js                # Versioned SQLite database migration runner
@@ -53,7 +53,7 @@ ifsul/weather/
 ├── scripts/
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/                            # Mirrors src/ groups (unit only, :memory: DB)
-    ├── bot/                          # Telegram, email action/template, SMS action/template tests
+    ├── bot/                          # Telegram, email action/template, SMS action/template, consent flow tests
     ├── clients/                      # INMET + Defesa Civil client tests
     ├── monitoring/                   # 24h window risk monitoring service tests
     ├── model/                        # SQLite log database, admin invite + SMS subscriber tests

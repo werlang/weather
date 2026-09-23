@@ -14,8 +14,8 @@ src/
 ├── bot/                          # Telegram interface (grammY)
 │   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking
 │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
-│   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome)
-│   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS)
+│   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome, consent term copy)
+│   ├── keyboards.js              # Pure keyboard builders (inline menus/settings/email/SMS; reply consent share-contact)
 │   ├── email_templates.js        # Alert MJML renderer + custom-message store
 │   └── sms_templates.js          # Compact plain-text SMS body (≤160 chars)
 ├── clients/                      # Raw HTTP clients (INMET/IBGE, Defesa Civil RS)
@@ -27,7 +27,7 @@ src/
 ├── model/                        # SQLite persistence (no network I/O)
 │   ├── log_database.js           # Fetch/alert/cycle logs, settings, retention
 │   ├── admin_store.js            # Admin allowlist & invite codes
-│   └── sms_subscriber_store.js   # Admin-managed SMS recipients (sms_subscribers, E.164)
+│   └── sms_subscriber_store.js   # SMS recipients (sms_subscribers, E.164) + per-chat withdrawal
 └── helpers/                      # Cross-cutting infrastructure (no domain logic)
     ├── database_driver.js        # Generic SQLite query-builder & CRUD driver
     ├── migrate.js                # Versioned migration runner (migrations/ at repo root)

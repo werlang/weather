@@ -75,14 +75,14 @@ ifsul/weather/
 │   ├── 005_migrate_category_tiers.sql# Boolean → tier migration
 │   ├── 006_admin_invites.sql         # Admin invites & users tables
 │   ├── 007_cleanup_legacy_settings.sql# Legacy key cleanup
-│   └── 008_sms_subscribers.sql       # Admin-managed SMS subscriber list
+│   └── 008_sms_subscribers.sql       # SMS subscriber list (admin + citizen consent)
 ├── src/
 │   ├── weather_bot.js                # Process composition entry point & signal handling
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper, DB allowlist auth, splitMessage (<4096)
 │   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
 │   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy
-│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS, consent)
+│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, email, SMS; reply: consent share-contact)
 │   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store
 │   │   └── sms_templates.js          # Compact ≤160-char SMS body renderer
 │   ├── clients/                      # Upstream data sources (network I/O lives here)
