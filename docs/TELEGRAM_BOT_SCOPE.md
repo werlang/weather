@@ -53,13 +53,26 @@ Provider threshold buttons in the settings menu also display the current color c
 Broadcast emergency alerts include quick jump action buttons attached directly to the alert message:
 ```text
 [ 🚨 Alertas Ativos ]
-[ 📧 Enviar comunicado por e-mail ]
+[ 📧 Enviar comunicado por e-mail ]   [ 📱 Enviar SMS ]
 [ 🏠 Abrir Painel Principal ]
 ```
+The same tray is reused by `buildActiveAlertsKeyboard`.
+
 Tapping 📧 opens the email comunicado composer (`action:email_compose`):
 preview of hazards + impacted zone + recipient, then send with the current
 institution message, edit it via bot text (saved as the new default in
 `system_settings.email_custom_message`), or send without it.
+
+Tapping 📱 opens the SMS composer (`action:sms_compose`): preview of the exact
+≤160-character body, recipient count, segment count, and estimated credit cost,
+then dispatch to every number in `sms_subscribers` in a single gateway request
+(`action:sms_send`). Recipients are managed from
+**Configurações → Inscritos SMS** (`menu:sms`), which lists normalized E.164
+numbers with a per-number remove button and an add-by-text flow
+(`action:sms_add`). Unlike the email flow there is **no custom-message editor** —
+the body is regenerated from the last scan snapshot at send time, and SMS is
+deliberately *not* wired into the automatic `createAlertCallback` batch.
+Full pipeline: `ALERT_METHODOLOGY.md` §8.5.
 
 ---
 

@@ -13,10 +13,11 @@ src/
 ├── weather_bot.js                # Canonical entry point uniting monitor & Telegram daemon
 ├── bot/                          # Telegram interface (grammY)
 │   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking
-│   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email flow
+│   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
 │   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome)
-│   ├── keyboards.js              # Pure InlineKeyboard builders
-│   └── email_templates.js        # Alert MJML renderer + custom-message store
+│   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS)
+│   ├── email_templates.js        # Alert MJML renderer + custom-message store
+│   └── sms_templates.js          # Compact plain-text SMS body (≤160 chars)
 ├── clients/                      # Raw HTTP clients (INMET/IBGE, Defesa Civil RS)
 │   ├── inmet_client.js           # INMET forecasts/warnings + municipality catalog
 │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
@@ -25,11 +26,13 @@ src/
 │   └── monitor_service.js        # Periodic polling loop & 24h risk evaluation orchestration
 ├── model/                        # SQLite persistence (no network I/O)
 │   ├── log_database.js           # Fetch/alert/cycle logs, settings, retention
-│   └── admin_store.js            # Admin allowlist & invite codes
+│   ├── admin_store.js            # Admin allowlist & invite codes
+│   └── sms_subscriber_store.js   # Admin-managed SMS recipients (sms_subscribers, E.164)
 └── helpers/                      # Cross-cutting infrastructure (no domain logic)
     ├── database_driver.js        # Generic SQLite query-builder & CRUD driver
     ├── migrate.js                # Versioned migration runner (migrations/ at repo root)
-    └── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+    ├── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+    └── sms_client.js             # SMS Dev gateway (env contract, E.164, credit math)
 scripts/
 └── monitor_regional_risks.js     # CLI tool for on-demand console risk reporting
 tests/                            # Mirrors src/ groups (bot, clients, monitoring, model, helpers)
@@ -38,8 +41,13 @@ tests/                            # Mirrors src/ groups (bot, clients, monitorin
 ### Responsibility Rules:
 1. **`inmet_client.js`**: Handles raw HTTP communication via `fetch`, URL formation, and data shaping. It must NOT contain Telegram or presentation formatting code.
 2. **`risk_analyzer.js`**: Contains pure business logic (no network requests, no console logging). Easy to test deterministically with zero mocks.
-3. **`monitor_service.js`**: Orchestrates periodic checks and invokes registered callback (`alertCallback`). It is agnostic to the delivery medium (can output to console, Telegram, email, etc.).
+3. **`monitor_service.js`**: Orchestrates periodic checks and invokes registered callback (`alertCallback`). It is agnostic to the delivery medium (can output to console, Telegram, email, etc.). **SMS is deliberately NOT wired to `alertCallback`** — it is admin-triggered from the bot so gateway failures cannot re-trigger the at-least-once batch-retry gate (see `docs/ALERT_METHODOLOGY.md` §8.1 and §8.5).
 4. **`telegram.js` & `telegram_bot.js`**: Handle Telegram delivery, splitting messages at 4096 characters, validating chat authorization, and formatting messages with emojis.
+5. **`sms_client.js` vs `sms_subscriber_store.js` vs `sms_templates.js`**: transport, persistence, and copy never mix.
+   - `sms_client.js` owns the gateway contract: env validation (`SMSDEV_KEY`/`SMS_TESTING`), E.164 normalization, segment/credit math, HTTP send. **No SQLite, no Telegram.**
+   - `sms_subscriber_store.js` owns SQLite rows for `sms_subscribers`. **No network I/O, no message wording.**
+   - `sms_templates.js` owns the ≤160-character plain-text body. **No DB, no HTTP, no emoji** (emoji force UCS-2 → 70 chars/segment instead of 160).
+   - Only `telegram_bot.js` composes the three, and it must contain failures as `{ ok: false, error }` — never throw into the long-running loop.
 
 ---
 

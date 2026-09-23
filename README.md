@@ -19,19 +19,22 @@ ifsul/weather/
 │   ├── INMET_API_DOCUMENTATION.md          # Detailed API reference for INMET endpoints
 │   ├── DEFESA_CIVIL_RS_API_DOCUMENTATION.md # Detailed GraphQL & WebSocket API reference for Defesa Civil RS
 │   ├── METEOROLOGICAL_RISKS_GUIDE.md        # Guide on severe weather alert levels and filtering logic
-│   └── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
+│   ├── TELEGRAM_BOT_SCOPE.md                # Bot capabilities, authorization, and non-goals
+│   └── ALERT_METHODOLOGY.md                 # Canonical alert pipeline: analysis → delivery (email + SMS)
 ├── database/
 │   └── weather_logs.db               # SQLite telemetry & audit log storage (git-ignored)
-├── migrations/
-│   └── 001_initial_schema.sql        # Initial schema migration
+├── migrations/                       # Versioned SQL migrations (001–008)
+│   ├── 001_initial_schema.sql        # Initial schema migration
+│   └── 008_sms_subscribers.sql       # Admin-managed SMS subscriber list
 ├── src/
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper and administrator delivery client
-│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email flow
+│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
 │   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome
-│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email)
-│   │   └── email_templates.js        # Alert MJML renderer + institution custom-message store
+│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS)
+│   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store
+│   │   └── sms_templates.js          # Compact ≤160-char SMS body renderer
 │   ├── clients/                      # Upstream data sources
 │   │   ├── inmet_client.js           # Reusable Node 26 API client for INMET & IBGE
 │   │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
@@ -40,19 +43,21 @@ ifsul/weather/
 │   │   └── monitor_service.js        # Long-running 24h risk monitoring service
 │   ├── model/                        # SQLite persistence
 │   │   ├── log_database.js           # Native Node 26 SQLite log database & telemetry analytics
-│   │   └── admin_store.js            # Admin allowlist & 5-min invite codes
+│   │   ├── admin_store.js            # Admin allowlist & 5-min invite codes
+│   │   └── sms_subscriber_store.js   # Admin-managed SMS recipients (sms_subscribers, E.164)
 │   └── helpers/                      # Cross-cutting infrastructure
 │       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
 │       ├── migrate.js                # Versioned SQLite database migration runner
-│       └── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+│       ├── email_client.js           # SMTP transport (Ethereal dev, SMTP prod)
+│       └── sms_client.js             # SMS Dev gateway transport (key contract, E.164, credit math)
 ├── scripts/
 │   └── monitor_regional_risks.js     # On-demand CLI regional risk report generator
 └── tests/                            # Mirrors src/ groups (unit only, :memory: DB)
-    ├── bot/                          # Telegram, email action, email template tests
+    ├── bot/                          # Telegram, email action/template, SMS action/template tests
     ├── clients/                      # INMET + Defesa Civil client tests
     ├── monitoring/                   # 24h window risk monitoring service tests
-    ├── model/                        # SQLite log database + admin invite tests
-    └── helpers/                      # Driver, migrations, email transport tests
+    ├── model/                        # SQLite log database, admin invite + SMS subscriber tests
+    └── helpers/                      # Driver, migrations, email + SMS transport tests
 ```
 
 ---
