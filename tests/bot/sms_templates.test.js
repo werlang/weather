@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { countSmsSegments } from '../../src/helpers/sms_client.js';
+import { countSmsSegments, SMS_SEGMENT_LENGTH } from '../../src/helpers/sms_client.js';
 import { renderAlertSms } from '../../src/bot/sms_templates.js';
+import { DEFAULT_EMAIL_CUSTOM_MESSAGE } from '../../src/bot/email_templates.js';
+
+/** Matches emoji blocks and dingbats that would force UCS-2 on a carrier. */
+const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
 
 /**
  * Builds a minimal risk event in the shape produced by the analyzer.
@@ -24,83 +28,76 @@ function makeEvent(overrides = {}) {
     };
 }
 
-describe('renderAlertSms compact body', () => {
-    const sentAt = new Date('2026-09-12T17:35:00-03:00');
-
+describe('renderAlertSms institution body', () => {
     it('rejects an empty event list', () => {
         assert.throws(() => renderAlertSms({ events: [] }), TypeError);
         assert.throws(() => renderAlertSms({}), TypeError);
     });
 
-    it('carries the hazard, plain severity label, and impacted zone', () => {
-        const rendered = renderAlertSms({ events: [makeEvent()], sentAt });
-
-        assert.match(rendered.text, /Tempestade severa/);
-        assert.match(rendered.text, /GRANDE PERIGO/);
-        assert.match(rendered.text, /Charqueadas/);
-        assert.equal(rendered.hazardCount, 1);
-        assert.equal(rendered.highestTier, 'RED');
-        assert.deepEqual(rendered.cities, ['Charqueadas']);
+    it('rejects a missing or blank institution message', () => {
+        assert.throws(() => renderAlertSms({ events: [makeEvent()] }), TypeError);
+        assert.throws(() => renderAlertSms({ events: [makeEvent()], message: '   ' }), TypeError);
+        assert.throws(() => renderAlertSms({ events: [makeEvent()], message: '\r\n\t ' }), TypeError);
     });
 
-    it('never emits emoji or markdown that would bloat a segment', () => {
-        const rendered = renderAlertSms({ events: [makeEvent()], sentAt });
-        // Emoji force UCS-2 encoding on real carriers (70 chars/segment) and
-        // are useless in a 160-character municipal alert.
-        assert.doesNotMatch(rendered.text, /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u);
+    it('sends the institution message verbatim as the whole body', () => {
+        const message = 'Aulas suspensas neste turno por risco meteorológico severo.';
+        const rendered = renderAlertSms({ events: [makeEvent()], message });
+
+        assert.equal(rendered.text, message);
+        assert.equal(rendered.segments, countSmsSegments(message));
+    });
+
+    it('never inherits the hazard, zone or timestamp the e-mail carries', () => {
+        const crowdedCities = Array.from({ length: 40 }, (_, index) => `Município ${index} do Vale`);
+        const message = 'Mensagem da instituição para a comunidade.';
+        const rendered = renderAlertSms({
+            events: [makeEvent({ type: 'Chuva forte', affectedCities: crowdedCities })],
+            message
+        });
+
+        assert.equal(rendered.text, message);
+        assert.doesNotMatch(rendered.text, /Chuva forte/);
+        assert.doesNotMatch(rendered.text, /Município 3 do Vale/);
+        assert.doesNotMatch(rendered.text, /\d{2}\/\d{2}\/\d{4}/);
+    });
+
+    it('flattens line breaks and collapses repeated blanks for the carrier', () => {
+        const rendered = renderAlertSms({
+            events: [makeEvent()],
+            message: 'Linha um,\r\nlinha dois   com  espaços.'
+        });
+
+        assert.equal(rendered.text, 'Linha um, linha dois com espaços.');
+    });
+
+    it('never emits emoji that would bloat a segment', () => {
+        const rendered = renderAlertSms({ events: [makeEvent()], message: DEFAULT_EMAIL_CUSTOM_MESSAGE });
+
+        assert.doesNotMatch(rendered.text, EMOJI_PATTERN);
         assert.doesNotMatch(rendered.text, /[\r\n]/);
     });
 
-    it('stays within one paid segment for a crowded multi-city batch', () => {
-        const events = [
-            makeEvent({ affectedCities: ['Charqueadas', 'Eldorado do Sul', 'São Leopoldo', 'Campo Bom', 'Novo Hamburgo'] }),
-            makeEvent({ type: 'Chuva forte com risco de alagamento', colorTier: 'ORANGE', severity: 'Perigo' }),
-            makeEvent({ type: 'Rajadas de vento', colorTier: 'YELLOW', severity: 'Perigo Potencial' })
-        ];
+    it('prices a longer message in more segments without truncating it', () => {
+        const message = 'x'.repeat(SMS_SEGMENT_LENGTH + 40);
+        const rendered = renderAlertSms({ events: [makeEvent()], message });
 
-        const rendered = renderAlertSms({ events, sentAt });
+        assert.equal(rendered.text, message, 'the institution wording must never be cut');
+        assert.equal(rendered.segments, 2);
+        assert.equal(countSmsSegments(rendered.text), 2);
+    });
+});
 
-        assert.ok(rendered.text.length <= 160, `expected <= 160 chars, got ${rendered.text.length}`);
-        assert.equal(rendered.segments, 1);
-        assert.equal(countSmsSegments(rendered.text), 1);
-        assert.ok(rendered.hazardCount >= 1);
-        assert.ok(rendered.cities.length >= 1);
+describe('default institution message shared by e-mail and SMS', () => {
+    it('costs exactly one paid segment', () => {
+        assert.equal(countSmsSegments(DEFAULT_EMAIL_CUSTOM_MESSAGE), 1);
+        assert.ok(Array.from(DEFAULT_EMAIL_CUSTOM_MESSAGE).length <= SMS_SEGMENT_LENGTH);
     });
 
-    it('drops optional clauses before ever exceeding the limit', () => {
-        const manyCities = Array.from({ length: 40 }, (_, index) => `Município ${index} do Vale`);
-        const rendered = renderAlertSms({
-            events: [makeEvent({ affectedCities: manyCities, type: 'Chuva forte' })],
-            sentAt
-        });
-
-        assert.ok(rendered.text.length <= 160, `expected <= 160 chars, got ${rendered.text.length}`);
-        assert.equal(rendered.segments, 1);
-        // The hazard itself must survive every truncation path.
-        assert.match(rendered.text, /Chuva forte/);
-    });
-
-    it('reports the highest tier across aggregated events', () => {
-        const rendered = renderAlertSms({
-            events: [
-                makeEvent({ colorTier: 'YELLOW', severity: 'Perigo Potencial' }),
-                makeEvent({ colorTier: 'ORANGE', severity: 'Perigo' })
-            ],
-            sentAt
-        });
-        assert.equal(rendered.highestTier, 'ORANGE');
-        assert.match(rendered.text, /PERIGO/);
-    });
-
-    it('falls back to the municipality when no city is reported', () => {
-        const rendered = renderAlertSms({ events: [makeEvent({ affectedCities: [] })], sentAt });
-        assert.match(rendered.text, /Charqueadas/);
-        assert.deepEqual(rendered.cities, []);
-    });
-
-    it('aggregates repeated occurrences of the same hazard', () => {
-        const rendered = renderAlertSms({ events: [makeEvent(), makeEvent()], sentAt });
-        assert.equal(rendered.hazardCount, 1);
-        assert.ok(rendered.occurrences >= 2);
+    it('stands alone without the structured summary around it', () => {
+        assert.match(DEFAULT_EMAIL_CUSTOM_MESSAGE, /comunidade acadêmica/);
+        assert.match(DEFAULT_EMAIL_CUSTOM_MESSAGE, /aulas estão dispensadas/);
+        assert.doesNotMatch(DEFAULT_EMAIL_CUSTOM_MESSAGE, EMOJI_PATTERN);
+        assert.doesNotMatch(DEFAULT_EMAIL_CUSTOM_MESSAGE, /[\r\n]/);
     });
 });

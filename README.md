@@ -30,11 +30,11 @@ ifsul/weather/
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper and administrator delivery client
-│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
-│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy
-│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, email, SMS; reply: consent share-contact)
-│   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store
-│   │   └── sms_templates.js          # Compact ≤160-char SMS body renderer
+│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch channels, email + SMS flows
+│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy, SMS test notice
+│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, dispatch channels, email, SMS; reply: consent share-contact)
+│   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store (shared by SMS)
+│   │   └── sms_templates.js          # Institution-message SMS body renderer (single line, segment pricing)
 │   ├── clients/                      # Upstream data sources
 │   │   ├── inmet_client.js           # Reusable Node 26 API client for INMET & IBGE
 │   │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas

@@ -53,25 +53,36 @@ Provider threshold buttons in the settings menu also display the current color c
 Broadcast emergency alerts include quick jump action buttons attached directly to the alert message:
 ```text
 [ 🚨 Alertas Ativos ]
-[ 📧 Enviar comunicado por e-mail ]   [ 📱 Enviar SMS ]
+[ 🔔 Disparos ]
 [ 🏠 Abrir Painel Principal ]
 ```
 The same tray is reused by `buildActiveAlertsKeyboard`.
 
-Tapping 📧 opens the email comunicado composer (`action:email_compose`):
-preview of hazards + impacted zone + recipient, then send with the current
-institution message, edit it via bot text (saved as the new default in
-`system_settings.email_custom_message`), or send without it.
+Both trays funnel every channel through the single **🔔 Disparos**
+(`action:dispatches`) entry, which opens `buildDispatchesKeyboard`: one
+armed/disarmed toggle per channel — the automatic Telegram broadcast, the
+e-mail comunicado and the SMS batch — plus the compose buttons of the two
+manual channels. Toggles persist as `system_settings.dispatch_telegram`,
+`.dispatch_email` and `.dispatch_sms` (`1` armed / `0` disarmed, armed when the
+row is absent), so a future channel is one new row plus one new key.
+`EMAIL_TESTING` / `SMS_TESTING` are **not** these switches: they are
+development guards that stop real delivery outside production.
 
-Tapping 📱 opens the SMS composer (`action:sms_compose`): preview of the exact
-≤160-character body, recipient count, segment count, and estimated credit cost,
-then dispatch to every number in `sms_subscribers` in a single gateway request
-(`action:sms_send`). Recipients are managed from
-**Configurações → Inscritos SMS** (`menu:sms`), which lists normalized E.164
-numbers with a per-number remove button and an add-by-text flow
-(`action:sms_add`). Unlike the email flow there is **no custom-message editor** —
-the body is regenerated from the last scan snapshot at send time, and SMS is
-deliberately *not* wired into the automatic `createAlertCallback` batch.
+Tapping 📧 Compor e-mail opens the email comunicado composer
+(`action:email_compose`): preview of hazards + impacted zone + recipient, then
+send with the current institution message, edit it via bot text (saved as the
+new default in `system_settings.email_custom_message`), or send without it.
+
+Tapping 📱 Compor SMS opens the SMS composer (`action:sms_compose`): preview of
+the hazard list that triggered the send, the recipient count, the segment count
+and the estimated credit cost, then dispatch to every number in
+`sms_subscribers` in a single gateway request (`action:sms_send`). The body is
+**the institution message alone** — the very string the e-mail quotes — never a
+hazard summary. Recipients are managed from **Configurações → Inscritos SMS**
+(`menu:sms`), which lists normalized E.164 numbers with a per-number remove
+button and an add-by-text flow (`action:sms_add`). Editing that message once
+updates **both** channels; SMS is deliberately *not* wired into the automatic
+`createAlertCallback` batch.
 Full pipeline: `ALERT_METHODOLOGY.md` §8.5.
 
 ---
@@ -143,8 +154,15 @@ Registration is DB-only (no env allowlist):
 | :--- | :--- | :--- | :--- |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
 | `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, runtime settings and `admin_users`/`admin_invites`. |
+| `ALERT_EMAIL_TO` | No | placeholder | Recipient of the admin-triggered e-mail comunicado. |
+| `EMAIL_TESTING` | No | — | Development guard: the e-mail never leaves the box (Ethereal preview). Must not be `true` in production. |
+| `SMSDEV_KEY` | Prod: Yes | — | SMS Dev gateway key. |
+| `SMSDEV_BASE_URL` | No | `https://api.smsdev.com.br/v1` | SMS Dev gateway base URL (https only). |
+| `SMS_TESTING` | No | — | Development guard: nothing reaches the gateway; the triggering admin gets the subscriber-facing body as a flagged Telegram test message instead. Must not be `true` in production. |
 
 Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002): monitoring radius (`radius_km`, default `50` km) and cycle interval (`interval_minutes`, default `15` minutes) are configured exclusively through the database (bot `/config` or CLI), never through environment variables. `/config` changes persist across restarts.
+
+Dispatch channels are runtime settings as well: `dispatch_telegram`, `dispatch_email` and `dispatch_sms` (`1` armed / `0` disarmed, **armed when the row is absent**), managed only from **🔔 Disparos**. The `*_TESTING` variables are *not* these switches — they only guarantee that a development environment never delivers for real.
 
 ---
 

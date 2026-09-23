@@ -330,6 +330,30 @@ export function buildContactRejectedMessage() {
 }
 
 /**
+ * Renders the standalone test notice delivered to the administrator who
+ * pulled the trigger while `SMS_TESTING=true`: the verbatim body subscribers
+ * would have received, wrapped in an unmistakable "test message" banner
+ * instead of reaching a carrier.
+ *
+ * @param {object} options - Notice inputs.
+ * @param {string} options.body - Verbatim SMS body.
+ * @param {number} [options.recipients=0] - Subscriber count a real send would use.
+ * @returns {string} Test notice card.
+ */
+export function buildSmsTestingNotice({ body, recipients = 0 } = {}) {
+    return [
+        '🧪 MENSAGEM DE TESTE — NENHUM SMS FOI ENVIADO',
+        CARD_HEADER,
+        'Corpo exato que os inscritos receberiam num alerta real:',
+        CARD_DIVIDER,
+        String(body ?? '').trim() || '(corpo vazio)',
+        CARD_DIVIDER,
+        `👥 Inscritos que receberiam: ${recipients}`,
+        '🔒 SMS_TESTING=true (ambiente de desenvolvimento) — nada saiu para a operadora.'
+    ].join('\n');
+}
+
+/**
  * Renders the withdrawal receipt for `/revogar`.
  *
  * @param {number} removed - How many numbers this chat had authorized.

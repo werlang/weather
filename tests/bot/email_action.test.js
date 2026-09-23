@@ -10,6 +10,7 @@ import { CARD_HEADER } from '../../src/bot/presentation.js';
 import {
     buildAlertActionKeyboard,
     buildActiveAlertsKeyboard,
+    buildDispatchesKeyboard,
     buildEmailComposeKeyboard
 } from '../../src/bot/keyboards.js';
 import { DEFAULT_EMAIL_CUSTOM_MESSAGE } from '../../src/bot/email_templates.js';
@@ -144,13 +145,18 @@ async function fireText(fakeBot, text) {
 }
 
 describe('Email comunicado keyboards', () => {
-    it('exposes the email action on alert trays', () => {
+    it('reaches the composer through the consolidated dispatch entry', () => {
         const alertKb = buildAlertActionKeyboard();
-        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:email_compose')));
+        assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:dispatches')));
         assert.ok(alertKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:active_alerts')));
 
         const activeKb = buildActiveAlertsKeyboard();
-        assert.ok(activeKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:email_compose')));
+        assert.ok(activeKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:dispatches')));
+
+        // The two manual channels now live inside that single entry.
+        const dispatchFlat = buildDispatchesKeyboard({}).inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(dispatchFlat.includes('action:email_compose'));
+        assert.ok(dispatchFlat.includes('action:sms_compose'));
     });
 
     it('builds the compose keyboard with send / edit / skip actions', () => {

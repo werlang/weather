@@ -22,8 +22,18 @@ export const EMAIL_CUSTOM_MESSAGE_MAX_LENGTH = 1000;
 
 /**
  * Default institution message used until the admin edits it via the bot.
+ *
+ * One message serves **both** dispatch channels: it is quoted inside the
+ * structured e-mail comunicado, and it is the entire body of an SMS. It is
+ * therefore written to stand alone (no hazard summary, zone or timestamp —
+ * the e-mail adds those around it), to stay under `SMS_SEGMENT_LENGTH` so the
+ * default never costs more than one credit, and to stay plain text: emoji
+ * would push a real carrier to UCS-2 and 70 characters per segment.
+ *
+ * The stored key keeps its historical `email_custom_message` name because
+ * renaming it would orphan already-saved messages.
  */
-export const DEFAULT_EMAIL_CUSTOM_MESSAGE = 'Boa tarde, comunidade acadêmica. As aulas estão dispensadas no turno da noite de hoje devido ao alerta meteorológico severo vigente na região de Charqueadas. Acompanhem os canais oficiais para novas atualizações.';
+export const DEFAULT_EMAIL_CUSTOM_MESSAGE = 'Atenção, comunidade acadêmica: as aulas estão dispensadas no turno da noite devido ao alerta meteorológico severo em Charqueadas. Siga os canais oficiais.';
 
 /** Placeholder shown when no impacted city is reported. */
 const UNKNOWN_ZONE_LABEL = 'Não informados';

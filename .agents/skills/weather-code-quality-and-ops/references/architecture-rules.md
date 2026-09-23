@@ -13,11 +13,11 @@ src/
 ├── weather_bot.js                # Canonical entry point uniting monitor & Telegram daemon
 ├── bot/                          # Telegram interface (grammY)
 │   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking
-│   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
-│   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome, consent term copy)
-│   ├── keyboards.js              # Pure keyboard builders (inline menus/settings/email/SMS; reply consent share-contact)
+│   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch channels, email + SMS flows
+│   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome, consent term copy, SMS test notice)
+│   ├── keyboards.js              # Pure keyboard builders (inline menus/settings/dispatches/email/SMS; reply consent share-contact)
 │   ├── email_templates.js        # Alert MJML renderer + custom-message store
-│   └── sms_templates.js          # Compact plain-text SMS body (≤160 chars)
+│   └── sms_templates.js          # Institution-message SMS body: single line, segment pricing
 ├── clients/                      # Raw HTTP clients (INMET/IBGE, Defesa Civil RS)
 │   ├── inmet_client.js           # INMET forecasts/warnings + municipality catalog
 │   └── defesa_civil_client.js    # Defesa Civil RS GraphQL telemetry & river quotas
@@ -46,7 +46,7 @@ tests/                            # Mirrors src/ groups (bot, clients, monitorin
 5. **`sms_client.js` vs `sms_subscriber_store.js` vs `sms_templates.js`**: transport, persistence, and copy never mix.
    - `sms_client.js` owns the gateway contract: env validation (`SMSDEV_KEY`/`SMS_TESTING`), E.164 normalization, segment/credit math, HTTP send. **No SQLite, no Telegram.**
    - `sms_subscriber_store.js` owns SQLite rows for `sms_subscribers`. **No network I/O, no message wording.**
-   - `sms_templates.js` owns the ≤160-character plain-text body. **No DB, no HTTP, no emoji** (emoji force UCS-2 → 70 chars/segment instead of 160).
+   - `sms_templates.js` owns the plain-text body: the institution message flattened to a single line, priced in segments. **No DB, no HTTP, no emoji** (emoji force UCS-2 → 70 chars/segment instead of 160) and **no truncation** — the compose preview reports the credit cost before the admin pays for it.
    - Only `telegram_bot.js` composes the three, and it must contain failures as `{ ok: false, error }` — never throw into the long-running loop.
 
 ---

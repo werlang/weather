@@ -168,24 +168,57 @@ export function buildDefesaCivilLevelKeyboard(currentLevel = 'ORANGE') {
 }
 
 
+/**
+ * Builds the action tray attached to an automatic alert message.
+ * Every dispatch channel is consolidated behind the single `🔔 Disparos`
+ * entry, so the administrator arms current and future channels in one place.
+ *
+ * @returns {InlineKeyboard}
+ */
 export function buildAlertActionKeyboard() {
     return new InlineKeyboard()
         .text('🚨 Alertas Ativos', 'action:active_alerts')
         .row()
-        .text('📧 Enviar comunicado por e-mail', 'action:email_compose')
-        .text('📱 Enviar SMS', 'action:sms_compose')
+        .text('🔔 Disparos', 'action:dispatches')
         .row()
         .text('🏠 Abrir Painel Principal', 'menu:main');
 }
 
 
+/**
+ * Builds the action tray of the live active-alerts screen.
+ *
+ * @param {string} [refreshLabel='🔄 Atualizar'] - Label of the refresh button.
+ * @returns {InlineKeyboard}
+ */
 export function buildActiveAlertsKeyboard(refreshLabel = '🔄 Atualizar') {
     return new InlineKeyboard()
         .text(refreshLabel, 'action:active_alerts')
         .text('⬅️ Menu', 'menu:main')
         .row()
-        .text('📧 Enviar comunicado por e-mail', 'action:email_compose')
-        .text('📱 Enviar SMS', 'action:sms_compose');
+        .text('🔔 Disparos', 'action:dispatches');
+}
+
+
+/**
+ * Builds the dispatch-channel screen: one armed/disarmed toggle per channel
+ * plus the compose entry points of the manual ones. A channel absent from the
+ * map reads as armed, matching the runtime default, so a future channel can
+ * be added here without touching the orchestrator.
+ *
+ * @param {{ telegram?: boolean, email?: boolean, sms?: boolean }} [dispatches={}] - Armed state per channel.
+ * @returns {InlineKeyboard}
+ */
+export function buildDispatchesKeyboard(dispatches = {}) {
+    const flag = channel => (dispatches[channel] === false ? '⬜' : '✅');
+    const kb = new InlineKeyboard();
+    kb.text(`${flag('telegram')} 🤖 Alertas automáticos (Telegram)`, 'dispatch:toggle:telegram').row();
+    kb.text(`${flag('email')} 📧 E-mail (comunicado)`, 'dispatch:toggle:email').row();
+    kb.text(`${flag('sms')} 📱 SMS para inscritos`, 'dispatch:toggle:sms').row();
+    kb.text('📧 Compor e-mail', 'action:email_compose');
+    kb.text('📱 Compor SMS', 'action:sms_compose').row();
+    kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
+    return kb;
 }
 
 

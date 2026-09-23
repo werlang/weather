@@ -153,13 +153,12 @@ async function fireText(fakeBot, text) {
 }
 
 describe('SMS keyboards', () => {
-    it('exposes the SMS action on every alert surface', () => {
+    it('exposes the SMS action behind the consolidated dispatch entry', () => {
         const alertFlat = buildAlertActionKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(alertFlat.includes('action:sms_compose'));
-        assert.ok(alertFlat.includes('action:email_compose'));
+        assert.ok(alertFlat.includes('action:dispatches'));
 
         const activeFlat = buildActiveAlertsKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(activeFlat.includes('action:sms_compose'));
+        assert.ok(activeFlat.includes('action:dispatches'));
     });
 
     it('exposes subscriber management from the settings menu', () => {
@@ -256,7 +255,12 @@ describe('SMS send flow via admin buttons', () => {
         assert.equal(result.recipientCount, 2);
         assert.equal(smsService.sent.length, 1);
         assert.deepEqual(smsService.sent[0].numbers, ['5543999998888', '5551988887777']);
-        assert.match(smsService.sent[0].body, /Tempestade severa/);
+        // The body is the institution message alone — shared with the e-mail.
+        // The hazard summary belongs to the compose preview, never to the
+        // carrier payload.
+        assert.equal(smsService.sent[0].body, bot.renderSmsCompose().body);
+        assert.match(smsService.sent[0].body, /comunidade acadêmica/);
+        assert.doesNotMatch(smsService.sent[0].body, /Tempestade severa/);
 
         const text = WeatherTelegramBot.renderSmsResult(result);
         assert.match(text, /SMS ENVIADO/);

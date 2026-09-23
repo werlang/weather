@@ -506,12 +506,13 @@ availability, forecast failure count, error strings). Rules:
 Alerts go **only** to allowlisted administrator chats (`sendToAdmins` in
 `src/bot/telegram.js`), chunked by `splitTelegramMessage` to stay under Telegram's
 4096-character limit, and attach the action-tray inline keyboard
-(🚨 Alertas Ativos / 📧 Enviar comunicado / 🏠 Painel). Delivery result shape:
+(🚨 Alertas Ativos / 🔔 Disparos / 🏠 Painel). Delivery result shape:
 `{ sent: [{chatId, chunks}], failed: [{chatId, error}] }`.
 
 ### 8.4 Admin-Triggered Email Comunicados
 
-From any alert surface, an admin can tap **📧 Enviar comunicado por e-mail**.
+From **🔔 Disparos** (reached from any alert surface), an admin can tap
+**📧 Compor e-mail**.
 The flow is driven by the **last scan snapshot** (never re-fetches sources):
 
 1. `renderEmailCompose` shows hazard summary, impacted zone, recipient
@@ -540,20 +541,29 @@ failures cannot re-trigger Telegram delivery (§8.1 consequence preserved).
 2. `renderSmsCompose` (triggered by `action:sms_compose`) previews the **exact
    body, recipient count, segment count, and estimated credits** before the
    admin commits — every tap spends real balance.
-3. `sendAlertSms` (triggered by `action:sms_send`) rebuilds the body from the
-   last scan snapshot (never re-fetches sources) and dispatches to all numbers
-   in **one** `POST /v1/send` JSON array. Failures are contained as
-   `{ ok: false, error }` and partial delivery is reported
+3. `sendAlertSms` (triggered by `action:sms_send`) resolves the institution
+   message (stored value, else `DEFAULT_EMAIL_CUSTOM_MESSAGE`), rebuilds the
+   body from the last scan snapshot (never re-fetches sources) and dispatches
+   to all numbers in **one** `POST /v1/send` JSON array. Failures are
+   contained as `{ ok: false, error }` and partial delivery is reported
    (`accepted` / `failed` / `credits`).
-4. The body comes from `renderAlertSms` (`src/bot/sms_templates.js`): plain
-   text, **no emoji** (emoji force UCS-2 → 70 chars/segment instead of 160),
-   and clause-dropping that guarantees ≤ 160 characters = **1 credit**.
-   The hazard name is clause 0 so it survives every truncation path.
+4. The body comes from `renderAlertSms` (`src/bot/sms_templates.js`): the
+   **institution message alone**, flattened to a single line. There is no
+   hazard summary, zone or timestamp — the e-mail comunicado carries those —
+   and **no truncation**: a longer message simply costs more segments, which
+   `renderSmsCompose` prices before the admin commits. Plain text only, **no
+   emoji** (emoji force UCS-2 → 70 chars/segment instead of 160), so the
+   shared default institution message stays at **1 credit**.
 5. Credentials come from `getSmsConfig`: `SMSDEV_KEY` (≤128 chars, required in
    production), `SMSDEV_BASE_URL` (https only, defaults to
    `https://api.smsdev.com.br/v1`), and `SMS_TESTING=true` which skips the
    network entirely — rejected when `NODE_ENV=production`, exactly like
-   `EMAIL_TESTING`.
+   `EMAIL_TESTING`. **Test mode never fakes a delivery:** `action:sms_send`
+   hands the verbatim body to the administrator who pulled the trigger as a
+   separate Telegram message bannered
+   `🧪 MENSAGEM DE TESTE — NENHUM SMS FOI ENVIADO` (built by
+   `buildSmsTestingNotice`), while the receipt itself reads
+   `MODO TESTE — NENHUM SMS ENVIADO`.
 6. **No delivery receipts.** DLR polling (`/v1/dlr`) and callbacks are
    intentionally out of scope; the gateway's `MENSAGEM NA FILA` acknowledgement
    is the terminal state. Consequence: a number that cannot receive SMS is
@@ -665,15 +675,16 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Defesa Civil GraphQL fetching + telemetry thresholds | `src/clients/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
 | Tier model, normalization, 24h evaluation, identity, aggregation | `src/monitoring/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `classifyInmetWarningCategory`, `getAlertTypeLabel` | `tests/monitoring/monitor_service.test.js` |
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitoring/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitoring/monitor_service.test.js` |
-| Thresholds menus, badges, presentation copy, message layout | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `renderEmailCompose`, `sendAlertEmail` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js` |
+| Thresholds menus, badges, presentation copy, message layout, dispatch channels | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `renderEmailCompose`, `sendAlertEmail`, `renderDispatches`, `getDispatches`, `setDispatchEnabled` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js`, `tests/bot/dispatches.test.js` |
 | Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |
 | Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
 | SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
 | SMS subscriber list (admin + citizen consent recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `removeSmsSubscribersByChatId`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
-| Compact ≤160-char SMS body | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
+| Institution-message SMS body (single line, segment pricing) | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
 | Citizen consent term, contact capture, `/inscrever` + `/revogar` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `buildRegularKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
-| SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard` | `tests/bot/sms_action.test.js` |
+| Dispatch channel screen, arming toggles and channel gates | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderDispatches`, `getDispatches`, `isDispatchEnabled`, `setDispatchEnabled`, `buildDispatchesKeyboard`, `buildAlertActionKeyboard`, `buildActiveAlertsKeyboard`, `createAlertCallback` | `tests/bot/dispatches.test.js` |
+| SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` + `src/bot/presentation.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard`, `buildSmsTestingNotice` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |
 | DB driver | `src/helpers/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/helpers/database_driver.test.js` |
