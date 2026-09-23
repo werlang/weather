@@ -30,9 +30,9 @@ ifsul/weather/
 │   ├── weather_bot.js                # Canonical monitor + Telegram process entry point
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper and administrator delivery client
-│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch channels, email + SMS flows
+│   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch config, email + SMS flows
 │   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy, SMS test notice
-│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, dispatch channels, email, SMS; reply: consent share-contact)
+│   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, dispatch config, email, SMS; reply: consent share-contact)
 │   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store (shared by SMS)
 │   │   └── sms_templates.js          # Institution-message SMS body renderer (single line, segment pricing)
 │   ├── clients/                      # Upstream data sources

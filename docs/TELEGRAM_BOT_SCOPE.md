@@ -58,32 +58,39 @@ Broadcast emergency alerts include quick jump action buttons attached directly t
 ```
 The same tray is reused by `buildActiveAlertsKeyboard`.
 
-Both trays funnel every channel through the single **🔔 Disparos**
-(`action:dispatches`) entry, which opens `buildDispatchesKeyboard`: one
-armed/disarmed toggle per channel — the automatic Telegram broadcast, the
-e-mail comunicado and the SMS batch — plus the compose buttons of the two
-manual channels. Toggles persist as `system_settings.dispatch_telegram`,
-`.dispatch_email` and `.dispatch_sms` (`1` armed / `0` disarmed, armed when the
-row is absent), so a future channel is one new row plus one new key.
-`EMAIL_TESTING` / `SMS_TESTING` are **not** these switches: they are
-development guards that stop real delivery outside production.
+Both trays funnel dispatch through the single **🔔 Disparos**
+(`action:dispatches`) entry, which opens the **alert dispatch menu**
+(`buildAlertDispatchKeyboard`) — three actions, nothing else:
 
-Tapping 📧 Compor e-mail opens the email comunicado composer
-(`action:email_compose`): preview of hazards + impacted zone + recipient, then
-send with the current institution message, edit it via bot text (saved as the
-new default in `system_settings.email_custom_message`), or send without it.
+```text
+[ 🚀 Enviar disparo ]
+[ ✏️ Compor mensagem ] [ ⚙️ Ver configurações ]
+[ ⬅️ Voltar aos alertas ]
+```
 
-Tapping 📱 Compor SMS opens the SMS composer (`action:sms_compose`): preview of
-the hazard list that triggered the send, the recipient count, the segment count
-and the estimated credit cost, then dispatch to every number in
-`sms_subscribers` in a single gateway request (`action:sms_send`). The body is
-**the institution message alone** — the very string the e-mail quotes — never a
-hazard summary. Recipients are managed from **Configurações → Inscritos SMS**
-(`menu:sms`), which lists normalized E.164 numbers with a per-number remove
-button and an add-by-text flow (`action:sms_add`). Editing that message once
-updates **both** channels; SMS is deliberately *not* wired into the automatic
-`createAlertCallback` batch.
-Full pipeline: `ALERT_METHODOLOGY.md` §8.5.
+* **🚀 Enviar disparo** (`action:dispatch_send`) fires **every armed mean in
+  one action**: e-mail and then SMS. A disarmed mean is skipped and reported
+  as such; with no mean armed the tap is refused with a toast.
+  `renderDispatchResult` is the single receipt.
+* **⚙️ Ver configurações** (`action:dispatch_config`) jumps to the dispatch
+  **configuration** screen, which lives in **⚙️ Configurações → 🔔
+  Disparos** — this is where the switches are, never inside the alert:
+  `buildDispatchConfigKeyboard` + `renderDispatchConfig`, persisting as
+  `system_settings.dispatch_email` and `.dispatch_sms` (`1` armed / `0`
+  disarmed, **armed when the row is absent**).
+* **✏️ Compor mensagem** (`action:message_compose`) opens the **shared**
+  composer (`renderMessageCompose`), reachable from *both* the alert menu and
+  the configuration screen; its back button returns to whichever opened it.
+  Editing it via bot text (`action:message_edit`) updates the default stored
+  in `system_settings.email_custom_message` and therefore **both** means at
+  once — the e-mail quotes it and the SMS carries it as its whole body.
+
+The automatic Telegram broadcast is **not** a switch. Every administrator must
+receive it, so `createAlertCallback` is never gated and `dispatch:toggle:telegram`
+is rejected outright. `EMAIL_TESTING` / `SMS_TESTING` are **not** switches
+either: they are development guards that stop real delivery outside production.
+
+Full pipeline: `ALERT_METHODOLOGY.md` §8.4 and §8.5.
 
 ---
 
@@ -162,7 +169,7 @@ Registration is DB-only (no env allowlist):
 
 Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002): monitoring radius (`radius_km`, default `50` km) and cycle interval (`interval_minutes`, default `15` minutes) are configured exclusively through the database (bot `/config` or CLI), never through environment variables. `/config` changes persist across restarts.
 
-Dispatch channels are runtime settings as well: `dispatch_telegram`, `dispatch_email` and `dispatch_sms` (`1` armed / `0` disarmed, **armed when the row is absent**), managed only from **🔔 Disparos**. The `*_TESTING` variables are *not* these switches — they only guarantee that a development environment never delivers for real.
+Dispatch channels are runtime settings as well: `dispatch_email` and `dispatch_sms` (`1` armed / `0` disarmed, **armed when the row is absent**), managed only from **⚙️ Configurações → 🔔 Disparos**. The automatic Telegram batch has **no switch**: every administrator must receive it, so `createAlertCallback` is never gated. The `*_TESTING` variables are *not* these switches — they only guarantee that a development environment never delivers for real.
 
 ---
 
@@ -171,6 +178,6 @@ Dispatch channels are runtime settings as well: `dispatch_telegram`, `dispatch_e
 | Module | Allowed Responsibilities |
 | :--- | :--- |
 | `src/bot/telegram.js` | Wrap grammY `Bot`, manage lifecycle, parse admin IDs, split paginated messages (<4096 characters), register `setMyCommands`. |
-| `src/bot/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting. |
+| `src/bot/telegram_bot.js` | UI rendering, Unicode cards, inline keyboards, callback query routing, alert formatting, dispatch configuration, shared composer, combined dispatch. |
 | `src/weather_bot.js` | Process composition, signal handling (`SIGINT`/`SIGTERM`), coordinating bot + monitor startup. |
 | `src/monitoring/monitor_service.js` | Periodic scheduling, data fetching coordination, 24h high-risk evaluation, invoking alert callback. |

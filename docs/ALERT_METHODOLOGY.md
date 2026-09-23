@@ -60,7 +60,7 @@ never duplicate a stage's responsibility elsewhere.
         │  WeatherTelegramBot (src/bot/telegram_bot.js)    │
         │  aggregateRiskEvents → formatHighRiskAlert →     │
         │  splitTelegramMessage → sendToAdmins             │
-        │  + admin email comunicado (action:email_compose) │
+        │  + admin dispatch (action:dispatch_send)         │
         │    → renderAlertEmail → EmailService.send        │
         └─────────────────────────────────────────────────┘
 ```
@@ -509,23 +509,37 @@ Alerts go **only** to allowlisted administrator chats (`sendToAdmins` in
 (🚨 Alertas Ativos / 🔔 Disparos / 🏠 Painel). Delivery result shape:
 `{ sent: [{chatId, chunks}], failed: [{chatId, error}] }`.
 
-### 8.4 Admin-Triggered Email Comunicados
+### 8.4 Admin-Triggered E-mail & Combined Dispatch
 
-From **🔔 Disparos** (reached from any alert surface), an admin can tap
-**📧 Compor e-mail**.
-The flow is driven by the **last scan snapshot** (never re-fetches sources):
+From **🔔 Disparos** (reached from any alert surface) the administrator gets
+exactly three actions: **✏️ Compor mensagem**, **⚙️ Ver configurações**, and
+**🚀 Enviar disparo**. The flow is driven by the **last scan snapshot**
+(never re-fetches sources):
 
-1. `renderEmailCompose` shows hazard summary, impacted zone, recipient
-   (`ALERT_EMAIL_TO`, placeholder fallback), and the current institution
-   message — the default (`DEFAULT_EMAIL_CUSTOM_MESSAGE`) on first use, the
-   last saved value afterwards (`system_settings.email_custom_message`).
-2. The admin sends with the current message (`action:email_send`), edits it
-   via bot text (`action:email_edit` → next admin message is saved by
-   `saveEmailCustomMessage` and becomes the new default), or skips it
-   (`action:email_send_plain`).
-3. `sendAlertEmail` renders MJML (`renderAlertEmail`) and delivers through
-   `EmailService` (Ethereal preview URL in dev, SMTP in production).
-   Failures are contained as `{ ok: false, error }` and shown in-chat.
+1. `renderMessageCompose` shows the hazard summary, impacted zone, the
+   recipient (`ALERT_EMAIL_TO`, placeholder fallback) and the current
+   institution message — the default (`DEFAULT_EMAIL_CUSTOM_MESSAGE`) on
+   first use, the last saved value afterwards
+   (`system_settings.email_custom_message`). The **same** message is quoted by
+   the e-mail *and* is the SMS body in full (§8.5), so there is **one compose
+   screen, not one per channel**; it is reachable both from the alert's
+   **🔔 Disparos** menu and from **⚙️ Configurações → 🔔 Disparos**.
+2. The admin edits it via bot text (`action:message_edit` → the next admin
+   message is saved by `saveEmailCustomMessage` and becomes the new default
+   **for both means** at once).
+3. `action:dispatch_send` fires **every armed mean in a single action**:
+   `sendAlertEmail` renders MJML (`renderAlertEmail`) and delivers through
+   `EmailService` (Ethereal preview URL in dev, SMTP in production), then
+   `sendAlertSms` (§8.5) runs when SMS is armed. A disarmed mean is skipped
+   and reported as such; with no mean armed the dispatch is refused with a
+   toast instead of editing the message. `renderDispatchResult` is the one
+   receipt and embeds both per-channel receipts.
+4. The dispatch **configuration** itself lives outside the alert: **⚙️
+   Configurações → 🔔 Disparos** renders `renderDispatchConfig` +
+   `buildDispatchConfigKeyboard`, whose switches persist as
+   `system_settings.dispatch_email` / `.dispatch_sms` (`1` armed / `0`
+   disarmed, armed when the row is absent). The automatic Telegram batch has
+   **no switch** — see §8.3.
 
 ### 8.5 Admin-Triggered SMS Dispatch
 
@@ -538,27 +552,31 @@ failures cannot re-trigger Telegram delivery (§8.1 consequence preserved).
    administrators only — `addSmsSubscriber` normalizes every accepted Brazilian
    spelling to E.164 (`55 + DDD + digits`), which makes `phone` the
    idempotency key; `removeSmsSubscriber` deletes by any spelling of the number.
-2. `renderSmsCompose` (triggered by `action:sms_compose`) previews the **exact
-   body, recipient count, segment count, and estimated credits** before the
-   admin commits — every tap spends real balance.
-3. `sendAlertSms` (triggered by `action:sms_send`) resolves the institution
-   message (stored value, else `DEFAULT_EMAIL_CUSTOM_MESSAGE`), rebuilds the
-   body from the last scan snapshot (never re-fetches sources) and dispatches
-   to all numbers in **one** `POST /v1/send` JSON array. Failures are
-   contained as `{ ok: false, error }` and partial delivery is reported
-   (`accepted` / `failed` / `credits`).
+2. `renderMessageCompose` (triggered by `action:message_compose`, reachable
+   from the alert's **🔔 Disparos** menu *and* from **⚙️ Configurações →
+   🔔 Disparos**) previews the hazard list, the **exact body, recipient count,
+   segment count, and estimated credits** before the admin commits — every tap
+   spends real balance.
+3. `sendAlertSms` runs inside `action:dispatch_send`, whenever the SMS mean is
+   armed: it resolves the institution message (stored value, else
+   `DEFAULT_EMAIL_CUSTOM_MESSAGE`), rebuilds the body from the last scan
+   snapshot (never re-fetches sources) and dispatches to all numbers in
+   **one** `POST /v1/send` JSON array. Failures are contained as
+   `{ ok: false, error }` and partial delivery is reported
+   (`accepted` / `failed` / `credits`); the combined receipt comes from
+   `renderDispatchResult`.
 4. The body comes from `renderAlertSms` (`src/bot/sms_templates.js`): the
    **institution message alone**, flattened to a single line. There is no
    hazard summary, zone or timestamp — the e-mail comunicado carries those —
    and **no truncation**: a longer message simply costs more segments, which
-   `renderSmsCompose` prices before the admin commits. Plain text only, **no
+   `renderMessageCompose` prices before the admin commits. Plain text only, **no
    emoji** (emoji force UCS-2 → 70 chars/segment instead of 160), so the
    shared default institution message stays at **1 credit**.
 5. Credentials come from `getSmsConfig`: `SMSDEV_KEY` (≤128 chars, required in
    production), `SMSDEV_BASE_URL` (https only, defaults to
    `https://api.smsdev.com.br/v1`), and `SMS_TESTING=true` which skips the
    network entirely — rejected when `NODE_ENV=production`, exactly like
-   `EMAIL_TESTING`. **Test mode never fakes a delivery:** `action:sms_send`
+   `EMAIL_TESTING`. **Test mode never fakes a delivery:** `action:dispatch_send`
    hands the verbatim body to the administrator who pulled the trigger as a
    separate Telegram message bannered
    `🧪 MENSAGEM DE TESTE — NENHUM SMS FOI ENVIADO` (built by
@@ -675,7 +693,7 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Defesa Civil GraphQL fetching + telemetry thresholds | `src/clients/defesa_civil_client.js` | `getDefesaCivilTelemetry`, `evaluateDefesaCivilRisks`, `REGIONAL_STATIONS` | covered via monitor/analyzer suites |
 | Tier model, normalization, 24h evaluation, identity, aggregation | `src/monitoring/risk_analyzer.js` | `SEVERITY_LEVELS`, `normalizeSeverityTier`, `evaluateHighRisksIn24hWindow`, `analyzeForecastRisks`, `parseWarningDate`, `parseForecastDate`, `getRiskEventKey`, `aggregateRiskEvents`, `getEventCategory`, `classifyInmetWarningCategory`, `getAlertTypeLabel` | `tests/monitoring/monitor_service.test.js` |
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitoring/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitoring/monitor_service.test.js` |
-| Thresholds menus, badges, presentation copy, message layout, dispatch channels | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `renderEmailCompose`, `sendAlertEmail`, `renderDispatches`, `getDispatches`, `setDispatchEnabled` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js`, `tests/bot/dispatches.test.js` |
+| Thresholds menus, badges, presentation copy, message layout, dispatch screens | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `sendAlertEmail` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js`, `tests/bot/dispatches.test.js` |
 | Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |
 | Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
@@ -683,8 +701,8 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | SMS subscriber list (admin + citizen consent recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `removeSmsSubscribersByChatId`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
 | Institution-message SMS body (single line, segment pricing) | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
 | Citizen consent term, contact capture, `/inscrever` + `/revogar` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `buildRegularKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
-| Dispatch channel screen, arming toggles and channel gates | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderDispatches`, `getDispatches`, `isDispatchEnabled`, `setDispatchEnabled`, `buildDispatchesKeyboard`, `buildAlertActionKeyboard`, `buildActiveAlertsKeyboard`, `createAlertCallback` | `tests/bot/dispatches.test.js` |
-| SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` + `src/bot/presentation.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard`, `buildSmsTestingNotice` | `tests/bot/sms_action.test.js` |
+| Alert dispatch menu, dispatch configuration, shared composer and combined dispatch | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderAlertDispatch`, `renderDispatchConfig`, `renderMessageCompose`, `renderDispatchResult`, `getDispatches`, `isDispatchEnabled`, `setDispatchEnabled`, `buildAlertDispatchKeyboard`, `buildDispatchConfigKeyboard`, `buildMessageComposeKeyboard`, `buildAlertActionKeyboard`, `buildActiveAlertsKeyboard`, `createAlertCallback` | `tests/bot/dispatches.test.js` |
+| SMS dispatch & subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` + `src/bot/presentation.js` | `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsSubscribersKeyboard`, `buildSmsTestingNotice` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |
 | DB driver | `src/helpers/database_driver.js` | `Sqlite` `withTransaction`, `insert`, `find`, `delete` | `tests/helpers/database_driver.test.js` |

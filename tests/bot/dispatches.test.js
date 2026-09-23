@@ -11,7 +11,10 @@ import { WeatherTelegramBot } from '../../src/bot/telegram_bot.js';
 import {
     buildActiveAlertsKeyboard,
     buildAlertActionKeyboard,
-    buildDispatchesKeyboard
+    buildAlertDispatchKeyboard,
+    buildDispatchConfigKeyboard,
+    buildMessageComposeKeyboard,
+    buildSettingsKeyboard
 } from '../../src/bot/keyboards.js';
 import { buildSmsTestingNotice } from '../../src/bot/presentation.js';
 import { addSmsSubscriber } from '../../src/model/sms_subscriber_store.js';
@@ -70,12 +73,12 @@ function createFakeBot() {
 }
 
 /**
- * Builds a bot instance with injected seams (no real DB writes or HTTP).
+ * Builds a bot instance with injected seams (no real DB writes, SMTP or HTTP).
  *
  * @param {object} [overrides] - Seam overrides.
  * @returns {object} Test fixtures.
  */
-function createDispatchBot({ snapshotEvents = null, smsService = null } = {}) {
+function createDispatchBot({ snapshotEvents = null, smsService = null, emailService = null } = {}) {
     const fakeBot = createFakeBot();
     const client = new TelegramBotClient({
         token: 'test-token',
@@ -92,13 +95,21 @@ function createDispatchBot({ snapshotEvents = null, smsService = null } = {}) {
             return { testing: true, accepted: payload.numbers.length, failed: 0, segments: 1, credits: 0 };
         }
     };
+    const fakeEmailService = emailService || {
+        sent: [],
+        async send(payload) {
+            this.sent.push(payload);
+            return { messageId: '<test-id>', previewUrl: 'https://ethereal.email/message/test' };
+        }
+    };
     const bot = new WeatherTelegramBot({
         telegram: client,
         logger: { error() {}, warn() {}, log() {} },
         smsService: fakeSmsService,
+        emailService: fakeEmailService,
         getSnapshot: () => snapshot
     });
-    return { bot, fakeBot, smsService: fakeSmsService, snapshot };
+    return { bot, fakeBot, smsService: fakeSmsService, emailService: fakeEmailService, snapshot };
 }
 
 /**
@@ -127,36 +138,34 @@ async function fireCallback(fakeBot, data, { chatId = 123, messageText = '' } = 
 /** Callback data of every button on a keyboard, flattened. */
 const flatCallbacks = keyboard => keyboard.inline_keyboard.flat().map(btn => btn.callback_data);
 
-describe('Disparos keyboard', () => {
-    it('is the single entry point of both alert trays', () => {
+describe('alert dispatch menu', () => {
+    it('is the single Disparos entry of both alert trays', () => {
         assert.ok(flatCallbacks(buildAlertActionKeyboard()).includes('action:dispatches'));
         assert.ok(flatCallbacks(buildActiveAlertsKeyboard()).includes('action:dispatches'));
-
-        // The two manual channels moved behind that entry, not away from reach.
-        const dispatchFlat = flatCallbacks(buildDispatchesKeyboard({}));
-        assert.ok(dispatchFlat.includes('action:email_compose'));
-        assert.ok(dispatchFlat.includes('action:sms_compose'));
-        assert.ok(dispatchFlat.includes('dispatch:toggle:telegram'));
-        assert.ok(dispatchFlat.includes('dispatch:toggle:email'));
-        assert.ok(dispatchFlat.includes('dispatch:toggle:sms'));
     });
 
-    it('reads an absent channel as armed, matching the runtime default', () => {
-        const armed = flatCallbacks(buildDispatchesKeyboard({}));
-        assert.ok(armed.every(Boolean), 'every button must carry callback data');
+    it('offers exactly message, configuration, and one dispatch for every means', () => {
+        const flat = flatCallbacks(buildAlertDispatchKeyboard());
+        assert.deepEqual(flat.sort(), [
+            'action:dispatch_send',
+            'action:message_compose',
+            'action:dispatch_config',
+            'action:active_alerts'
+        ].sort());
+    });
 
-        const disarmed = flatCallbacks(buildDispatchesKeyboard({ email: false }));
-        const emailButton = buildDispatchesKeyboard({ email: false })
-            .inline_keyboard.flat().find(btn => btn.callback_data === 'dispatch:toggle:email');
-        assert.match(emailButton.text, /⬜/);
-        const telegramButton = buildDispatchesKeyboard({ email: false })
-            .inline_keyboard.flat().find(btn => btn.callback_data === 'dispatch:toggle:telegram');
-        assert.match(telegramButton.text, /✅/);
-        assert.ok(disarmed.includes('dispatch:toggle:email'));
+    it('names the channels that will receive the dispatch', async () => {
+        const { fakeBot } = createDispatchBot();
+        const captured = await fireCallback(fakeBot, 'action:dispatches');
+
+        assert.match(captured.edited, /DISPARO DO ALERTA/);
+        assert.match(captured.edited, /📧 E-mail \(comunicado\)/);
+        assert.match(captured.edited, /📱 SMS para inscritos/);
+        assert.match(captured.edited, /obrigatórios/);
     });
 });
 
-describe('dispatch channel arming', () => {
+describe('dispatch configuration screen', () => {
     beforeEach(() => {
         Sqlite.close();
         getDatabase(':memory:');
@@ -167,9 +176,19 @@ describe('dispatch channel arming', () => {
         Sqlite.close();
     });
 
-    it('defaults every channel to armed so a fresh database starts live', () => {
+    it('lives in the settings menu, not in the alert', () => {
+        const settings = flatCallbacks(buildSettingsKeyboard({}));
+        assert.ok(settings.includes('action:dispatch_config'));
+
+        // The alert menu only *links* to it — the toggles are not there.
+        const alertFlat = flatCallbacks(buildAlertDispatchKeyboard());
+        assert.ok(alertFlat.includes('action:dispatch_config'));
+        assert.ok(!alertFlat.some(data => data.startsWith('dispatch:toggle:')));
+    });
+
+    it('defaults both channels to armed so a fresh database starts live', () => {
         const { bot } = createDispatchBot();
-        assert.deepEqual(bot.getDispatches(), { telegram: true, email: true, sms: true });
+        assert.deepEqual(bot.getDispatches(), { email: true, sms: true });
     });
 
     it('persists a disarm/re-arm round trip on the touched channel only', () => {
@@ -178,32 +197,26 @@ describe('dispatch channel arming', () => {
         assert.equal(bot.setDispatchEnabled('sms', false), true);
         assert.equal(bot.isDispatchEnabled('sms'), false);
         assert.equal(getSystemSetting('dispatch_sms'), '0');
-        assert.deepEqual(bot.getDispatches(), { telegram: true, email: true, sms: false });
+        assert.deepEqual(bot.getDispatches(), { email: true, sms: false });
 
         assert.equal(bot.setDispatchEnabled('sms', true), true);
         assert.equal(bot.isDispatchEnabled('sms'), true);
         assert.equal(getSystemSetting('dispatch_sms'), '1');
     });
-});
 
-describe('Disparos screen and toggles', () => {
-    beforeEach(() => {
-        Sqlite.close();
-        getDatabase(':memory:');
-        Sqlite.exec("DELETE FROM system_settings WHERE key LIKE 'dispatch_%'");
-    });
-
-    afterEach(() => {
-        Sqlite.close();
-    });
-
-    it('opens from the consolidated entry and lists every channel', async () => {
+    it('lists both toggles and the composer, and goes back to settings', async () => {
         const { fakeBot } = createDispatchBot();
-        const captured = await fireCallback(fakeBot, 'action:dispatches');
+        const captured = await fireCallback(fakeBot, 'action:dispatch_config');
 
-        assert.match(captured.edited, /CANAIS DE DISPARO DE ALERTAS/);
-        assert.match(captured.edited, /Alertas automáticos \(Telegram\): ✅ ARMADO/);
-        assert.ok(flatCallbacks(captured.options.reply_markup).includes('dispatch:toggle:sms'));
+        assert.match(captured.edited, /CONFIGURAÇÃO DE DISPAROS/);
+        assert.match(captured.edited, /E-mail \(comunicado\): ✅ ARMADO/);
+        assert.match(captured.edited, /SMS para inscritos: ✅ ARMADO/);
+
+        const flat = flatCallbacks(captured.options.reply_markup);
+        assert.ok(flat.includes('dispatch:toggle:email'));
+        assert.ok(flat.includes('dispatch:toggle:sms'));
+        assert.ok(flat.includes('action:message_compose'));
+        assert.ok(flat.includes('menu:settings'));
     });
 
     it('flips a channel, persists it, and re-renders the new state', async () => {
@@ -212,7 +225,7 @@ describe('Disparos screen and toggles', () => {
         await fireCallback(fakeBot, 'dispatch:toggle:email');
         assert.equal(bot.isDispatchEnabled('email'), false);
 
-        const reopened = await fireCallback(fakeBot, 'action:dispatches');
+        const reopened = await fireCallback(fakeBot, 'action:dispatch_config');
         assert.match(reopened.edited, /E-mail \(comunicado\): ⬜ DESARMADO/);
 
         await fireCallback(fakeBot, 'dispatch:toggle:email');
@@ -220,17 +233,16 @@ describe('Disparos screen and toggles', () => {
     });
 
     it('refuses an unknown channel instead of writing a stray key', async () => {
-        const { bot, fakeBot } = createDispatchBot();
+        const { fakeBot } = createDispatchBot();
         const captured = await fireCallback(fakeBot, 'dispatch:toggle:pigeon');
 
         assert.equal(captured.edited, undefined);
         assert.match(String(captured.answered?.text || ''), /desconhecido/i);
         assert.equal(getSystemSetting('dispatch_pigeon'), null);
-        void bot;
     });
 });
 
-describe('channel gates', () => {
+describe('automatic Telegram alerts are not configurable', () => {
     beforeEach(() => {
         Sqlite.close();
         getDatabase(':memory:');
@@ -241,54 +253,31 @@ describe('channel gates', () => {
         Sqlite.close();
     });
 
-    it('refuses to open the composers of a disarmed channel', async () => {
-        const { bot, fakeBot } = createDispatchBot();
-        bot.setDispatchEnabled('email', false);
-        bot.setDispatchEnabled('sms', false);
-
-        const email = await fireCallback(fakeBot, 'action:email_compose');
-        assert.equal(email.edited, undefined);
-        assert.match(String(email.answered?.text || ''), /🔔 Disparos/);
-
-        const sms = await fireCallback(fakeBot, 'action:sms_compose');
-        assert.equal(sms.edited, undefined);
-        assert.match(String(sms.answered?.text || ''), /🔔 Disparos/);
+    it('offers no toggle anywhere', () => {
+        assert.ok(!flatCallbacks(buildDispatchConfigKeyboard({})).includes('dispatch:toggle:telegram'));
+        assert.ok(!flatCallbacks(buildAlertDispatchKeyboard()).includes('dispatch:toggle:telegram'));
     });
 
-    it('refuses to send on a disarmed channel', async () => {
-        addSmsSubscriber('43999998888');
-        const { bot, fakeBot } = createDispatchBot();
-        bot.setDispatchEnabled('email', false);
-        bot.setDispatchEnabled('sms', false);
+    it('rejects the toggle callback and stores nothing', async () => {
+        const { fakeBot } = createDispatchBot();
+        const captured = await fireCallback(fakeBot, 'dispatch:toggle:telegram');
 
-        const email = await fireCallback(fakeBot, 'action:email_send');
-        assert.equal(email.edited, undefined);
-
-        const sms = await fireCallback(fakeBot, 'action:sms_send');
-        assert.equal(sms.edited, undefined);
-        assert.equal(sms.replied, undefined, 'a disarmed channel must not emit the test notice');
+        assert.equal(captured.edited, undefined);
+        assert.match(String(captured.answered?.text || ''), /obrigat/);
+        assert.equal(getSystemSetting('dispatch_telegram'), null);
     });
 
-    it('silences the automatic Telegram batch while keeping the event logged', async () => {
-        const { bot, fakeBot } = createDispatchBot();
-        bot.setDispatchEnabled('telegram', false);
-
-        const delivery = await bot.createAlertCallback()([makeEvent()]);
-        assert.equal(delivery.skipped, true);
-        assert.equal(delivery.sent.length, 0);
-        assert.equal(fakeBot.sentMessages.length, 0, 'nothing may reach admins while disarmed');
-    });
-
-    it('delivers the automatic Telegram batch when armed', async () => {
+    it('delivers to every administrator with no switch involved', async () => {
         const { bot, fakeBot } = createDispatchBot();
 
         const delivery = await bot.createAlertCallback()([makeEvent()]);
         assert.equal(delivery.sent.length, 1);
         assert.equal(fakeBot.sentMessages.length, 1);
+        assert.equal(getSystemSetting('dispatch_telegram'), null, 'Telegram must need no setting at all');
     });
 });
 
-describe('SMS testing mode (admin preview instead of delivery)', () => {
+describe('unified message composer', () => {
     beforeEach(() => {
         Sqlite.close();
         getDatabase(':memory:');
@@ -299,33 +288,128 @@ describe('SMS testing mode (admin preview instead of delivery)', () => {
         Sqlite.close();
     });
 
-    it('hands the subscriber-facing body to the triggering admin, bannered as a test', async () => {
+    it('is offered by both the alert menu and the configuration screen', () => {
+        assert.ok(flatCallbacks(buildAlertDispatchKeyboard()).includes('action:message_compose'));
+        assert.ok(flatCallbacks(buildDispatchConfigKeyboard({})).includes('action:message_compose'));
+    });
+
+    it('returns to the screen it was opened from', () => {
+        assert.equal(
+            flatCallbacks(buildMessageComposeKeyboard('action:dispatch_config')).pop(),
+            'action:dispatch_config'
+        );
+        assert.equal(
+            flatCallbacks(buildMessageComposeKeyboard('action:dispatches')).pop(),
+            'action:dispatches'
+        );
+    });
+
+    it('renders one message that every means will carry', async () => {
         addSmsSubscriber('43999998888');
         const { bot, fakeBot } = createDispatchBot();
 
-        const captured = await fireCallback(fakeBot, 'action:sms_send');
+        const captured = await fireCallback(fakeBot, 'action:message_compose');
+        assert.match(captured.edited, /COMPOSIÇÃO DA MENSAGEM/);
+        assert.match(captured.edited, /igual para todos os meios/);
+        assert.match(captured.edited, /comunidade acadêmica/);
+        assert.match(captured.edited, /Destinatário/);
 
-        assert.match(captured.replied, /MENSAGEM DE TESTE — NENHUM SMS FOI ENVIADO/);
-        assert.match(captured.replied, /Corpo exato que os inscritos receberiam/);
-        assert.match(captured.edited, /MODO TESTE — NENHUM SMS ENVIADO/);
-        assert.doesNotMatch(captured.edited, /📨 Corpo enviado:/);
+        const flat = flatCallbacks(captured.options.reply_markup);
+        assert.ok(flat.includes('action:message_edit'), 'the composer must offer the edit action');
+        assert.ok(flat.includes('action:dispatches'), 'opened from the alert menu, it returns there');
 
-        // The notice carries exactly the body subscribers would have received.
-        const composed = bot.renderSmsCompose();
-        assert.ok(captured.replied.includes(composed.body), 'the notice must show the verbatim body');
+        void bot;
     });
 
-    it('flags the notice and reports who would have received it', () => {
+    it('returns to the configuration screen when opened from there', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+        await fireCallback(fakeBot, 'action:dispatch_config');
+
+        const captured = await fireCallback(fakeBot, 'action:message_compose');
+        const flat = flatCallbacks(captured.options.reply_markup);
+        assert.ok(flat.includes('action:dispatch_config'));
+        void bot;
+    });
+});
+
+describe('one dispatch over every configured means', () => {
+    beforeEach(() => {
+        Sqlite.close();
+        getDatabase(':memory:');
+        Sqlite.exec("DELETE FROM system_settings WHERE key LIKE 'dispatch_%'");
+        Sqlite.exec('DELETE FROM sms_subscribers');
+    });
+
+    afterEach(() => {
+        Sqlite.close();
+    });
+
+    it('fires e-mail and SMS together and reports both', async () => {
+        addSmsSubscriber('43999998888');
+        addSmsSubscriber('51988887777');
+        const { bot, fakeBot, emailService, smsService } = createDispatchBot();
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.equal(emailService.sent.length, 1, 'the configured e-mail must go out');
+        assert.equal(smsService.sent.length, 1, 'the configured SMS must go out');
+
+        assert.match(captured.edited, /DISPARO DE ALERTA/);
+        assert.match(captured.edited, /E-MAIL ENVIADO/);
+        assert.match(captured.edited, /SMS ENVIADO/);
+        void bot;
+    });
+
+    it('skips a disarmed channel but still delivers the armed one', async () => {
+        addSmsSubscriber('43999998888');
+        const { bot, fakeBot, emailService, smsService } = createDispatchBot();
+        bot.setDispatchEnabled('email', false);
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.equal(emailService.sent.length, 0, 'a disarmed channel must stay silent');
+        assert.equal(smsService.sent.length, 1);
+        assert.match(captured.edited, /desarmado/i);
+        assert.match(captured.edited, /SMS ENVIADO/);
+    });
+
+    it('refuses to dispatch when no channel is configured', async () => {
+        addSmsSubscriber('43999998888');
+        const { bot, fakeBot, emailService, smsService } = createDispatchBot();
+        bot.setDispatchEnabled('email', false);
+        bot.setDispatchEnabled('sms', false);
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.equal(captured.edited, undefined, 'nothing may be edited without a configured channel');
+        assert.match(String(captured.answered?.text || ''), /Nenhum canal configurado/);
+        assert.equal(emailService.sent.length, 0);
+        assert.equal(smsService.sent.length, 0);
+    });
+
+    it('hands the subscriber-facing body to the admin in testing mode', async () => {
+        addSmsSubscriber('43999998888');
+        const { bot, fakeBot } = createDispatchBot();
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.match(captured.replied, /MENSAGEM DE TESTE — NENHUM SMS FOI ENVIADO/);
+        assert.match(captured.edited, /MODO TESTE — NENHUM SMS ENVIADO/);
+        assert.ok(captured.replied.includes(bot.renderMessageCompose().body), 'the notice must show the verbatim body');
+    });
+});
+
+describe('testing-mode notice copy', () => {
+    it('banners the exact body and reports who would have received it', () => {
         const notice = buildSmsTestingNotice({ body: 'Mensagem da instituição.', recipients: 3 });
 
         assert.match(notice, /🧪 MENSAGEM DE TESTE/);
         assert.match(notice, /Mensagem da instituição\./);
         assert.match(notice, /👥 Inscritos que receberiam: 3/);
-        assert.match(notice, /Nada saiu para a operadora|nada saiu para a operadora/);
+        assert.match(notice, /nada saiu para a operadora/);
     });
 
     it('renders an empty body without throwing', () => {
-        const notice = buildSmsTestingNotice({});
-        assert.match(notice, /\(corpo vazio\)/);
+        assert.match(buildSmsTestingNotice({}), /\(corpo vazio\)/);
     });
 });

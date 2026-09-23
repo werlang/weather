@@ -12,7 +12,6 @@ import {
     buildActiveAlertsKeyboard,
     buildAlertActionKeyboard,
     buildSettingsKeyboard,
-    buildSmsComposeKeyboard,
     buildSmsSubscribersKeyboard
 } from '../../src/bot/keyboards.js';
 import {
@@ -153,7 +152,7 @@ async function fireText(fakeBot, text) {
 }
 
 describe('SMS keyboards', () => {
-    it('exposes the SMS action behind the consolidated dispatch entry', () => {
+    it('exposes the SMS dispatch behind the consolidated entry', () => {
         const alertFlat = buildAlertActionKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
         assert.ok(alertFlat.includes('action:dispatches'));
 
@@ -161,21 +160,10 @@ describe('SMS keyboards', () => {
         assert.ok(activeFlat.includes('action:dispatches'));
     });
 
-    it('exposes subscriber management from the settings menu', () => {
+    it('exposes the dispatch configuration from the settings menu', () => {
         const flat = buildSettingsKeyboard({}).inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(flat.includes('action:dispatch_config'));
         assert.ok(flat.includes('menu:sms'));
-    });
-
-    it('hides send when there are no active alerts or subscribers', () => {
-        const canSend = buildSmsComposeKeyboard({ canSend: true, hasSubscribers: true }).inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(canSend.includes('action:sms_send'));
-
-        const noAlerts = buildSmsComposeKeyboard({ canSend: false, hasSubscribers: true }).inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(!noAlerts.includes('action:sms_send'));
-
-        const noSubs = buildSmsComposeKeyboard({ canSend: true, hasSubscribers: false }).inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(!noSubs.includes('action:sms_send'));
-        assert.ok(noSubs.includes('menu:sms'));
     });
 
     it('offers add, list, and back on the subscribers screen', () => {
@@ -202,7 +190,7 @@ describe('SMS compose preview', () => {
         addSmsSubscriber('51988887777');
         const { bot } = createSmsBot();
 
-        const compose = bot.renderSmsCompose();
+        const compose = bot.renderMessageCompose();
 
         assert.equal(compose.canSend, true);
         assert.equal(compose.hasSubscribers, true);
@@ -213,11 +201,12 @@ describe('SMS compose preview', () => {
         assert.ok(compose.text.length > 0);
     });
 
-    it('blocks sending when the subscriber list is empty', () => {
+    it('reports an empty subscriber list without blocking the composer', () => {
         const { bot } = createSmsBot();
-        const compose = bot.renderSmsCompose();
+        const compose = bot.renderMessageCompose();
 
-        assert.equal(compose.canSend, false);
+        // There are active alerts, so the message is still composable — but the
+        // SMS mean has nobody to reach and must say so.
         assert.equal(compose.hasSubscribers, false);
         assert.equal(compose.recipientCount, 0);
         assert.match(compose.text, /Nenhum inscrito/);
@@ -226,7 +215,7 @@ describe('SMS compose preview', () => {
     it('reports no active alerts when the snapshot is empty', () => {
         addSmsSubscriber('43999998888');
         const { bot } = createSmsBot({ snapshotEvents: [] });
-        const compose = bot.renderSmsCompose();
+        const compose = bot.renderMessageCompose();
 
         assert.equal(compose.canSend, false);
         assert.match(compose.text, /Nenhum alerta ativo/);
@@ -258,7 +247,7 @@ describe('SMS send flow via admin buttons', () => {
         // The body is the institution message alone — shared with the e-mail.
         // The hazard summary belongs to the compose preview, never to the
         // carrier payload.
-        assert.equal(smsService.sent[0].body, bot.renderSmsCompose().body);
+        assert.equal(smsService.sent[0].body, bot.renderMessageCompose().body);
         assert.match(smsService.sent[0].body, /comunidade acadêmica/);
         assert.doesNotMatch(smsService.sent[0].body, /Tempestade severa/);
 
@@ -332,16 +321,16 @@ describe('SMS send flow via admin buttons', () => {
         assert.match(result.error, /network down/);
     });
 
-    it('answers the compose button with a preview and the send button with a receipt', async () => {
+    it('answers the composer button and dispatches from the single send button', async () => {
         addSmsSubscriber('43999998888');
         const { bot, fakeBot } = createSmsBot();
 
-        const compose = await fireCallback(fakeBot, 'action:sms_compose');
+        const compose = await fireCallback(fakeBot, 'action:message_compose');
         assert.match(compose.edited, /SMS/);
         const composeButtons = compose.options.reply_markup.inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(composeButtons.includes('action:sms_send'));
+        assert.ok(composeButtons.includes('action:message_edit'));
 
-        const sent = await fireCallback(fakeBot, 'action:sms_send');
+        const sent = await fireCallback(fakeBot, 'action:dispatch_send');
         assert.match(sent.edited, /SMS ENVIADO/);
     });
 });

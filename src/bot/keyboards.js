@@ -61,6 +61,8 @@ export function buildSettingsKeyboard(config = {}) {
         .row()
         .text(`🛡️ Limiar Defesa Civil: ${getTierShortBadge(config.defesaCivilMinSeverity)}`, 'menu:defesa_civil_level')
         .row()
+        .text('🔔 Disparos', 'action:dispatch_config')
+        .row()
         .text('👥 Convidar Administrador', 'menu:admins')
         .text('📱 Inscritos SMS', 'menu:sms')
         .row()
@@ -201,59 +203,55 @@ export function buildActiveAlertsKeyboard(refreshLabel = '🔄 Atualizar') {
 
 
 /**
- * Builds the dispatch-channel screen: one armed/disarmed toggle per channel
- * plus the compose entry points of the manual ones. A channel absent from the
- * map reads as armed, matching the runtime default, so a future channel can
- * be added here without touching the orchestrator.
+ * Builds the alert-side dispatch menu: the screen an administrator opens from
+ * an alert to compose the message, inspect which means are configured, and
+ * fire every configured means at once.
  *
- * @param {{ telegram?: boolean, email?: boolean, sms?: boolean }} [dispatches={}] - Armed state per channel.
  * @returns {InlineKeyboard}
  */
-export function buildDispatchesKeyboard(dispatches = {}) {
-    const flag = channel => (dispatches[channel] === false ? '⬜' : '✅');
-    const kb = new InlineKeyboard();
-    kb.text(`${flag('telegram')} 🤖 Alertas automáticos (Telegram)`, 'dispatch:toggle:telegram').row();
-    kb.text(`${flag('email')} 📧 E-mail (comunicado)`, 'dispatch:toggle:email').row();
-    kb.text(`${flag('sms')} 📱 SMS para inscritos`, 'dispatch:toggle:sms').row();
-    kb.text('📧 Compor e-mail', 'action:email_compose');
-    kb.text('📱 Compor SMS', 'action:sms_compose').row();
-    kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
-    return kb;
+export function buildAlertDispatchKeyboard() {
+    return new InlineKeyboard()
+        .text('🚀 Enviar disparo', 'action:dispatch_send').row()
+        .text('✏️ Compor mensagem', 'action:message_compose')
+        .text('⚙️ Ver configurações', 'action:dispatch_config').row()
+        .text('⬅️ Voltar aos alertas', 'action:active_alerts');
 }
 
 
-export function buildEmailComposeKeyboard(canSend = true) {
+/**
+ * Builds the dispatch **configuration** screen: one armed/disarmed toggle per
+ * configurable means plus the shared composer. A means absent from the map
+ * reads as armed, matching the runtime default, so a future means can be added
+ * here without touching the orchestrator. The automatic Telegram batch is
+ * deliberately absent — every administrator must receive it, so it is not a
+ * choice this screen offers.
+ *
+ * @param {{ email?: boolean, sms?: boolean }} [dispatches={}] - Armed state per means.
+ * @returns {InlineKeyboard}
+ */
+export function buildDispatchConfigKeyboard(dispatches = {}) {
+    const flag = channel => (dispatches[channel] === false ? '⬜' : '✅');
     const kb = new InlineKeyboard();
-    if (canSend) {
-        kb.text('✅ Enviar com esta mensagem', 'action:email_send').row();
-        kb.text('✏️ Editar mensagem', 'action:email_edit').row();
-        kb.text('⏭️ Enviar sem mensagem', 'action:email_send_plain').row();
-    }
-    kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
+    kb.text(`${flag('email')} 📧 E-mail (comunicado)`, 'dispatch:toggle:email').row();
+    kb.text(`${flag('sms')} 📱 SMS para inscritos`, 'dispatch:toggle:sms').row();
+    kb.text('✏️ Compor mensagem', 'action:message_compose').row();
+    kb.text('⬅️ Voltar às Configurações', 'menu:settings');
     return kb;
 }
 
 
 /**
- * Builds the SMS compose keyboard. Send only appears when there is both an
- * active alert to report and at least one subscriber to receive it.
+ * Builds the shared message composer keyboard. The message is identical for
+ * every means, so the screen only offers editing it and returning to whichever
+ * dispatch screen opened it.
  *
- * @param {object} [options] - Availability flags.
- * @param {boolean} [options.canSend=true] - Whether active alerts exist.
- * @param {boolean} [options.hasSubscribers=true] - Whether the list is non-empty.
+ * @param {string} [returnTo='action:dispatches'] - Callback of the opening screen.
  * @returns {InlineKeyboard}
  */
-export function buildSmsComposeKeyboard({ canSend = true, hasSubscribers = true } = {}) {
-    const kb = new InlineKeyboard();
-    if (canSend && hasSubscribers) {
-        kb.text('📱 Enviar SMS agora', 'action:sms_send').row();
-    }
-    if (!hasSubscribers) {
-        kb.text('👥 Adicionar primeiro inscrito', 'menu:sms').row();
-    }
-    kb.text('👥 Inscritos SMS', 'menu:sms').row();
-    kb.text('⬅️ Voltar aos alertas', 'action:active_alerts');
-    return kb;
+export function buildMessageComposeKeyboard(returnTo = 'action:dispatches') {
+    return new InlineKeyboard()
+        .text('✏️ Alterar mensagem', 'action:message_edit').row()
+        .text('⬅️ Voltar', returnTo);
 }
 
 

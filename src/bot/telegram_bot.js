@@ -73,9 +73,9 @@ import {
     buildDefesaCivilLevelKeyboard,
     buildAlertActionKeyboard,
     buildActiveAlertsKeyboard,
-    buildDispatchesKeyboard,
-    buildEmailComposeKeyboard,
-    buildSmsComposeKeyboard,
+    buildAlertDispatchKeyboard,
+    buildDispatchConfigKeyboard,
+    buildMessageComposeKeyboard,
     buildSmsSubscribersKeyboard,
     buildConsentKeyboard,
     buildConsentContactKeyboard
@@ -179,8 +179,12 @@ export class WeatherTelegramBot {
             saveCustomMessage: message => saveEmailCustomMessage(message)
         };
         this.getSnapshot = getSnapshot || (() => getLastScanSnapshot());
-        this._emailEditPending = new Set();
+        // Chats waiting to replace the institution message — one message serves
+        // every dispatch means — and chats waiting to type a subscriber number.
+        this._messageEditPending = new Set();
         this._smsAddPending = new Set();
+        // Which dispatch screen opened the composer, so its back button returns.
+        this._messageComposeReturn = 'action:dispatches';
         // Chats that agreed to the term and are waiting to share their number.
         this._consentContactPending = new Set();
         this._adminCache = { ids: null, expires: 0 };
@@ -287,7 +291,7 @@ export class WeatherTelegramBot {
      * A missing row reads as armed, so a fresh database starts fully live —
      * in production every channel must be on.
      *
-     * @param {string} channel - Channel id (`telegram`, `email`, `sms`).
+     * @param {string} channel - Configurable means (`email`, `sms`); the automatic Telegram batch has no setting.
      * @returns {boolean} True when the channel may dispatch.
      */
     isDispatchEnabled(channel) {
@@ -297,7 +301,7 @@ export class WeatherTelegramBot {
     /**
      * Arms or disarms one dispatch channel and persists the choice.
      *
-     * @param {string} channel - Channel id (`telegram`, `email`, `sms`).
+     * @param {string} channel - Configurable means (`email`, `sms`); the automatic Telegram batch has no setting.
      * @param {boolean} enabled - True to arm the channel.
      * @returns {boolean} True when the setting was persisted.
      */
@@ -306,26 +310,27 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Armed state of every channel, shaped for the keyboard and the screen.
+     * Armed state of every configurable means, shaped for the keyboards and
+     * the screens. The automatic Telegram batch is deliberately absent: it has
+     * no setting, because every administrator must receive it.
      *
-     * @returns {{ telegram: boolean, email: boolean, sms: boolean }} Armed state per channel.
+     * @returns {{ email: boolean, sms: boolean }} Armed state per means.
      */
     getDispatches() {
         return {
-            telegram: this.isDispatchEnabled('telegram'),
             email: this.isDispatchEnabled('email'),
             sms: this.isDispatchEnabled('sms')
         };
     }
 
     /**
-     * Renders the dispatch-channel screen: armed state per channel, what each
-     * one delivers, and the hints that matter before firing — the subscriber
-     * count and the development testing flag.
+     * Renders the dispatch **configuration** screen: one switch per
+     * configurable means, what each one delivers, and the hints that matter
+     * before arming it.
      *
      * @returns {string} Screen text.
      */
-    renderDispatches() {
+    renderDispatchConfig() {
         const dispatches = this.getDispatches();
         const state = enabled => (enabled ? '✅ ARMADO' : '⬜ DESARMADO');
         const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
@@ -334,24 +339,87 @@ export class WeatherTelegramBot {
         })();
         const adminCount = (() => { try { return this.telegram.getAdminChatIds().length; } catch { return 0; } })();
         return [
-            '🔔 CANAIS DE DISPARO DE ALERTAS',
+            '⚙️ CONFIGURAÇÃO DE DISPAROS',
             CARD_HEADER,
-            'Ligue e desligue cada canal. Em produção todos ficam armados.',
-            '',
-            `🤖 Alertas automáticos (Telegram): ${state(dispatches.telegram)}`,
-            `   Envia sozinho a cada ciclo do monitor para ${adminCount} administrador(es).`,
+            'Ligue e desligue cada meio. Em produção todos ficam armados.',
             '',
             `📧 E-mail (comunicado): ${state(dispatches.email)}`,
-            `   Destinatário: ${recipient} — composição manual.`,
+            `   Destinatário: ${recipient} — cita a mensagem da instituição.`,
             '',
             `📱 SMS para inscritos: ${state(dispatches.sms)}`,
-            `   👥 Inscritos: ${countSmsSubscribers()} — composição manual.`,
+            `   👥 Inscritos: ${countSmsSubscribers()} — envia a mesma mensagem.`,
             ...(smsTesting ? ['', '🧪 SMS_TESTING=true — nenhum SMS real sai deste ambiente.'] : []),
             '',
             CARD_DIVIDER,
-            '💡 Dispare os dois canais manuais pelos botões Compor abaixo.',
+            '🤖 Alertas automáticos (Telegram): sempre ativos',
+            `   Sem interruptor — os ${adminCount} administrador(es) recebem a cada ciclo do monitor.`,
+            '',
             '🔒 EMAIL_TESTING / SMS_TESTING são travas de desenvolvimento, não estes interruptores.'
         ].join('\n');
+    }
+
+    /**
+     * Renders the alert-side dispatch menu: the means this dispatch will reach
+     * and the single action that fires all of them at once.
+     *
+     * @returns {string} Screen text.
+     */
+    renderAlertDispatch() {
+        const dispatches = this.getDispatches();
+        const mark = enabled => (enabled ? '✅' : '⬜');
+        const events = (() => {
+            try {
+                const snapshot = this.getSnapshot();
+                return Array.isArray(snapshot?.events) ? snapshot.events : [];
+            } catch {
+                return [];
+            }
+        })();
+        return [
+            '🔔 DISPARO DO ALERTA',
+            CARD_HEADER,
+            `🚨 Alertas ativos no último scan: ${events.length}`,
+            '',
+            'Meios configurados neste disparo:',
+            ` ${mark(dispatches.email)} 📧 E-mail (comunicado)`,
+            ` ${mark(dispatches.sms)} 📱 SMS para inscritos`,
+            '',
+            '🤖 Alertas automáticos (Telegram) são obrigatórios e disparam sozinhos.',
+            '',
+            CARD_DIVIDER,
+            '🚀 Enviar disparo entrega nos meios configurados de uma vez só.',
+            '⚙️ Alterne os meios em Ver configurações.'
+        ].join('\n');
+    }
+
+    /**
+     * Renders the receipt of a dispatch that may cover several means at once.
+     * A disarmed mean is reported as such instead of being attempted, so one
+     * screen accounts for every configured mean.
+     *
+     * @param {object} options - Dispatch outcomes.
+     * @param {object|null} [options.email=null] - E-mail send result, or null when not attempted.
+     * @param {object|null} [options.sms=null] - SMS send result, or null when not attempted.
+     * @param {boolean} [options.emailArmed=true] - Whether the e-mail mean was armed.
+     * @param {boolean} [options.smsArmed=true] - Whether the SMS mean was armed.
+     * @returns {string} Receipt text.
+     */
+    static renderDispatchResult({ email = null, sms = null, emailArmed = true, smsArmed = true } = {}) {
+        const off = '⬜ Canal desarmado — ative em ⚙️ Configurações → Disparos.';
+        const lines = [
+            '🚀 DISPARO DE ALERTA',
+            CARD_HEADER,
+            '📧 E-MAIL (COMUNICADO)'
+        ];
+        lines.push(...(emailArmed && email ? WeatherTelegramBot.renderEmailResult(email).split('\n') : [off]));
+        lines.push('', CARD_DIVIDER, '📱 SMS PARA INSCRITOS');
+        lines.push(...(smsArmed && sms ? WeatherTelegramBot.renderSmsResult(sms).split('\n') : [off]));
+        lines.push(
+            '',
+            CARD_DIVIDER,
+            '🤖 Alertas automáticos (Telegram) saem pelo monitor a cada ciclo e não participam deste disparo manual.'
+        );
+        return lines.join('\n');
     }
 
     /**
@@ -889,52 +957,68 @@ export class WeatherTelegramBot {
      */
 
     /**
-     * Renders the email compose preview from the last scan snapshot.
-     * Shows hazard summary, impacted zone, recipient, and the current
-     * institution message (default on first use, last saved afterwards).
+     * Renders the shared message composer from the last scan snapshot.
+     * One message serves every dispatch mean — it is quoted inside the
+     * structured e-mail and *is* the SMS body in full — so this screen shows
+     * the message once and then what each configured mean will do with it.
      *
-     * @returns {{ canSend: boolean, events: Array<object>, customMessage: string, recipient: string, text: string }}
+     * @returns {{ canSend: boolean, hasSubscribers: boolean, recipientCount: number, body: string, segments: number, credits: number, recipient: string, text: string }}
      */
-    renderEmailCompose() {
+    renderMessageCompose() {
         let snapshot = null;
         try {
             snapshot = this.getSnapshot();
         } catch (err) {
-            this.logger.error?.('[telegram_bot] renderEmailCompose snapshot error:', err.message);
+            this.logger.error?.('[telegram_bot] renderMessageCompose snapshot error:', err.message);
         }
         const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+        const subscriberCount = countSmsSubscribers();
         const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
+
         if (events.length === 0) {
             return {
                 canSend: false,
-                events: [],
-                customMessage: '',
+                hasSubscribers: subscriberCount > 0,
+                recipientCount: subscriberCount,
+                body: '',
+                segments: 1,
+                credits: 0,
                 recipient,
                 text: [
-                    '📧 COMUNICADO POR E-MAIL',
+                    '✉️ COMPOSIÇÃO DA MENSAGEM',
                     CARD_HEADER,
                     '🟢 Nenhum alerta ativo no último scan — nada a comunicar.',
                     '',
-                    'Aguarde o próximo ciclo automático ou toque em Voltar para atualizar os alertas.'
+                    `👥 Inscritos SMS: ${subscriberCount}`,
+                    'Aguarde o próximo ciclo automático ou toque em Voltar.'
                 ].join('\n')
             };
         }
-        let customMessage = DEFAULT_EMAIL_CUSTOM_MESSAGE;
+
+        let message = DEFAULT_EMAIL_CUSTOM_MESSAGE;
         try {
-            customMessage = this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
+            message = this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
         } catch (err) {
-            this.logger.error?.('[telegram_bot] renderEmailCompose custom message error:', err.message);
+            this.logger.error?.('[telegram_bot] renderMessageCompose message error:', err.message);
         }
+        const rendered = renderAlertSms({ events, message });
         const aggregated = aggregateRiskEvents(events);
         const uniqueCities = [...new Set(events.flatMap(event => event.affectedCities || []))];
+        const smsTesting = (() => {
+            try { return (this.smsService || getSmsService()).config?.testing === true; } catch { return false; }
+        })();
+
         const lines = [
-            '📧 COMUNICADO POR E-MAIL',
+            '✉️ COMPOSIÇÃO DA MENSAGEM',
             CARD_HEADER,
-            `🚨 ${aggregated.length} tipo(s) agrupados — ${events.length} ocorrência(s) em ${uniqueCities.length} município(s)`,
+            'A mesma mensagem vale para todos os meios de disparo.',
+            '',
+            `🚨 ${aggregated.length} tipo(s) agrupado(s) — ${events.length} ocorrência(s) em ${uniqueCities.length} município(s)`,
             `📍 Zona impactada: ${uniqueCities.join(', ') || 'Não informada'}`,
-            `👥 Destinatário: ${recipient}`,
             ''
         ];
+        // The body below carries no hazard summary, so the preview is where the
+        // administrator sees what is about to be communicated.
         aggregated.forEach((event, index) => {
             lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico'}`);
             lines.push(`   Severidade: ${renderSeverityBadge(event.severity)}`);
@@ -942,12 +1026,34 @@ export class WeatherTelegramBot {
         lines.push(
             '',
             CARD_DIVIDER,
-            '💬 Mensagem da instituição (será citada no e-mail):',
-            `"${customMessage}"`,
+            '💬 Mensagem da instituição (igual para todos os meios):',
+            `"${rendered.text}"`,
             '',
-            'Toque em Enviar, edite a mensagem, ou envie sem mensagem personalizada.'
+            CARD_DIVIDER,
+            '📧 E-mail (estruturado): cita esta mensagem dentro do comunicado.',
+            `   👥 Destinatário: ${recipient}`,
+            '',
+            '📱 SMS (corpo integral da mensagem):',
+            subscriberCount === 0
+                ? '   👥 Nenhum inscrito na lista de SMS — nada a enviar.'
+                : `   👥 Destinatários: ${subscriberCount} — 🧮 ${rendered.segments} segmento(s) — 💰 ${rendered.segments * subscriberCount} crédito(s)`,
+            ...(smsTesting ? ['', '   🧪 SMS_TESTING=true — nenhum SMS real sai deste ambiente.'] : []),
+            '',
+            CARD_DIVIDER,
+            '🤖 Telegram: alertas automáticos a cada ciclo — não usam esta mensagem.',
+            '',
+            '💡 Edite a mensagem aqui; o disparo acontece no menu Disparos do alerta.'
         );
-        return { canSend: true, events, customMessage, recipient, text: lines.join('\n') };
+        return {
+            canSend: true,
+            hasSubscribers: subscriberCount > 0,
+            recipientCount: subscriberCount,
+            body: rendered.text,
+            segments: rendered.segments,
+            credits: rendered.segments * subscriberCount,
+            recipient,
+            text: lines.join('\n')
+        };
     }
 
     /**
@@ -1033,107 +1139,6 @@ export class WeatherTelegramBot {
     // =========================================================================
     // SMS DISPATCH (admin-triggered, subscriber list)
     // =========================================================================
-
-    /**
-     * Renders the SMS compose preview from the last scan snapshot.
-     * Shows the exact compact body, the recipient count, and the credit cost,
-     * so the administrator sees what every tap will spend before sending.
-     *
-     * @returns {{ canSend: boolean, hasSubscribers: boolean, recipientCount: number, body: string, segments: number, credits: number, text: string }}
-     */
-    renderSmsCompose() {
-        let snapshot = null;
-        try {
-            snapshot = this.getSnapshot();
-        } catch (err) {
-            this.logger.error?.('[telegram_bot] renderSmsCompose snapshot error:', err.message);
-        }
-        const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
-        const subscriberCount = countSmsSubscribers();
-
-        if (events.length === 0) {
-            return {
-                canSend: false,
-                hasSubscribers: subscriberCount > 0,
-                recipientCount: subscriberCount,
-                body: '',
-                segments: 1,
-                credits: 0,
-                text: [
-                    '📱 ENVIO DE SMS',
-                    CARD_HEADER,
-                    '🟢 Nenhum alerta ativo no último scan — nada a comunicar.',
-                    '',
-                    `👥 Inscritos: ${subscriberCount}`,
-                    'Aguarde o próximo ciclo automático ou toque em Voltar.'
-                ].join('\n')
-            };
-        }
-
-        if (subscriberCount === 0) {
-            return {
-                canSend: false,
-                hasSubscribers: false,
-                recipientCount: 0,
-                body: '',
-                segments: 1,
-                credits: 0,
-                text: [
-                    '📱 ENVIO DE SMS',
-                    CARD_HEADER,
-                    '👥 Nenhum inscrito na lista de SMS — nada a enviar.',
-                    '',
-                    'Toque em Adicionar primeiro inscrito para cadastrar um número.',
-                    CARD_DIVIDER,
-                    '📋 Números ficam sob gestão de administradores no Configurações → Inscritos SMS.'
-                ].join('\n')
-            };
-        }
-
-        let institutionMessage = DEFAULT_EMAIL_CUSTOM_MESSAGE;
-        try {
-            institutionMessage = this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
-        } catch (err) {
-            this.logger.error?.('[telegram_bot] renderSmsCompose message error:', err.message);
-        }
-        const rendered = renderAlertSms({ events, message: institutionMessage });
-        const aggregated = aggregateRiskEvents(events);
-        const uniqueCities = [...new Set(events.flatMap(event => event.affectedCities || []))];
-        const lines = [
-            '📱 ENVIO DE SMS',
-            CARD_HEADER,
-            `👥 Destinatários: ${subscriberCount}`,
-            `🧮 Segmentos por SMS: ${rendered.segments} — 💰 Créditos estimados: ${rendered.segments * subscriberCount}`,
-            '',
-            `🚨 ${aggregated.length} tipo(s) agrupado(s) — ${events.length} ocorrência(s) em ${uniqueCities.length} município(s)`,
-            `📍 Zona impactada: ${uniqueCities.join(', ') || 'Não informada'}`,
-            ''
-        ];
-        // The body below carries no hazard summary, so the preview is where the
-        // administrator sees what is about to be communicated.
-        aggregated.forEach((event, index) => {
-            lines.push(`${index + 1}. ${event.emoji || '⚠️'} ${event.type || 'Evento meteorológico'}`);
-            lines.push(`   Severidade: ${renderSeverityBadge(event.severity)}`);
-        });
-        lines.push(
-            '',
-            CARD_DIVIDER,
-            '📨 Corpo que será enviado (mensagem da instituição):',
-            rendered.text,
-            '',
-            CARD_DIVIDER,
-            '💡 SMS é cobrado por crédito (160 caracteres). Envie apenas o necessário.'
-        );
-        return {
-            canSend: true,
-            hasSubscribers: true,
-            recipientCount: subscriberCount,
-            body: rendered.text,
-            segments: rendered.segments,
-            credits: rendered.segments * subscriberCount,
-            text: lines.join('\n')
-        };
-    }
 
     /**
      * Sends the compact alert SMS to every subscriber.
@@ -1541,10 +1546,8 @@ export class WeatherTelegramBot {
     createAlertCallback() {
         return async events => {
             onHighRiskEventDetected(events);
-            if (!this.isDispatchEnabled('telegram')) {
-                this.logger.warn?.('[telegram_bot] Telegram channel disarmed in 🔔 Disparos — alert logged, not delivered.');
-                return { sent: [], failed: [], skipped: true };
-            }
+            // The automatic Telegram batch has no switch: every administrator is
+            // required to receive it, so configuration never gates this path.
             return this.sendHighRiskAlerts(events);
         };
     }
@@ -2129,72 +2132,97 @@ export class WeatherTelegramBot {
                 return;
             }
 
+            // ---- Dispatch: alert menu, configuration, shared composer ----
             if (data === 'action:dispatches') {
-                await answer('🔔 Carregando canais…');
-                return ctx.editMessageText?.(this.renderDispatches(), {
-                    reply_markup: buildDispatchesKeyboard(this.getDispatches())
+                this._messageComposeReturn = 'action:dispatches';
+                await answer('🔔 Carregando disparos…');
+                return ctx.editMessageText?.(this.renderAlertDispatch(), {
+                    reply_markup: buildAlertDispatchKeyboard()
+                });
+            }
+
+            if (data === 'action:dispatch_config') {
+                this._messageComposeReturn = 'action:dispatch_config';
+                await answer('⚙️ Carregando configurações…');
+                return ctx.editMessageText?.(this.renderDispatchConfig(), {
+                    reply_markup: buildDispatchConfigKeyboard(this.getDispatches())
                 });
             }
 
             if (data.startsWith('dispatch:toggle:')) {
                 const channel = data.split(':')[2];
+                if (channel === 'telegram') {
+                    return answer('🤖 Alertas automáticos do Telegram são obrigatórios para todo administrador.');
+                }
                 const labels = {
-                    telegram: 'Alertas automáticos (Telegram)',
                     email: 'E-mail (comunicado)',
                     sms: 'SMS para inscritos'
                 };
                 if (!Object.prototype.hasOwnProperty.call(labels, channel)) {
-                    return answer('Canal de disparo desconhecido.');
+                    return answer('Meio de disparo desconhecido.');
                 }
                 const armed = !this.isDispatchEnabled(channel);
                 this.setDispatchEnabled(channel, armed);
                 await answer(`${labels[channel]}: ${armed ? '✅ armado' : '⬜ desarmado'}.`);
-                return ctx.editMessageText?.(this.renderDispatches(), {
-                    reply_markup: buildDispatchesKeyboard(this.getDispatches())
+                return ctx.editMessageText?.(this.renderDispatchConfig(), {
+                    reply_markup: buildDispatchConfigKeyboard(this.getDispatches())
                 });
             }
 
-            if (data === 'action:email_compose') {
-                if (!this.isDispatchEnabled('email')) {
-                    await answer('📧 Canal de e-mail desarmado — ative em 🔔 Disparos.');
-                    return;
-                }
-                await answer('📧 Preparando comunicado…');
-                this._emailEditPending.delete(String(ctx.chat?.id));
-                const compose = this.renderEmailCompose();
+            if (data === 'action:message_compose') {
+                await answer('✉️ Preparando mensagem…');
+                this._messageEditPending.delete(String(ctx.chat?.id));
+                const compose = this.renderMessageCompose();
                 return ctx.editMessageText?.(compose.text, {
-                    reply_markup: buildEmailComposeKeyboard(compose.canSend)
+                    reply_markup: buildMessageComposeKeyboard(this._messageComposeReturn)
                 });
             }
 
-            if (data === 'action:email_edit') {
+            if (data === 'action:message_edit') {
                 await answer('✏️ Envie a nova mensagem');
-                this._emailEditPending.add(String(ctx.chat?.id));
+                this._messageEditPending.add(String(ctx.chat?.id));
                 return ctx.editMessageText?.([
                     '✏️ EDITAR MENSAGEM DA INSTITUIÇÃO',
                     CARD_HEADER,
-                    'Envie agora, como texto, a nova mensagem que será citada no e-mail.',
+                    'Envie agora, como texto, a nova mensagem dos próximos disparos.',
                     'Exemplo: “Boa tarde comunidade academica. As aulas estão dispensadas no turno da noite de hoje devido à tempestade.”',
                     '',
-                    'A nova mensagem passa a ser o padrão dos próximos comunicados.',
+                    'Vale para todos os meios: o e-mail a cita e o SMS a envia por inteiro.',
                     CARD_DIVIDER,
                     'Aguardando sua mensagem… (ou volte para cancelar)'
                 ].join('\n'), {
-                    reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:email_compose')
+                    reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:message_compose')
                 });
             }
 
-            if (data === 'action:email_send' || data === 'action:email_send_plain') {
-                if (!this.isDispatchEnabled('email')) {
-                    await answer('📧 Canal de e-mail desarmado — ative em 🔔 Disparos.');
-                    return;
+            if (data === 'action:dispatch_send') {
+                const armed = this.getDispatches();
+                if (!armed.email && !armed.sms) {
+                    return answer('Nenhum canal configurado — ative e-mail ou SMS em ⚙️ Configurações → Disparos.');
                 }
-                await answer('📧 Enviando e-mail…');
-                this._emailEditPending.delete(String(ctx.chat?.id));
-                const result = await this.sendAlertEmail({ withCustomMessage: data === 'action:email_send' });
-                return ctx.editMessageText?.(WeatherTelegramBot.renderEmailResult(result), {
+                await answer('🚀 Disparando…');
+                this._messageEditPending.delete(String(ctx.chat?.id));
+                const email = armed.email ? await this.sendAlertEmail() : null;
+                const sms = armed.sms ? await this.sendAlertSms() : null;
+                // Test mode reaches nobody's phone: hand the exact body to the
+                // admin who pulled the trigger, clearly bannered as a test.
+                if (sms?.testing && sms?.body) {
+                    await ctx.reply?.(buildSmsTestingNotice({
+                        body: sms.body,
+                        recipients: sms.recipientCount ?? 0
+                    }));
+                }
+                return ctx.editMessageText?.(WeatherTelegramBot.renderDispatchResult({
+                    email,
+                    sms,
+                    emailArmed: armed.email,
+                    smsArmed: armed.sms
+                }), {
                     reply_markup: new InlineKeyboard()
-                        .text('📧 Voltar ao comunicado', 'action:email_compose')
+                        .text('🔄 Repetir disparo', 'action:dispatch_send')
+                        .row()
+                        .text('🔔 Disparos', 'action:dispatches')
+                        .text('⚙️ Configurações', 'action:dispatch_config')
                         .row()
                         .text('⬅️ Menu', 'menu:main')
                 });
@@ -2255,46 +2283,8 @@ export class WeatherTelegramBot {
                 });
             }
 
-            // ---- SMS: compose preview and dispatch ----
-            if (data === 'action:sms_compose') {
-                if (!this.isDispatchEnabled('sms')) {
-                    await answer('📱 Canal de SMS desarmado — ative em 🔔 Disparos.');
-                    return;
-                }
-                await answer('📱 Preparando SMS…');
-                this._smsAddPending.delete(String(ctx.chat?.id));
-                const compose = this.renderSmsCompose();
-                return ctx.editMessageText?.(compose.text, {
-                    reply_markup: buildSmsComposeKeyboard({
-                        canSend: compose.canSend,
-                        hasSubscribers: compose.hasSubscribers
-                    })
-                });
-            }
-
-            if (data === 'action:sms_send') {
-                if (!this.isDispatchEnabled('sms')) {
-                    await answer('📱 Canal de SMS desarmado — ative em 🔔 Disparos.');
-                    return;
-                }
-                await answer('📱 Enviando SMS…');
-                this._smsAddPending.delete(String(ctx.chat?.id));
-                const result = await this.sendAlertSms();
-                // Test mode reaches nobody's phone: hand the exact body to the
-                // admin who pulled the trigger, clearly bannered as a test.
-                if (result?.testing && result?.body) {
-                    await ctx.reply?.(buildSmsTestingNotice({
-                        body: result.body,
-                        recipients: result.recipientCount ?? 0
-                    }));
-                }
-                return ctx.editMessageText?.(WeatherTelegramBot.renderSmsResult(result), {
-                    reply_markup: new InlineKeyboard()
-                        .text('📱 Voltar ao SMS', 'action:sms_compose')
-                        .row()
-                        .text('⬅️ Menu', 'menu:main')
-                });
-            }
+            // The SMS dispatch itself lives in `action:dispatch_send` above —
+            // everything here only manages the subscriber list.
 
             if (data === 'action:help') {
                 await answer();
@@ -2401,30 +2391,30 @@ export class WeatherTelegramBot {
                 });
             }
 
-            // Pending institution-message edit for the email comunicado flow.
-            if (this._emailEditPending.has(chatId)) {
+            // Pending edit of the institution message shared by every means.
+            if (this._messageEditPending.has(chatId)) {
                 const text = String(ctx.message?.text || '').trim();
                 if (!text) {
-                    return ctx.reply('⚠️ Mensagem vazia — envie o texto da nova mensagem ou volte ao comunicado.', {
-                        reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:email_compose')
+                    return ctx.reply('⚠️ Mensagem vazia — envie o texto da nova mensagem ou volte ao compositor.', {
+                        reply_markup: new InlineKeyboard().text('⬅️ Voltar sem alterar', 'action:message_compose')
                     });
                 }
                 let saved = false;
                 try {
                     saved = this.emailStore.saveCustomMessage(text);
                 } catch (err) {
-                    this.logger.error?.('[telegram_bot] email message save failed:', err.message);
+                    this.logger.error?.('[telegram_bot] institution message save failed:', err.message);
                 }
-                this._emailEditPending.delete(chatId);
+                this._messageEditPending.delete(chatId);
                 if (!saved) {
                     return ctx.reply('❌ Não foi possível salvar a mensagem. Tente novamente.', {
-                        reply_markup: buildEmailComposeKeyboard(true)
+                        reply_markup: buildMessageComposeKeyboard(this._messageComposeReturn)
                     });
                 }
-                await ctx.reply('✅ Mensagem da instituição atualizada — ela passa a ser o padrão dos próximos comunicados.');
-                const compose = this.renderEmailCompose();
+                await ctx.reply('✅ Mensagem da instituição atualizada — ela passa a ser o padrão dos próximos disparos.');
+                const compose = this.renderMessageCompose();
                 return ctx.reply(compose.text, {
-                    reply_markup: buildEmailComposeKeyboard(compose.canSend)
+                    reply_markup: buildMessageComposeKeyboard(this._messageComposeReturn)
                 });
             }
             return ctx.reply('Use os botões do menu interativo ou digite /help para ver os comandos rápidos.', {

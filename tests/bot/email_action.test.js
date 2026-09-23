@@ -10,8 +10,8 @@ import { CARD_HEADER } from '../../src/bot/presentation.js';
 import {
     buildAlertActionKeyboard,
     buildActiveAlertsKeyboard,
-    buildDispatchesKeyboard,
-    buildEmailComposeKeyboard
+    buildAlertDispatchKeyboard,
+    buildMessageComposeKeyboard
 } from '../../src/bot/keyboards.js';
 import { DEFAULT_EMAIL_CUSTOM_MESSAGE } from '../../src/bot/email_templates.js';
 
@@ -153,48 +153,48 @@ describe('Email comunicado keyboards', () => {
         const activeKb = buildActiveAlertsKeyboard();
         assert.ok(activeKb.inline_keyboard.some(row => row.some(btn => btn.callback_data === 'action:dispatches')));
 
-        // The two manual channels now live inside that single entry.
-        const dispatchFlat = buildDispatchesKeyboard({}).inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(dispatchFlat.includes('action:email_compose'));
-        assert.ok(dispatchFlat.includes('action:sms_compose'));
+        // The composer is shared by every means, so the alert menu offers it once.
+        const dispatchFlat = buildAlertDispatchKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(dispatchFlat.includes('action:message_compose'));
+        assert.ok(dispatchFlat.includes('action:dispatch_config'));
+        assert.ok(dispatchFlat.includes('action:dispatch_send'));
     });
 
-    it('builds the compose keyboard with send / edit / skip actions', () => {
-        const kb = buildEmailComposeKeyboard(true);
-        const flat = kb.inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(flat.includes('action:email_send'));
-        assert.ok(flat.includes('action:email_edit'));
-        assert.ok(flat.includes('action:email_send_plain'));
-        assert.ok(flat.includes('action:active_alerts'));
+    it('builds the composer keyboard with edit and a contextual back button', () => {
+        const flat = buildMessageComposeKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(flat.includes('action:message_edit'));
+        assert.ok(flat.includes('action:dispatches'));
 
-        const emptyKb = buildEmailComposeKeyboard(false);
-        const emptyFlat = emptyKb.inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(!emptyFlat.includes('action:email_send'));
-        assert.ok(emptyFlat.includes('action:active_alerts'));
+        const fromConfig = buildMessageComposeKeyboard('action:dispatch_config')
+            .inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(fromConfig.includes('action:dispatch_config'));
+        // Sending is the alert menu's job, not the composer's.
+        assert.ok(!flat.includes('action:dispatch_send'));
     });
 });
 
 describe('Email compose preview', () => {
     it('shows hazard summary, impacted zone, recipient, and the default message on first use', () => {
         const { bot } = createEmailBot();
-        const compose = bot.renderEmailCompose();
+        const compose = bot.renderMessageCompose();
         assert.equal(compose.canSend, true);
         assert.match(compose.text, /Tempestade severa/);
         assert.match(compose.text, /Charqueadas/);
         assert.match(compose.text, /Destinatário/);
         assert.match(compose.text, /comunidade acadêmica/);
+        assert.match(compose.text, /COMPOSIÇÃO DA MENSAGEM/);
     });
 
     it('shows the last saved message after an edit', () => {
         const { bot, emailStore } = createEmailBot();
         emailStore.saveCustomMessage('Aulas suspensas hoje à noite.');
-        const compose = bot.renderEmailCompose();
+        const compose = bot.renderMessageCompose();
         assert.match(compose.text, /Aulas suspensas hoje à noite/);
     });
 
     it('reports no active alerts when the snapshot is empty', () => {
         const { bot } = createEmailBot({ snapshotEvents: [] });
-        const compose = bot.renderEmailCompose();
+        const compose = bot.renderMessageCompose();
         assert.equal(compose.canSend, false);
         assert.match(compose.text, /Nenhum alerta ativo/);
     });
@@ -244,23 +244,23 @@ describe('Email send flow via admin buttons', () => {
 });
 
 describe('Email callback routing and message editing', () => {
-    it('opens the compose preview from the email button', async () => {
+    it('opens the shared composer from the dispatch menu', async () => {
         const { fakeBot } = createEmailBot();
-        const captured = await fireCallback(fakeBot, 'action:email_compose');
-        assert.match(captured.edited, /COMUNICADO POR E-MAIL/);
+        const captured = await fireCallback(fakeBot, 'action:message_compose');
+        assert.match(captured.edited, /COMPOSIÇÃO DA MENSAGEM/);
         assert.match(captured.edited, /Tempestade severa/);
         const flat = captured.options.reply_markup.inline_keyboard.flat().map(btn => btn.callback_data);
-        assert.ok(flat.includes('action:email_send'));
+        assert.ok(flat.includes('action:message_edit'));
     });
 
     it('edits the message through bot text: new custom becomes the default', async () => {
         const { fakeBot, bot, emailService } = createEmailBot();
-        await fireCallback(fakeBot, 'action:email_edit');
-        assert.ok(bot._emailEditPending.has('123'));
+        await fireCallback(fakeBot, 'action:message_edit');
+        assert.ok(bot._messageEditPending.has('123'));
 
         const edited = 'Boa tarde comunidade academica. As aulas estão dispensadas no turno da noite de hoje.';
         const captured = await fireText(fakeBot, edited);
-        assert.ok(!bot._emailEditPending.has('123'));
+        assert.ok(!bot._messageEditPending.has('123'));
         assert.ok(captured.replies.some(r => r.replyText.includes('atualizada')));
         assert.ok(captured.replies.some(r => r.replyText.includes(edited)));
 
@@ -268,21 +268,20 @@ describe('Email callback routing and message editing', () => {
         assert.match(emailService.sent[0].mjml, /dispensadas no turno da noite de hoje/);
     });
 
-    it('sends via the send and skip buttons', async () => {
+    it('dispatches every configured mean through the single send button', async () => {
         const { fakeBot, emailService } = createEmailBot();
-        const sent = await fireCallback(fakeBot, 'action:email_send');
+        const sent = await fireCallback(fakeBot, 'action:dispatch_send');
+        assert.match(sent.edited, /DISPARO DE ALERTA/);
         assert.match(sent.edited, /E-MAIL ENVIADO/);
         assert.match(sent.edited, /ethereal\.email/);
-
-        const skipped = await fireCallback(fakeBot, 'action:email_send_plain');
-        assert.match(skipped.edited, /E-MAIL ENVIADO/);
-        assert.equal(emailService.sent.length, 2);
-        assert.doesNotMatch(emailService.sent[1].mjml, /Comunicado da institui/);
+        assert.equal(emailService.sent.length, 1);
+        // The institution message is part of the e-mail, never optional here.
+        assert.match(emailService.sent[0].mjml, /Comunicado da institui|comunidade acadêmica/i);
     });
 
     it('denies the email flow to non-admin chats', async () => {
         const { fakeBot, emailService } = createEmailBot();
-        const captured = await fireCallback(fakeBot, 'action:email_compose', { chatId: 999 });
+        const captured = await fireCallback(fakeBot, 'action:message_compose', { chatId: 999 });
         assert.equal(emailService.sent?.length || 0, 0);
         assert.match(captured.replied || '', /restrito ao administrador/);
     });
