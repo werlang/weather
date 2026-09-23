@@ -69,15 +69,16 @@ Both trays funnel dispatch through the single **🔔 Disparos**
 ```
 
 * **🚀 Enviar disparo** (`action:dispatch_send`) fires **every armed mean in
-  one action**: e-mail and then SMS. A disarmed mean is skipped and reported
-  as such; with no mean armed the tap is refused with a toast.
-  `renderDispatchResult` is the single receipt.
+  one action**: e-mail, then SMS, then the registered **Telegram group**. A
+  disarmed mean is skipped and reported as such; with no mean able to receive
+  the dispatch the tap is refused with a toast. `renderDispatchResult` is the
+  single receipt.
 * **⚙️ Ver configurações** (`action:dispatch_config`) jumps to the dispatch
   **configuration** screen, which lives in **⚙️ Configurações → 🔔
   Disparos** — this is where the switches are, never inside the alert:
   `buildDispatchConfigKeyboard` + `renderDispatchConfig`, persisting as
-  `system_settings.dispatch_email` and `.dispatch_sms` (`1` armed / `0`
-  disarmed, **armed when the row is absent**).
+  `system_settings.dispatch_email`, `.dispatch_sms` and `.dispatch_group`
+  (`1` armed / `0` disarmed, **armed when the row is absent**).
 * **✏️ Compor mensagem** (`action:message_compose`) opens the **shared**
   composer (`renderMessageCompose`), reachable from *both* the alert menu and
   the configuration screen; its back button returns to whichever opened it.
@@ -85,12 +86,23 @@ Both trays funnel dispatch through the single **🔔 Disparos**
   in `system_settings.email_custom_message` and therefore **both** means at
   once — the e-mail quotes it and the SMS carries it as its whole body.
 
+**The Telegram group** is a destination, discovered automatically: on
+`my_chat_member` the bot stores `system_settings.telegram_group_id` /
+`.telegram_group_title` when it is added to a group, and clears them when it
+is removed — the administrator never types a chat ID. What the group receives
+is deliberately **public**: `sendAlertToGroup` posts the structured alert card
+plus the institution message with `buildGroupAlertKeyboard`, a single
+`https://t.me/<bot>?start=inscrever` deep link that opens a **private** chat
+for the LGPD consent flow. The administrator tray is never attached, so
+citizens cannot see admin-only controls. The group is **not** part of the
+automatic batch.
+
 The automatic Telegram broadcast is **not** a switch. Every administrator must
 receive it, so `createAlertCallback` is never gated and `dispatch:toggle:telegram`
 is rejected outright. `EMAIL_TESTING` / `SMS_TESTING` are **not** switches
 either: they are development guards that stop real delivery outside production.
 
-Full pipeline: `ALERT_METHODOLOGY.md` §8.4 and §8.5.
+Full pipeline: `ALERT_METHODOLOGY.md` §8.4, §8.5 and §8.7.
 
 ---
 
@@ -169,7 +181,7 @@ Registration is DB-only (no env allowlist):
 
 Runtime settings live in the SQLite `system_settings` table and are seeded with defaults on first start (migration 002): monitoring radius (`radius_km`, default `50` km) and cycle interval (`interval_minutes`, default `15` minutes) are configured exclusively through the database (bot `/config` or CLI), never through environment variables. `/config` changes persist across restarts.
 
-Dispatch channels are runtime settings as well: `dispatch_email` and `dispatch_sms` (`1` armed / `0` disarmed, **armed when the row is absent**), managed only from **⚙️ Configurações → 🔔 Disparos**. The automatic Telegram batch has **no switch**: every administrator must receive it, so `createAlertCallback` is never gated. The `*_TESTING` variables are *not* these switches — they only guarantee that a development environment never delivers for real.
+Dispatch channels are runtime settings as well: `dispatch_email`, `dispatch_sms` and `dispatch_group` (`1` armed / `0` disarmed, **armed when the row is absent**), managed only from **⚙️ Configurações → 🔔 Disparos**. The group *target* is not typed by anyone — `telegram_group_id` / `telegram_group_title` are written by the bot on `my_chat_member` and cleared when it is removed. The automatic Telegram batch has **no switch**: every administrator must receive it, so `createAlertCallback` is never gated. The `*_TESTING` variables are *not* these switches — they only guarantee that a development environment never delivers for real.
 
 ---
 

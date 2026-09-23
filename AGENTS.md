@@ -79,7 +79,7 @@ ifsul/weather/
 ├── src/
 │   ├── weather_bot.js                # Process composition entry point & signal handling
 │   ├── bot/                          # Telegram interface (grammY)
-│   │   ├── telegram.js               # grammY wrapper, DB allowlist auth, splitMessage (<4096)
+│   │   ├── telegram.js               # grammY wrapper, DB allowlist auth, splitMessage (<4096), sendToAdmins, single-chat sendMessage, my_chat_member, bot username
 │   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch channels, email + SMS flows
 │   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy, SMS test notice
 │   │   ├── keyboards.js              # Pure keyboard builders (inline: menus, settings, dispatch config, email, SMS; reply: consent share-contact)
@@ -129,10 +129,10 @@ ifsul/weather/
 | `src/model/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
 | `src/monitoring/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching, `UNKNOWN` tier. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitoring/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
-| `src/bot/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
-| `src/bot/telegram_bot.js` | Orchestrator: `/start`, `/help`, `/status`, `/config`, invite/bootstrap, alert renderers, alert dispatch menu, **⚙️ Disparos** configuration screen, shared message composer, email + SMS dispatch. Delegates keyboards/presentation to sibling modules. | Socket handling, low-level grammY polling, upstream fetching. |
+| `src/bot/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`, single-chat `sendMessage`, `my_chat_member` group discovery, `getBotUsername`. | Domain weather parsing, risk algorithms. |
+| `src/bot/telegram_bot.js` | Orchestrator: `/start`, `/help`, `/status`, `/config`, invite/bootstrap, alert renderers, alert dispatch menu, **⚙️ Disparos** configuration screen, shared message composer, e-mail + SMS + **group** dispatch. Delegates keyboards/presentation to sibling modules. | Socket handling, low-level grammY polling, upstream fetching. |
 | `src/bot/presentation.js` | Pure UI atoms: card dividers, severity options/badges, `BOT_COMMANDS`, welcome copy, LGPD consent/withdrawal copy, SMS testing-mode notice. No dependencies. | Chat state, DB access, network I/O. |
-| `src/bot/keyboards.js` | Pure keyboard builders (inline: main, settings, categories, alerts, dispatch config, email, SMS; reply: consent share-contact). | Callback handling, message sending. |
+| `src/bot/keyboards.js` | Pure keyboard builders (inline: main, settings, categories, alerts, dispatch config, email, SMS, group alert; reply: consent share-contact). | Callback handling, message sending. |
 | `src/bot/email_templates.js` | Alert MJML renderer + institution custom-message store (`system_settings`). | SMTP transport, Telegram delivery. |
 | `src/bot/sms_templates.js` | Institution message as the SMS body: single-line normalization + segment pricing. No truncation, no emoji. | Gateway transport, recipient storage, Telegram delivery. |
 | `src/helpers/email_client.js` | SMTP transport: Ethereal dev preview, production SMTP, strict MJML compile. | Template copy, recipient policy beyond `ALERT_EMAIL_TO`. |

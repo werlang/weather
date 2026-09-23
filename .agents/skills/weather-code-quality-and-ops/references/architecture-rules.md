@@ -12,10 +12,10 @@ The codebase in `src/` is cleanly divided into specialized layers:
 src/
 ├── weather_bot.js                # Canonical entry point uniting monitor & Telegram daemon
 ├── bot/                          # Telegram interface (grammY)
-│   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking
+│   ├── telegram.js               # Low-level grammY wrapper, auth check, msg chunking, group send
 │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, dispatch config, email + SMS flows
 │   ├── presentation.js           # Pure UI atoms (cards, badges, options, welcome, consent term copy, SMS test notice)
-│   ├── keyboards.js              # Pure keyboard builders (inline menus/settings/dispatch config/email/SMS; reply consent share-contact)
+│   ├── keyboards.js              # Pure keyboard builders (inline menus/settings/dispatch config/email/SMS/group alert; reply consent share-contact)
 │   ├── email_templates.js        # Alert MJML renderer + custom-message store
 │   └── sms_templates.js          # Institution-message SMS body: single line, segment pricing
 ├── clients/                      # Raw HTTP clients (INMET/IBGE, Defesa Civil RS)

@@ -530,16 +530,21 @@ exactly three actions: **✏️ Compor mensagem**, **⚙️ Ver configurações*
 3. `action:dispatch_send` fires **every armed mean in a single action**:
    `sendAlertEmail` renders MJML (`renderAlertEmail`) and delivers through
    `EmailService` (Ethereal preview URL in dev, SMTP in production), then
-   `sendAlertSms` (§8.5) runs when SMS is armed. A disarmed mean is skipped
-   and reported as such; with no mean armed the dispatch is refused with a
-   toast instead of editing the message. `renderDispatchResult` is the one
-   receipt and embeds both per-channel receipts.
+   `sendAlertSms` (§8.5) runs when SMS is armed, then `sendAlertToGroup`
+   posts the **public** alert card to the registered Telegram group when that
+   mean is armed (§8.7). A disarmed mean is skipped and reported as such; with
+   no mean able to receive the dispatch it is refused with a toast instead of
+   editing the message. `renderDispatchResult` is the one receipt and embeds
+   all per-mean receipts.
 4. The dispatch **configuration** itself lives outside the alert: **⚙️
    Configurações → 🔔 Disparos** renders `renderDispatchConfig` +
    `buildDispatchConfigKeyboard`, whose switches persist as
-   `system_settings.dispatch_email` / `.dispatch_sms` (`1` armed / `0`
-   disarmed, armed when the row is absent). The automatic Telegram batch has
-   **no switch** — see §8.3.
+   `system_settings.dispatch_email` / `.dispatch_sms` / `.dispatch_group`
+   (`1` armed / `0` disarmed, armed when the row is absent). The **automatic**
+   Telegram batch has **no switch** — see §8.3 — while the group is a switch,
+   because it is an optional destination. The group target itself lives in
+   `system_settings.telegram_group_id` / `.telegram_group_title`, written by
+   the bot on `my_chat_member` (§8.7).
 
 ### 8.5 Admin-Triggered SMS Dispatch
 
@@ -621,6 +626,38 @@ number. Capture is a two-step consent, never a free-typed field:
 
 ---
 
+### 8.7 Admin-Triggered Telegram Group Dispatch
+
+The institution's own Telegram group is a third configurable mean, alongside
+e-mail (§8.4) and SMS (§8.5). It is **manual only**: it never joins the
+automatic batch of §8.3, which stays administrator-only.
+
+1. **Discovery, never configuration.** On `my_chat_member` (a filter
+   registered in `registerHandlers`) the bot persists
+   `system_settings.telegram_group_id` / `.telegram_group_title` when it is
+   added to a `group`/`supergroup`, and clears both when it is removed —
+   private chats are ignored, so an administrator never types a chat ID. The
+   bot confirms inside the group, which doubles as a send-rights check.
+2. **Arm and fire.** `dispatch_group` (`1` armed / `0` disarmed, **armed when
+   the row is absent**) is the switch in **⚙️ Configurações → 🔔 Disparos**.
+   `action:dispatch_send` reaches the group only when that switch is on **and**
+   a target exists, then reports it in the `👥 GRUPO NO TELEGRAM` section of
+   `renderDispatchResult` — `Enviado…`, `Nenhum grupo conectado…` or
+   `Canal DESATIVADO…`.
+3. **Public payload.** `sendAlertToGroup` posts `formatHighRiskAlert` plus the
+   quoted institution message with `buildGroupAlertKeyboard`: a single
+   `https://t.me/<bot>?start=inscrever` URL button (the §8.6 deep link). The
+   administrator tray is **never** attached — the callback router rejects
+   non-admins, so it would only advertise dead controls, and the deep link
+   keeps contact sharing in a **private** chat where the rest of the group
+   cannot see the number.
+4. **Containment.** Delivery goes through `TelegramBotClient.sendMessage`,
+   which chunks at 4096 characters and returns `{ error }` instead of throwing,
+   so an unreachable group degrades to one failed receipt line while e-mail and
+   SMS still complete (§10).
+
+---
+
 ## 9. Message Formatting & Presentation
 
 `WeatherTelegramBot.formatHighRiskAlert(events, sentAt)` renders broadcasts:
@@ -699,9 +736,9 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
 | SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
 | SMS subscriber list (admin + citizen consent recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `removeSmsSubscribersByChatId`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
-| Institution-message SMS body (single line, segment pricing) | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
 | Citizen consent term, contact capture, `/inscrever` + `/revogar` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `buildRegularKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
-| Alert dispatch menu, dispatch configuration, shared composer and combined dispatch | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderAlertDispatch`, `renderDispatchConfig`, `renderMessageCompose`, `renderDispatchResult`, `getDispatches`, `isDispatchEnabled`, `setDispatchEnabled`, `buildAlertDispatchKeyboard`, `buildDispatchConfigKeyboard`, `buildMessageComposeKeyboard`, `buildAlertActionKeyboard`, `buildActiveAlertsKeyboard`, `createAlertCallback` | `tests/bot/dispatches.test.js` |
+| Institution-message SMS body (single line, segment pricing) | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
+| Alert dispatch menu, dispatch configuration, shared composer and combined dispatch | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` + `src/bot/telegram.js` | `renderAlertDispatch`, `renderDispatchConfig`, `renderMessageCompose`, `renderDispatchResult`, `getDispatches`, `isDispatchEnabled`, `setDispatchEnabled`, `getTelegramGroup`, `setTelegramGroup`, `clearTelegramGroup`, `sendAlertToGroup`, `buildAlertDispatchKeyboard`, `buildDispatchConfigKeyboard`, `buildMessageComposeKeyboard`, `buildGroupAlertKeyboard`, `buildAlertActionKeyboard`, `buildActiveAlertsKeyboard`, `createAlertCallback`, `onMyChatMember`, `getBotUsername`, `sendMessage` | `tests/bot/dispatches.test.js` |
 | SMS dispatch & subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` + `src/bot/presentation.js` | `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsSubscribersKeyboard`, `buildSmsTestingNotice` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |

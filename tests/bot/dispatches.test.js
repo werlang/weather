@@ -161,7 +161,7 @@ describe('alert dispatch menu', () => {
         assert.match(captured.edited, /DISPARO DO ALERTA/);
         assert.match(captured.edited, /📧 E-mail \(comunicado\)/);
         assert.match(captured.edited, /📱 SMS para inscritos/);
-        assert.match(captured.edited, /obrigatórios/);
+        assert.match(captured.edited, /👥 Grupo no Telegram/);
     });
 });
 
@@ -188,7 +188,7 @@ describe('dispatch configuration screen', () => {
 
     it('defaults both channels to armed so a fresh database starts live', () => {
         const { bot } = createDispatchBot();
-        assert.deepEqual(bot.getDispatches(), { email: true, sms: true });
+        assert.deepEqual(bot.getDispatches(), { email: true, sms: true, group: true });
     });
 
     it('persists a disarm/re-arm round trip on the touched channel only', () => {
@@ -197,7 +197,7 @@ describe('dispatch configuration screen', () => {
         assert.equal(bot.setDispatchEnabled('sms', false), true);
         assert.equal(bot.isDispatchEnabled('sms'), false);
         assert.equal(getSystemSetting('dispatch_sms'), '0');
-        assert.deepEqual(bot.getDispatches(), { email: true, sms: false });
+        assert.deepEqual(bot.getDispatches(), { email: true, sms: false, group: true });
 
         assert.equal(bot.setDispatchEnabled('sms', true), true);
         assert.equal(bot.isDispatchEnabled('sms'), true);
@@ -263,7 +263,7 @@ describe('automatic Telegram alerts are not configurable', () => {
         const captured = await fireCallback(fakeBot, 'dispatch:toggle:telegram');
 
         assert.equal(captured.edited, undefined);
-        assert.match(String(captured.answered?.text || ''), /obrigat/);
+        assert.match(String(captured.answered?.text || ''), /desconhecido/i);
         assert.equal(getSystemSetting('dispatch_telegram'), null);
     });
 
@@ -411,5 +411,149 @@ describe('testing-mode notice copy', () => {
 
     it('renders an empty body without throwing', () => {
         assert.match(buildSmsTestingNotice({}), /\(corpo vazio\)/);
+    });
+});
+
+/**
+ * Simulates the `my_chat_member` update Telegram sends when the bot joins or
+ * leaves a chat — the only discovery mechanism for the dispatch group.
+ *
+ * @param {object} fakeBot - Fake bot double.
+ * @param {object} [options] - Update fields.
+ * @returns {Promise<object>} Captured context results.
+ */
+async function fireMyChatMember(fakeBot, { chatId = -100777, type = 'supergroup', status = 'member', title = 'Charqueadas - Alertas' } = {}) {
+    const handler = fakeBot.eventHandlers.get('my_chat_member');
+    const captured = {};
+    await handler({
+        myChatMember: {
+            chat: { id: chatId, type, title },
+            newChatMember: { status }
+        },
+        reply: async text => { captured.replied = text; }
+    });
+    return captured;
+}
+
+describe('Telegram group as a dispatch mean', () => {
+    beforeEach(() => {
+        Sqlite.close();
+        getDatabase(':memory:');
+        Sqlite.exec("DELETE FROM system_settings WHERE key LIKE 'dispatch_%'");
+        Sqlite.exec("DELETE FROM system_settings WHERE key LIKE 'telegram_group%'");
+        Sqlite.exec('DELETE FROM sms_subscribers');
+    });
+
+    afterEach(() => {
+        Sqlite.close();
+    });
+
+    it('is offered as a third switch in the configuration screen', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+
+        assert.equal(bot.getDispatches().group, true, 'a fresh database starts with the group armed');
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_config');
+        assert.match(captured.edited, /Grupo no Telegram: ✅ ATIVO/);
+        assert.match(captured.edited, /Nenhum grupo conectado/);
+
+        const flat = flatCallbacks(captured.options.reply_markup);
+        assert.ok(flat.includes('dispatch:toggle:group'));
+    });
+
+    it('registers the group without the administrator typing any chat id', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+
+        const captured = await fireMyChatMember(fakeBot);
+
+        assert.match(String(captured.replied || ''), /conectado/i);
+        assert.deepEqual(bot.getTelegramGroup(), { id: '-100777', title: 'Charqueadas - Alertas' });
+        assert.equal(getSystemSetting('telegram_group_id'), '-100777');
+
+        const config = await fireCallback(fakeBot, 'action:dispatch_config');
+        assert.match(config.edited, /Conectado: Charqueadas - Alertas \(-100777\)/);
+    });
+
+    it('ignores private chats and forgets the group when the bot leaves', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+
+        await fireMyChatMember(fakeBot, { type: 'private', chatId: 555, title: 'Somebody' });
+        assert.equal(bot.getTelegramGroup(), null, 'a private chat is never a dispatch target');
+
+        await fireMyChatMember(fakeBot, { chatId: -100777 });
+        assert.equal(bot.getTelegramGroup()?.id, '-100777');
+
+        await fireMyChatMember(fakeBot, { status: 'kicked' });
+        assert.equal(bot.getTelegramGroup(), null, 'leaving must clear the target');
+        assert.equal(getSystemSetting('telegram_group_id'), '');
+    });
+
+    it('sends the public alert card with the SMS subscription deep link', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+        fakeBot.botInfo = { username: 'weather_test_bot' };
+        await fireMyChatMember(fakeBot);
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        const groupMessage = fakeBot.sentMessages.find(m => String(m.chatId) === '-100777');
+        assert.ok(groupMessage, 'the group must receive the alert card');
+        assert.match(groupMessage.text, /Municípios Impactados/);
+
+        const buttons = groupMessage.options.reply_markup.inline_keyboard.flat();
+        const labels = buttons.map(b => b.text);
+        const urls = buttons.map(b => b.url);
+        assert.ok(urls.includes('https://t.me/weather_test_bot?start=inscrever'),
+            'citizens must reach the private consent flow');
+        assert.ok(!labels.some(t => /Disparos|Configurações/.test(t)),
+            'the administrator tray must never be exposed to the group');
+
+        assert.match(captured.edited, /GRUPO NO TELEGRAM/);
+        assert.match(captured.edited, /✅ Enviado para Charqueadas - Alertas — 1 parte\(s\)\./);
+    });
+
+    it('keeps the group silent when its switch is off', async () => {
+        const { bot, fakeBot } = createDispatchBot();
+        await fireMyChatMember(fakeBot);
+        bot.setDispatchEnabled('group', false);
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.equal(fakeBot.sentMessages.some(m => String(m.chatId) === '-100777'), false);
+        assert.match(captured.edited, /GRUPO NO TELEGRAM[\s\S]*Canal DESATIVADO/);
+    });
+
+    it('reports a missing group instead of failing the whole dispatch', async () => {
+        addSmsSubscriber('43999998888');
+        const { fakeBot, emailService } = createDispatchBot();
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.match(captured.edited, /GRUPO NO TELEGRAM[\s\S]*Nenhum grupo conectado/);
+        assert.equal(emailService.sent.length, 1, 'the other means must still go out');
+    });
+
+    it('refuses the dispatch when no mean at all can receive it', async () => {
+        const { bot, fakeBot, emailService, smsService } = createDispatchBot();
+        bot.setDispatchEnabled('email', false);
+        bot.setDispatchEnabled('sms', false);
+        bot.setDispatchEnabled('group', false);
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.equal(captured.edited, undefined);
+        assert.match(String(captured.answered?.text || ''), /Nenhum canal configurado/);
+        assert.equal(emailService.sent.length, 0);
+        assert.equal(smsService.sent.length, 0);
+    });
+
+    it('reports a transport failure without aborting the receipt', async () => {
+        const { bot, fakeBot, emailService } = createDispatchBot();
+        await fireMyChatMember(fakeBot);
+        bot.telegram.sendMessage = async () => { throw new Error('gateway down'); };
+
+        const captured = await fireCallback(fakeBot, 'action:dispatch_send');
+
+        assert.match(captured.edited, /❌ Não enviado: gateway down\./);
+        assert.equal(emailService.sent.length, 1, 'a dead group must not abort the other means');
     });
 });

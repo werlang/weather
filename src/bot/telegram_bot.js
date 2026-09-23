@@ -75,6 +75,7 @@ import {
     buildActiveAlertsKeyboard,
     buildAlertDispatchKeyboard,
     buildDispatchConfigKeyboard,
+    buildGroupAlertKeyboard,
     buildMessageComposeKeyboard,
     buildSmsSubscribersKeyboard,
     buildConsentKeyboard,
@@ -291,7 +292,8 @@ export class WeatherTelegramBot {
      * A missing row reads as armed, so a fresh database starts fully live —
      * in production every channel must be on.
      *
-     * @param {string} channel - Configurable means (`email`, `sms`); the automatic Telegram batch has no setting.
+     * @param {string} channel - Configurable means (`email`, `sms`, `group`);
+     *   the automatic Telegram batch to administrators has no setting.
      * @returns {boolean} True when the channel may dispatch.
      */
     isDispatchEnabled(channel) {
@@ -301,7 +303,8 @@ export class WeatherTelegramBot {
     /**
      * Arms or disarms one dispatch channel and persists the choice.
      *
-     * @param {string} channel - Configurable means (`email`, `sms`); the automatic Telegram batch has no setting.
+     * @param {string} channel - Configurable means (`email`, `sms`, `group`);
+     *   the automatic Telegram batch to administrators has no setting.
      * @param {boolean} enabled - True to arm the channel.
      * @returns {boolean} True when the setting was persisted.
      */
@@ -310,16 +313,76 @@ export class WeatherTelegramBot {
     }
 
     /**
-     * Armed state of every configurable means, shaped for the keyboards and
-     * the screens. The automatic Telegram batch is deliberately absent: it has
-     * no setting, because every administrator must receive it.
+     * The registered dispatch group, or null when none is connected.
+     * The bot writes these keys itself on `my_chat_member`, so connecting a
+     * group is just adding the bot to it — no chat ID is ever typed.
      *
-     * @returns {{ email: boolean, sms: boolean }} Armed state per means.
+     * @returns {{ id: string, title: string } | null} Group target, or null.
+     */
+    getTelegramGroup() {
+        const id = String(getSystemSetting('telegram_group_id', '') || '').trim();
+        if (!id) return null;
+
+        const title = String(getSystemSetting('telegram_group_title', '') || '').trim();
+        return { id, title: title || 'Grupo sem título' };
+    }
+
+    /**
+     * Persists the group the bot was added to, replacing any previous target.
+     *
+     * @param {object} target - Group target.
+     * @param {string|number} target.id - Telegram chat ID.
+     * @param {string} [target.title=''] - Display title.
+     * @returns {boolean} True when both values were persisted.
+     */
+    setTelegramGroup({ id, title = '' }) {
+        const normalizedId = String(id || '').trim();
+        if (!normalizedId || !/^-?\d+$/.test(normalizedId)) return false;
+
+        return saveSystemSetting('telegram_group_id', normalizedId) &&
+            saveSystemSetting('telegram_group_title', String(title || '').trim());
+    }
+
+    /**
+     * Forgets the dispatch group — used when the bot is removed from it, so a
+     * dispatch can never target a chat the bot is no longer a member of.
+     *
+     * @returns {boolean} True when the target was cleared.
+     */
+    clearTelegramGroup() {
+        return saveSystemSetting('telegram_group_id', '') &&
+            saveSystemSetting('telegram_group_title', '');
+    }
+
+    /**
+     * Active events of the last scan, always an array.
+     *
+     * @returns {Array<object>} Events, empty when no scan is available.
+     */
+    getSnapshotEvents() {
+        try {
+            const snapshot = this.getSnapshot();
+            return Array.isArray(snapshot?.events) ? snapshot.events : [];
+        } catch (err) {
+            this.logger.error?.('[telegram_bot] snapshot events error:', err.message);
+            return [];
+        }
+    }
+
+    /**
+     * Armed state of every configurable means, shaped for the keyboards and
+     * the screens. The **automatic** Telegram batch is deliberately absent: it
+     * has no setting, because every administrator must receive it. The group
+     * is present — it is a destination the institution chose, not an
+     * obligation, and it exists only while the bot is a member of one.
+     *
+     * @returns {{ email: boolean, sms: boolean, group: boolean }} Armed state per means.
      */
     getDispatches() {
         return {
             email: this.isDispatchEnabled('email'),
-            sms: this.isDispatchEnabled('sms')
+            sms: this.isDispatchEnabled('sms'),
+            group: this.isDispatchEnabled('group')
         };
     }
 
@@ -333,6 +396,7 @@ export class WeatherTelegramBot {
     renderDispatchConfig() {
         const dispatches = this.getDispatches();
         const state = enabled => (enabled ? '✅ ATIVO' : '⬜ DESATIVADO');
+        const group = this.getTelegramGroup();
         const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
         const adminCount = (() => { try { return this.telegram.getAdminChatIds().length; } catch { return 0; } })();
         return [
@@ -345,6 +409,11 @@ export class WeatherTelegramBot {
             '',
             `📱 SMS para inscritos: ${state(dispatches.sms)}`,
             `   👥 Inscritos: ${countSmsSubscribers()} — envia a mesma mensagem.`,
+            '',
+            `👥 Grupo no Telegram: ${state(dispatches.group)}`,
+            group
+                ? `   Conectado: ${group.title} (${group.id}) — cartão público com Inscrever SMS.`
+                : '   Nenhum grupo conectado — adicione o bot a um grupo do Telegram.',
             '',
             CARD_DIVIDER,
             '🤖 Alertas automáticos (Telegram): sempre ativos',
@@ -363,14 +432,9 @@ export class WeatherTelegramBot {
     renderAlertDispatch() {
         const dispatches = this.getDispatches();
         const mark = enabled => (enabled ? '✅' : '⬜');
-        const events = (() => {
-            try {
-                const snapshot = this.getSnapshot();
-                return Array.isArray(snapshot?.events) ? snapshot.events : [];
-            } catch {
-                return [];
-            }
-        })();
+        const events = this.getSnapshotEvents();
+        const group = this.getTelegramGroup();
+        const groupReachable = dispatches.group && Boolean(group);
         return [
             '🔔 DISPARO DO ALERTA',
             CARD_HEADER,
@@ -379,6 +443,7 @@ export class WeatherTelegramBot {
             'Meios configurados neste disparo:',
             ` ${mark(dispatches.email)} 📧 E-mail (comunicado)`,
             ` ${mark(dispatches.sms)} 📱 SMS para inscritos`,
+            ` ${mark(groupReachable)} 👥 Grupo no Telegram${group ? ` — ${group.title}` : ' — nenhum conectado'}`,
             '',
             CARD_DIVIDER,
             '🚀 Enviar disparo entrega nos meios configurados de uma vez só.',
@@ -394,12 +459,15 @@ export class WeatherTelegramBot {
      * @param {object} options - Dispatch outcomes.
      * @param {object|null} [options.email=null] - E-mail send result, or null when not attempted.
      * @param {object|null} [options.sms=null] - SMS send result, or null when not attempted.
+     * @param {object|null} [options.group=null] - Group send result, or null when not attempted.
      * @param {boolean} [options.emailArmed=true] - Whether the e-mail mean was armed.
      * @param {boolean} [options.smsArmed=true] - Whether the SMS mean was armed.
+     * @param {boolean} [options.groupArmed=true] - Whether the group mean was armed.
      * @returns {string} Receipt text.
      */
-    static renderDispatchResult({ email = null, sms = null, emailArmed = true, smsArmed = true } = {}) {
+    static renderDispatchResult({ email = null, sms = null, group = null, emailArmed = true, smsArmed = true, groupArmed = true } = {}) {
         const off = '⬜ Canal DESATIVADO — ative em ⚙️ Configurações → Disparos.';
+        const noGroup = '⬜ Nenhum grupo conectado — adicione o bot a um grupo do Telegram.';
         const lines = [
             '🚀 DISPARO DE ALERTA',
             CARD_HEADER,
@@ -408,6 +476,16 @@ export class WeatherTelegramBot {
         lines.push(...(emailArmed && email ? WeatherTelegramBot.renderEmailResult(email).split('\n') : [off]));
         lines.push('', CARD_DIVIDER, '📱 SMS PARA INSCRITOS');
         lines.push(...(smsArmed && sms ? WeatherTelegramBot.renderSmsResult(sms).split('\n') : [off]));
+        lines.push('', CARD_DIVIDER, '👥 GRUPO NO TELEGRAM');
+        if (!groupArmed) {
+            lines.push(off);
+        } else if (!group) {
+            lines.push(noGroup);
+        } else if (group.ok) {
+            lines.push(`✅ Enviado para ${group.target} — ${group.chunks} parte(s).`);
+        } else {
+            lines.push(`❌ Não enviado: ${group.error || 'erro desconhecido'}.`);
+        }
         lines.push(
             '',
             CARD_DIVIDER,
@@ -1529,6 +1607,60 @@ export class WeatherTelegramBot {
     }
 
     /**
+     * Sends the alert card to the registered Telegram group as a **public**
+     * message. The group is a citizen-facing destination, so it never carries
+     * the administrator tray — only the self-service SMS deep link, which
+     * opens a private chat where sharing a contact cannot be seen by others.
+     *
+     * @param {Array<object>} [events=null] - Events to send; last scan when omitted.
+     * @param {Date} [sentAt=new Date()] - Timestamp shown in the alert header.
+     * @returns {Promise<{ok: boolean, target: string, chunks: number, error?: string}>}
+     *   Delivery outcome for the receipt; never throws.
+     */
+    async sendAlertToGroup(events = null, sentAt = new Date()) {
+        const group = this.getTelegramGroup();
+        if (!group) return { ok: false, target: '', chunks: 0, error: 'Nenhum grupo conectado' };
+
+        const active = events || this.getSnapshotEvents();
+        if (active.length === 0) {
+            return { ok: false, target: group.title, chunks: 0, error: 'Nenhum alerta ativo no último scan' };
+        }
+
+        try {
+            const institutionMessage = (() => {
+                try {
+                    return this.emailStore.getCustomMessage() || DEFAULT_EMAIL_CUSTOM_MESSAGE;
+                } catch {
+                    return DEFAULT_EMAIL_CUSTOM_MESSAGE;
+                }
+            })();
+
+            const message = [
+                WeatherTelegramBot.formatHighRiskAlert(active, sentAt),
+                '',
+                CARD_DIVIDER,
+                '💬 Mensagem da instituição:',
+                `"${institutionMessage}"`
+            ].join('\n');
+
+            const keyboard = buildGroupAlertKeyboard(await this.telegram.getBotUsername());
+            const delivery = await this.telegram.sendMessage(
+                group.id,
+                message,
+                keyboard ? { reply_markup: keyboard } : {}
+            );
+
+            if (delivery.error) {
+                return { ok: false, target: group.title, chunks: delivery.chunks, error: delivery.error.message };
+            }
+            return { ok: true, target: group.title, chunks: delivery.chunks };
+        } catch (error) {
+            this.logger.error?.('[telegram_bot] group dispatch error:', error.message);
+            return { ok: false, target: group.title, chunks: 0, error: error.message };
+        }
+    }
+
+    /**
      * Creates a monitor alert callback that logs and broadcasts alerts to all configured administrators.
      * 
      * @returns {(events: Array<object>) => Promise<object>}
@@ -2143,7 +2275,8 @@ export class WeatherTelegramBot {
                 const channel = data.split(':')[2];
                 const labels = {
                     email: 'E-mail (comunicado)',
-                    sms: 'SMS para inscritos'
+                    sms: 'SMS para inscritos',
+                    group: 'Grupo no Telegram'
                 };
                 if (!Object.prototype.hasOwnProperty.call(labels, channel)) {
                     return answer('Meio de disparo desconhecido.');
@@ -2184,13 +2317,16 @@ export class WeatherTelegramBot {
 
             if (data === 'action:dispatch_send') {
                 const armed = this.getDispatches();
-                if (!armed.email && !armed.sms) {
-                    return answer('Nenhum canal configurado — ative e-mail ou SMS em ⚙️ Configurações → Disparos.');
+                const target = this.getTelegramGroup();
+                const groupReachable = armed.group && Boolean(target);
+                if (!armed.email && !armed.sms && !groupReachable) {
+                    return answer('Nenhum canal configurado — ative e-mail, SMS ou o grupo em ⚙️ Configurações → Disparos.');
                 }
                 await answer('🚀 Disparando…');
                 this._messageEditPending.delete(String(ctx.chat?.id));
                 const email = armed.email ? await this.sendAlertEmail() : null;
                 const sms = armed.sms ? await this.sendAlertSms() : null;
+                const group = groupReachable ? await this.sendAlertToGroup() : null;
                 // Test mode reaches nobody's phone: hand the exact body to the
                 // admin who pulled the trigger, clearly bannered as a test.
                 if (sms?.testing && sms?.body) {
@@ -2202,8 +2338,10 @@ export class WeatherTelegramBot {
                 return ctx.editMessageText?.(WeatherTelegramBot.renderDispatchResult({
                     email,
                     sms,
+                    group,
                     emailArmed: armed.email,
-                    smsArmed: armed.sms
+                    smsArmed: armed.sms,
+                    groupArmed: armed.group
                 }), {
                     reply_markup: new InlineKeyboard()
                         .text('🔄 Repetir disparo', 'action:dispatch_send')
@@ -2294,6 +2432,30 @@ export class WeatherTelegramBot {
         // native share-contact button. A row is written only while a consent
         // agreed in this same chat is still pending, so every stored number
         // has an explicit authorization behind it.
+        // The dispatch group is discovered, never typed: whoever adds the bot
+        // to a group configures it. `my_chat_member` arrives for every join and
+        // leave regardless of the group's privacy mode, so nothing depends on
+        // the bot being allowed to read group chatter.
+        this.telegram.onMyChatMember(async ctx => {
+            try {
+                const chat = ctx.myChatMember?.chat;
+                const status = String(ctx.myChatMember?.newChatMember?.status || '');
+                if (!chat || (chat.type !== 'group' && chat.type !== 'supergroup')) return;
+
+                if (status === 'left' || status === 'kicked') {
+                    this.clearTelegramGroup();
+                    return;
+                }
+
+                if (this.setTelegramGroup({ id: chat.id, title: chat.title || '' })) {
+                    await ctx.reply?.('✅ Grupo conectado aos disparos deste bot — o alerta público sai por aqui, sob ⚙️ Configurações → 🔔 Disparos.');
+                }
+            } catch (error) {
+                // A malformed update must never take the 24/7 service down.
+                this.logger.error?.('[telegram_bot] my_chat_member error:', error.message);
+            }
+        });
+
         this.telegram.onContact(async ctx => {
             const chatId = String(ctx.chat?.id);
             const shared = String(ctx.message?.contact?.phone_number || '').trim();

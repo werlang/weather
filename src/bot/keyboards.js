@@ -219,14 +219,15 @@ export function buildAlertDispatchKeyboard() {
 
 
 /**
- * Builds the dispatch **configuration** screen: one armed/disarmed toggle per
+ * Builds the dispatch **configuration** screen: one armed/disarmed switch per
  * configurable means plus the shared composer. A means absent from the map
  * reads as armed, matching the runtime default, so a future means can be added
- * here without touching the orchestrator. The automatic Telegram batch is
- * deliberately absent — every administrator must receive it, so it is not a
- * choice this screen offers.
+ * here without touching the orchestrator. The **automatic** Telegram batch to
+ * administrators is deliberately absent — every administrator must receive it,
+ * so it is not a choice this screen offers. The group *is* offered: it is a
+ * destination chosen by the institution, not an obligation.
  *
- * @param {{ email?: boolean, sms?: boolean }} [dispatches={}] - Armed state per means.
+ * @param {{ email?: boolean, sms?: boolean, group?: boolean }} [dispatches={}] - Armed state per means.
  * @returns {InlineKeyboard}
  */
 export function buildDispatchConfigKeyboard(dispatches = {}) {
@@ -234,9 +235,29 @@ export function buildDispatchConfigKeyboard(dispatches = {}) {
     const kb = new InlineKeyboard();
     kb.text(`${flag('email')} 📧 E-mail (comunicado)`, 'dispatch:toggle:email').row();
     kb.text(`${flag('sms')} 📱 SMS para inscritos`, 'dispatch:toggle:sms').row();
+    kb.text(`${flag('group')} 👥 Grupo no Telegram`, 'dispatch:toggle:group').row();
     kb.text('✏️ Compor mensagem', 'action:message_compose').row();
     kb.text('⬅️ Voltar às Configurações', 'menu:settings');
     return kb;
+}
+
+
+/**
+ * Builds the keyboard attached to the alert card sent to the group.
+ * Citizens cannot use the administrator tray, so the group only ever gets the
+ * self-service SMS subscription deep link — which opens a **private** chat,
+ * where sharing a contact number cannot be seen by the rest of the group.
+ *
+ * @param {string} [botUsername=''] - Bot username without `@`; no button is
+ *   rendered without it, since a broken deep link is worse than none.
+ * @returns {InlineKeyboard|null} Keyboard, or null when no button applies.
+ */
+export function buildGroupAlertKeyboard(botUsername = '') {
+    const username = String(botUsername || '').trim().replace(/^@/, '');
+    if (!username) return null;
+
+    return new InlineKeyboard()
+        .url('📱 Inscrever SMS', `https://t.me/${username}?start=inscrever`);
 }
 
 

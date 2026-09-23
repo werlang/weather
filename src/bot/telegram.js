@@ -226,6 +226,38 @@ export class TelegramBotClient {
     }
 
     /**
+     * Registers a handler for `my_chat_member` updates, fired when the bot is
+     * added to (or removed from) a chat. This is how the dispatch group is
+     * discovered: the update arrives regardless of the group's privacy mode,
+     * so the administrator never has to look up or type a chat ID.
+     *
+     * @param {Function} handler - grammY context handler.
+     * @returns {TelegramBotClient} This client for composition.
+     */
+    onMyChatMember(handler) {
+        this.bot.on('my_chat_member', handler);
+        return this;
+    }
+
+    /**
+     * Resolves the bot's own @username, used to build public deep links such
+     * as `https://t.me/<bot>?start=inscrever` in messages sent to a group.
+     *
+     * @returns {Promise<string>} Username without `@`, or `''` when unknown.
+     */
+    async getBotUsername() {
+        if (this.bot?.botInfo?.username) return String(this.bot.botInfo.username);
+
+        try {
+            const me = await this.bot?.getMe?.();
+            return me?.username ? String(me.username) : '';
+        } catch (error) {
+            this.logger.warn?.('Failed to resolve bot username:', error.message || error);
+            return '';
+        }
+    }
+
+    /**
      * Registers a callback query (inline button click) handler on the wrapped bot.
      *
      * @param {string|RegExp|Function} [filter] - Pattern or handler function.
@@ -252,6 +284,31 @@ export class TelegramBotClient {
     onError(handler) {
         this.bot.catch(handler);
         return this;
+    }
+
+    /**
+     * Sends a chunked message to one chat, containing any transport failure.
+     * Used for targets outside the administrator allowlist — the dispatch
+     * group — where an unreachable chat must never break the rest of a
+     * dispatch.
+     *
+     * @param {string|number} chatId - Target chat ID.
+     * @param {string} message - Message text.
+     * @param {object} [options] - Telegram sendMessage options.
+     * @returns {Promise<{chatId: string, chunks: number, error?: Error}>}
+     *   Delivery outcome; `error` is set only on failure.
+     */
+    async sendMessage(chatId, message, options = {}) {
+        const chunks = splitTelegramMessage(message);
+        try {
+            for (const chunk of chunks) {
+                await this.bot.api.sendMessage(chatId, chunk, options);
+            }
+            return { chatId: String(chatId), chunks: chunks.length };
+        } catch (error) {
+            this.logger.error?.(`Telegram delivery failed for chat ${chatId}:`, error);
+            return { chatId: String(chatId), error };
+        }
     }
 
     /**
