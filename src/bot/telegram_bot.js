@@ -1507,8 +1507,8 @@ export class WeatherTelegramBot {
         // Command: /inscrever -> citizen SMS subscription consent term (public)
         this.telegram.onCommand(SUBSCRIPTION_KEYWORD, ctx => this.startSubscriptionConsent(ctx));
 
-        // Command: /sair -> withdraw the consent recorded by this chat (public)
-        this.telegram.onCommand('sair', ctx => {
+        // Command: /revogar -> withdraw the consent recorded by this chat (public)
+        this.telegram.onCommand('revogar', ctx => {
             const chatId = String(ctx.chat?.id);
             this._consentContactPending.delete(chatId);
             const removed = removeSmsSubscribersByChatId(chatId);
@@ -1766,7 +1766,11 @@ export class WeatherTelegramBot {
 
             // Consent flow — intentionally public: citizens subscribe to SMS
             // alerts without administrator rights, so it is routed before the
-            // admin gate below.
+            // admin gate below. `consent:start` is the regular-user menu entry.
+            if (data === 'consent:start') {
+                await answer();
+                return this.startSubscriptionConsent(ctx);
+            }
             if (data === 'consent:agree') {
                 const consentChatId = String(ctx.chat?.id);
                 this._consentContactPending.add(consentChatId);

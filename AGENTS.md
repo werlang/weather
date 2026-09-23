@@ -194,8 +194,8 @@ When implementing new roadmap features, preserve the architecture:
 
 1. **Defesa Civil RS Telemetry Fusion:**
    - Integrate station `DCRS-00032` (Charqueadas) river level and sub-hourly precipitation telemetry into `src/monitoring/risk_analyzer.js` as a secondary ground-truth verification stream.
-2. **Self-Service Alert Subscriptions:** ✅ **Implemented** (`/inscrever` deep link + command, `/sair` revocation).
-   - `/inscrever` and `/sair` live in `src/bot/telegram_bot.js` and are public — citizens subscribe without admin rights.
+2. **Self-Service Alert Subscriptions:** ✅ **Implemented** (`/inscrever` deep link + command + regular-menu button, `/revogar` revocation).
+   - `/inscrever` and `/revogar` live in `src/bot/telegram_bot.js` and are public — citizens subscribe without admin rights. The regular-user menu (`buildRegularKeyboard`) exposes the same term through `consent:start`.
    - There is **no separate store**: capture and revocation reuse `addSmsSubscriber`/`removeSmsSubscribersByChatId` on `sms_subscribers`.
    - The flow is two-step by Telegram platform constraint: official LGPD term with `[✅ Concordo]`, then the native `request_contact` reply button delivers the number; see `docs/ALERT_METHODOLOGY.md` §8.6 and `tests/bot/consent_flow.test.js`.
 3. **Interactive Telegram Admin Management:**

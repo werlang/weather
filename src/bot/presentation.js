@@ -82,7 +82,7 @@ export const BOT_COMMANDS = [
     { command: 'start', description: '🌤️ Painel meteorológico e menu interativo' },
     { command: 'menu', description: '🌤️ Abrir painel principal' },
     { command: 'inscrever', description: '📜 Autorizar o recebimento de alertas por SMS' },
-    { command: 'sair', description: '🚪 Revogar a autorização de alertas por SMS' },
+    { command: 'revogar', description: '🚪 Revogar a autorização de alertas por SMS' },
     { command: 'status', description: '📊 Status do monitor e do banco de dados' },
     { command: 'alertas', description: '🚨 Avisos e alertas ativos (INMET + Defesa Civil RS)' },
     { command: 'config', description: '⚙️ Ajustes de intervalo, raio e alertas' },
@@ -145,7 +145,8 @@ export function buildRegularWelcomeMessage() {
         '   Basta colar o código aqui como mensagem (pode estar dentro de frase).',
         '',
         CARD_DIVIDER,
-        '💡 Toque em “🚨 Ver Últimos Alertas” abaixo para ver o último scan.'
+        '💡 Toque em “🚨 Ver Últimos Alertas” abaixo para ver o último scan.',
+        '📱 Toque em “📱 Inscrever SMS” para autorizar alertas por SMS — você revoga depois com /revogar.'
     ].join('\n');
 }
 
@@ -194,8 +195,8 @@ export function buildConsentRequestMessage() {
         '2. CARÁTER OPTATIVO E GRATUITO — O cadastro é voluntário e gratuito. A recusa não gera qualquer restrição de uso deste bot.',
         '3. DADOS COLETADOS — Apenas o número de telefone que você compartilhar nesta conversa, associado ao identificador desta conversa.',
         '4. GUARDA E USO — Os dados serão armazenados em base de dados controlada pelo IFSUL Campus Charqueadas, usados somente para a finalidade do item 1, não serão compartilhados com terceiros nem utilizados para fins comerciais ou publicitários.',
-        '5. REVOGAÇÃO — A autorização pode ser revogada a qualquer momento, gratuitamente e de forma simplificada, pelo comando /sair, com a exclusão imediata do número do cadastro.',
-        '6. CONTROLADOR — IFSUL Campus Charqueadas — Charqueadas / RS (IBGE 4305355).',
+        '5. REVOGAÇÃO — A autorização pode ser revogada a qualquer momento, gratuitamente e de forma simplificada, pelo comando /revogar, com a exclusão imediata do número do cadastro.',
+        '6. CONTROLADOR — IFSUL Campus Charqueadas — Charqueadas / RS.',
         CARD_HEADER,
         'Deseja prosseguir com o cadastro?',
         CARD_DIVIDER,
@@ -290,7 +291,7 @@ export function buildSubscriptionSuccessMessage({ phone = '', already = false } 
         '',
         'Com o seu consentimento, o IFSUL Campus Charqueadas enviará para este número os alertas meteorológicos oficiais (INMET + Defesa Civil RS) detectados pelo monitoramento 24/7.',
         CARD_DIVIDER,
-        '🔁 Revogue a autorização a qualquer momento enviando /sair.'
+        '🔁 Revogue a autorização a qualquer momento enviando /revogar.'
     ];
     return lines.join('\n');
 }
@@ -329,7 +330,7 @@ export function buildContactRejectedMessage() {
 }
 
 /**
- * Renders the withdrawal receipt for `/sair`.
+ * Renders the withdrawal receipt for `/revogar`.
  *
  * @param {number} removed - How many numbers this chat had authorized.
  * @returns {string} Withdrawal message.

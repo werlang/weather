@@ -586,7 +586,7 @@ number. Capture is a two-step consent, never a free-typed field:
    pending so a valid one can follow; the receipt masks the number
    (`+55 43 •••••-8888`) and every stored row goes through
    `addSmsSubscriber` — there is **no second store**.
-5. **Revocation:** `/sair` → `removeSmsSubscribersByChatId` deletes exactly the
+5. **Revocation:** `/revogar` → `removeSmsSubscribersByChatId` deletes exactly the
    rows that chat registered (numbers owned by other chats are untouched), and
    the `❌ Cancelar` button aborts between agreement and share. Both paths, like
    a refusal, confirm with `NENHUM DADO FOI ARMAZENADO` when nothing was kept.
@@ -670,9 +670,9 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
 | SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
-| SMS subscriber list (admin-managed recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
+| SMS subscriber list (admin + citizen consent recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `removeSmsSubscribersByChatId`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
 | Compact ≤160-char SMS body | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
-| Citizen consent term, contact capture, `/inscrever` + `/sair` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
+| Citizen consent term, contact capture, `/inscrever` + `/revogar` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `buildRegularKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
 | SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |

@@ -124,7 +124,7 @@ export function removeSmsSubscriber(rawPhone, customDriver = null) {
 }
 
 /**
- * Removes every number this chat put in the list, which is how `/sair`
+ * Removes every number this chat put in the list, which is how `/revogar`
  * withdraws the consent recorded under that chat identifier. Numbers added by
  * a different chat are never touched.
  *

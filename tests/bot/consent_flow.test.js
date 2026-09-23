@@ -10,7 +10,8 @@ import { TelegramBotClient } from '../../src/bot/telegram.js';
 import { WeatherTelegramBot } from '../../src/bot/telegram_bot.js';
 import {
     buildConsentKeyboard,
-    buildConsentContactKeyboard
+    buildConsentContactKeyboard,
+    buildRegularKeyboard
 } from '../../src/bot/keyboards.js';
 import {
     SUBSCRIPTION_KEYWORD,
@@ -217,7 +218,13 @@ describe('Consent keyboards and command menu', () => {
     it('publishes the subscription commands in the autocomplete menu', () => {
         const commands = BOT_COMMANDS.map(entry => entry.command);
         assert.ok(commands.includes(SUBSCRIPTION_KEYWORD));
-        assert.ok(commands.includes('sair'));
+        assert.ok(commands.includes('revogar'));
+    });
+
+    it('exposes the public SMS subscription entry on the regular-user menu', () => {
+        const flat = buildRegularKeyboard().inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.ok(flat.includes('consent:start'), 'regular menu must offer consent:start');
+        assert.ok(flat.includes('action:last_scan'), 'regular menu must keep the last-scan jump');
     });
 });
 
@@ -240,7 +247,19 @@ describe('Citizen SMS subscription consent flow', () => {
         assert.match(captured.replied, /TERMO DE CONSENTIMENTO/);
         assert.match(captured.replied, /IFSUL/);
         assert.match(captured.replied, /13\.709/);
-        assert.match(captured.replied, /\/sair/);
+        assert.match(captured.replied, /\/revogar/);
+        const flat = captured.replyOptions.reply_markup.inline_keyboard.flat().map(btn => btn.callback_data);
+        assert.deepEqual(flat, ['consent:agree', 'consent:decline']);
+    });
+
+    it('opens the same consent term from the regular-user menu button', async () => {
+        const { fakeBot } = createConsentBot();
+
+        // CITIZEN_CHAT_ID is deliberately outside the admin allowlist: the
+        // callback must be answered before the admin gate, not behind it.
+        const captured = await fireCallback(fakeBot, 'consent:start');
+
+        assert.match(captured.replied, /TERMO DE CONSENTIMENTO/);
         const flat = captured.replyOptions.reply_markup.inline_keyboard.flat().map(btn => btn.callback_data);
         assert.deepEqual(flat, ['consent:agree', 'consent:decline']);
     });
@@ -391,7 +410,7 @@ describe('Citizen SMS subscription consent flow', () => {
     });
 });
 
-describe('Consent withdrawal (/sair)', () => {
+describe('Consent withdrawal (/revogar)', () => {
     beforeEach(() => {
         Sqlite.close();
         getDatabase(':memory:');
@@ -407,7 +426,7 @@ describe('Consent withdrawal (/sair)', () => {
         await consentAndShare(fakeBot);
         assert.equal(countSmsSubscribers(), 1);
 
-        const captured = await fireCommand(fakeBot, 'sair');
+        const captured = await fireCommand(fakeBot, 'revogar');
 
         assert.match(captured.replied, /INSCRIÇÃO CANCELADA/);
         assert.equal(countSmsSubscribers(), 0);
@@ -418,11 +437,11 @@ describe('Consent withdrawal (/sair)', () => {
         const { fakeBot } = createConsentBot();
         await consentAndShare(fakeBot);
 
-        const adminWithdrawal = await fireCommand(fakeBot, 'sair', { chatId: ADMIN_CHAT_ID });
+        const adminWithdrawal = await fireCommand(fakeBot, 'revogar', { chatId: ADMIN_CHAT_ID });
         assert.match(adminWithdrawal.replied, /NENHUMA INSCRIÇÃO/);
         assert.equal(countSmsSubscribers(), 1);
 
-        const citizenWithdrawal = await fireCommand(fakeBot, 'sair');
+        const citizenWithdrawal = await fireCommand(fakeBot, 'revogar');
         assert.match(citizenWithdrawal.replied, /INSCRIÇÃO CANCELADA/);
         assert.equal(countSmsSubscribers(), 0);
     });
@@ -430,7 +449,7 @@ describe('Consent withdrawal (/sair)', () => {
     it('reports a chat that never subscribed', async () => {
         const { fakeBot } = createConsentBot();
 
-        const captured = await fireCommand(fakeBot, 'sair');
+        const captured = await fireCommand(fakeBot, 'revogar');
 
         assert.match(captured.replied, /NENHUMA INSCRIÇÃO/);
         assert.equal(countSmsSubscribers(), 0);

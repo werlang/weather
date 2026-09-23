@@ -1,7 +1,9 @@
 /**
- * Telegram Bot Inline Keyboards.
- * Pure InlineKeyboard builders for menus, settings, categories, and the
- * email comunicado flow. No chat state — the orchestrator wires callbacks.
+ * Telegram Bot Keyboard Builders.
+ * Pure builders for menus, settings, categories, the email comunicado flow,
+ * and the SMS consent flow (inline menus plus the native reply keyboard used
+ * to capture a shared contact). No chat state — the orchestrator wires
+ * callbacks.
  *
  * @module botKeyboards
  */
@@ -27,10 +29,18 @@ export function buildMainMenuKeyboard() {
 }
 
 
+/**
+ * Builds the inline keyboard offered to regular (non-admin) users.
+ * Beside the read-only last-scan jump it exposes the public SMS subscription
+ * entry, which opens the LGPD consent term without granting admin rights.
+ *
+ * @returns {InlineKeyboard} Menu with last scan, SMS subscribe, and about.
+ */
 export function buildRegularKeyboard() {
     return new InlineKeyboard()
         .text('🚨 Ver Últimos Alertas', 'action:last_scan')
         .row()
+        .text('📱 Inscrever SMS', 'consent:start')
         .text('ℹ️ Sobre o Bot', 'action:regular_about');
 }
 

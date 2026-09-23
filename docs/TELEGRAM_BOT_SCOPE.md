@@ -84,7 +84,7 @@ Full pipeline: `ALERT_METHODOLOGY.md` §8.5.
 | :--- | :--- | :--- |
 | `/start` or `/menu` | Opens the main interactive dashboard with button navigation. | Administrator |
 | `/inscrever` (ou `/start inscrever`) | Opens the official consent term to subscribe this chat to SMS weather alerts. | All (Public) |
-| `/sair` | Withdraws that consent and deletes the numbers authorized by this chat. | All (Public) |
+| `/revogar` | Withdraws that consent and deletes the numbers authorized by this chat. | All (Public) |
 | `/status` | Returns system operational health, SQLite fetch stats, and active parameters. | Administrator |
 | `/alertas` | Displays active warnings and alerts from all sources (INMET + Defesa Civil RS). | Administrator |
 | `/config` | Opens the interactive settings menu (interval, radius, alert categories, thresholds). | Administrator |
@@ -96,7 +96,7 @@ Citizens enroll their own number through a two-step consent that never grants
 administrator rights (full pipeline: `ALERT_METHODOLOGY.md` §8.6):
 
 ```text
-/start inscrever  ──►  📜 TERMO DE CONSENTIMENTO (LGPD)
+/start inscrever │ 📱 Inscrever SMS  ──►  📜 TERMO DE CONSENTIMENTO (LGPD)
                        [ ✅ Concordo ]  [ ❌ Recusar ]
                             │
                             ▼ (only after ✅)
@@ -105,13 +105,15 @@ administrator rights (full pipeline: `ALERT_METHODOLOGY.md` §8.6):
                             │
                             ▼
                        📜 INSCRIÇÃO CONFIRMADA — AUTORIZAÇÃO REGISTRADA
-                       (+55 43 •••••-8888, revogável por /sair)
+                       (+55 43 •••••-8888, revogável por /revogar)
 ```
 
 - The keyword is matched **before** invite-code extraction — `inscrever`
   contains an 8-character A-Z0-9 run that would otherwise read as a code.
-- `consent:agree` / `consent:decline` are routed **before** the admin gate, so
-  a citizen can subscribe without ever holding (or seeking) admin rights.
+- The regular-user menu offers the same term through **📱 Inscrever SMS**
+  (`consent:start`); `consent:start`, `consent:agree` and `consent:decline` are
+  all routed **before** the admin gate, so a citizen can subscribe without ever
+  holding (or seeking) admin rights.
 - Telegram's `request_contact` button exists only on a reply keyboard, which is
   why the capture is a second step: the tap both delivers the number and is the
   recorded act of consent.
@@ -119,7 +121,7 @@ administrator rights (full pipeline: `ALERT_METHODOLOGY.md` §8.6):
   chat** is pending and the card belongs to the sender (`contact.user_id`);
   foreign numbers, third-party cards, unsolicited contacts, and the cancel
   button store nothing, and the receipt masks the number.
-- `/sair` (and the cancel button) withdraw it: `removeSmsSubscribersByChatId`
+- `/revogar` (and the cancel button) withdraw it: `removeSmsSubscribersByChatId`
   deletes only the rows that chat authorized.
 
 ---
@@ -130,7 +132,7 @@ Registration is DB-only (no env allowlist):
 1. Create the bot with Telegram's BotFather and obtain `TELEGRAM_BOT_TOKEN` (only required env).
 2. Deploy with empty `admin_users` table. First user to `/start` sees `🎉 BEM-VINDO — CONFIGURAÇÃO INICIAL` with `[✅ Aceitar]`/`[❌ Recusar]` — same accept/refuse flow as invite code. Accept persists `admin_users` (`added_by='bootstrap'`) and in-memory `TelegramBotClient` allowlist.
 3. Further admins: existing admin Config → `👥 Convidar Administrador` generates `A-Z0-9×8` code (5-min, single-use, `admin_invites` table, `SHA256` hash) + shareable link `https://t.me/<bot>?start=CODE` → invitee `/start CODE` or pastes code → `[✅ Aceitar]`/`[❌ Recusar]` → `consumeInviteCode()` `withTransaction` promotes.
-4. Protected commands, settings, live scans and broadcasts are restricted to DB allowlist (`admin_users` + in-memory). Regular users get friendly hello `buildRegularWelcomeMessage()` + `buildRegularKeyboard()` with `🚨 Ver Últimos Alertas` (read-only `getLastScanSnapshot()` from `system_settings:last_scan_snapshot`, no live `performRegionalRiskMonitoring()`).
+4. Protected commands, settings, live scans and broadcasts are restricted to DB allowlist (`admin_users` + in-memory). Regular users get friendly hello `buildRegularWelcomeMessage()` + `buildRegularKeyboard()` with `🚨 Ver Últimos Alertas` (read-only `getLastScanSnapshot()` from `system_settings:last_scan_snapshot`, no live `performRegionalRiskMonitoring()`) and `📱 Inscrever SMS` (public `consent:start`, opens the consent term without granting admin rights).
 5. Unauthorized callbacks receive `Acesso restrito` toast + invite prompt.
 
 ---
