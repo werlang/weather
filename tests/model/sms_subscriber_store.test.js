@@ -11,7 +11,8 @@ import {
     countSmsSubscribers,
     getSmsNumbers,
     listSmsSubscribers,
-    removeSmsSubscriber
+    removeSmsSubscriber,
+    removeSmsSubscribersByChatId
 } from '../../src/model/sms_subscriber_store.js';
 
 describe('SMS subscriber store', () => {
@@ -65,6 +66,27 @@ describe('SMS subscriber store', () => {
         assert.equal(removeSmsSubscriber('5543999998888'), true);
         assert.equal(countSmsSubscribers(), 0);
         assert.equal(removeSmsSubscriber('5543999998888'), false);
+    });
+
+    it('removes only the numbers authorized by the withdrawing chat', () => {
+        addSmsSubscriber('43999998888', { addedBy: '777' });
+        addSmsSubscriber('51988887777', { addedBy: '123' });
+
+        assert.equal(removeSmsSubscribersByChatId('777'), 1);
+        assert.equal(countSmsSubscribers(), 1);
+        assert.deepEqual(getSmsNumbers(), ['5551988887777']);
+        assert.equal(removeSmsSubscribersByChatId('777'), 0);
+    });
+
+    it('refuses an empty chat id and degrades on an unusable store', () => {
+        addSmsSubscriber('43999998888', { addedBy: '777' });
+
+        assert.equal(removeSmsSubscribersByChatId(''), 0);
+        assert.equal(removeSmsSubscribersByChatId(null), 0);
+        assert.equal(countSmsSubscribers(), 1);
+
+        const broken = { find() { throw new Error('boom'); } };
+        assert.equal(removeSmsSubscribersByChatId('777', broken), 0);
     });
 
     it('returns sorted normalized numbers for dispatch', () => {

@@ -124,6 +124,31 @@ export function removeSmsSubscriber(rawPhone, customDriver = null) {
 }
 
 /**
+ * Removes every number this chat put in the list, which is how `/sair`
+ * withdraws the consent recorded under that chat identifier. Numbers added by
+ * a different chat are never touched.
+ *
+ * @param {number|string} chatId - Chat that authorized the numbers.
+ * @param {typeof Sqlite|null} [customDriver=null] - Optional driver for tests.
+ * @returns {number} How many rows were removed, 0 when unusable.
+ */
+export function removeSmsSubscribersByChatId(chatId, customDriver = null) {
+    const id = String(chatId ?? '').trim();
+    if (!id) return 0;
+
+    try {
+        const db = customDriver || getDatabase();
+        const rows = db.find('sms_subscribers', { filter: { added_by: id }, view: ['phone'] });
+        if (rows.length === 0) return 0;
+        db.delete('sms_subscribers', { added_by: id });
+        return rows.length;
+    } catch (err) {
+        console.error('[sms_subscriber_store] removeSmsSubscribersByChatId error:', err.message);
+        return 0;
+    }
+}
+
+/**
  * Returns the normalized numbers to dispatch to, sorted for stable receipts.
  *
  * @param {typeof Sqlite|null} [customDriver=null] - Optional driver for tests.
