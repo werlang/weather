@@ -81,8 +81,8 @@ ifsul/weather/
 │   ├── bot/                          # Telegram interface (grammY)
 │   │   ├── telegram.js               # grammY wrapper, DB allowlist auth, splitMessage (<4096)
 │   │   ├── telegram_bot.js           # Bot orchestrator: commands, routing, renderers, email + SMS flows
-│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome
-│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS)
+│   │   ├── presentation.js           # Pure UI atoms: cards, badges, options, commands, welcome, consent term copy
+│   │   ├── keyboards.js              # Pure InlineKeyboard builders (menus, settings, email, SMS, consent)
 │   │   ├── email_templates.js        # Alert MJML renderer + institution custom-message store
 │   │   └── sms_templates.js          # Compact ≤160-char SMS body renderer
 │   ├── clients/                      # Upstream data sources (network I/O lives here)
@@ -94,7 +94,7 @@ ifsul/weather/
 │   ├── model/                        # SQLite persistence (no network I/O)
 │   │   ├── log_database.js           # Native Node 26 SQLite log database & telemetry analytics + retention
 │   │   ├── admin_store.js            # Admin allowlist & 5-min invite codes (admin_users/invites)
-│   │   └── sms_subscriber_store.js   # Admin-managed SMS recipients (sms_subscribers, E.164)
+│   │   └── sms_subscriber_store.js   # SMS recipients (sms_subscribers, E.164) + per-chat withdrawal
 │   └── helpers/                      # Cross-cutting infrastructure (no domain logic)
 │       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
 │       ├── migrate.js                # Versioned SQLite database migration runner
@@ -103,7 +103,7 @@ ifsul/weather/
 ├── scripts/
 │   └── monitor_regional_risks.js     # On-demand CLI regional report generator
 ├── tests/                            # Mirrors src/ groups (unit only, :memory: DB)
-│   ├── bot/                          # telegram, email action, email templates, SMS action/templates tests
+│   ├── bot/                          # telegram, email, SMS action/templates, consent flow tests
 │   ├── clients/                      # INMET + Defesa Civil client tests
 │   ├── monitoring/                   # Risk analyzer & 24h window logic tests
 │   ├── model/                        # Log database, admin invite + SMS subscriber tests
@@ -123,7 +123,7 @@ ifsul/weather/
 | `src/clients/inmet_client.js` | Fetching INMET forecasts, active warnings, station lists; regional distance calculations. | Telegram messaging, risk analysis, scheduling. |
 | `src/clients/defesa_civil_client.js` | Fetching Defesa Civil RS GraphQL telemetry, river quotas, rain/wind thresholds. | Telegram messaging, scheduling, INMET parsing. |
 | `src/model/admin_store.js` | Admin allowlist (`admin_users`) & invite codes (`admin_invites`, 5-min, hash), DB-only bootstrap. | Telegram delivery, forecast parsing, risk algorithms. |
-| `src/model/sms_subscriber_store.js` | Admin-managed SMS recipients (`sms_subscribers`): E.164 normalization, idempotent add/remove, sorted dispatch list. | SMS transport, Telegram delivery, forecast parsing. |
+| `src/model/sms_subscriber_store.js` | SMS recipients (`sms_subscribers`): E.164 normalization, idempotent add/remove, sorted dispatch list, per-chat withdrawal (`removeSmsSubscribersByChatId`). | SMS transport, Telegram delivery, forecast parsing. |
 | `src/helpers/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
 | `src/helpers/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
 | `src/model/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
@@ -131,8 +131,8 @@ ifsul/weather/
 | `src/monitoring/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
 | `src/bot/telegram.js` | grammY client lifecycle, DB allowlist auth (`admin_users`), `splitMessage` (<4096), `sendToAdmins`. | Domain weather parsing, risk algorithms. |
 | `src/bot/telegram_bot.js` | Orchestrator: `/start`, `/help`, `/status`, `/config`, invite/bootstrap, alert renderers, email comunicado flow, callback routing. Delegates keyboards/presentation to sibling modules. | Socket handling, low-level grammY polling, upstream fetching. |
-| `src/bot/presentation.js` | Pure UI atoms: card dividers, severity options/badges, `BOT_COMMANDS`, welcome copy. No dependencies. | Chat state, DB access, network I/O. |
-| `src/bot/keyboards.js` | Pure InlineKeyboard builders (main, settings, categories, alerts, email). | Callback handling, message sending. |
+| `src/bot/presentation.js` | Pure UI atoms: card dividers, severity options/badges, `BOT_COMMANDS`, welcome copy, LGPD consent/withdrawal copy. No dependencies. | Chat state, DB access, network I/O. |
+| `src/bot/keyboards.js` | Pure keyboard builders (inline: main, settings, categories, alerts, email, SMS; reply: consent share-contact). | Callback handling, message sending. |
 | `src/bot/email_templates.js` | Alert MJML renderer + institution custom-message store (`system_settings`). | SMTP transport, Telegram delivery. |
 | `src/bot/sms_templates.js` | Compact plain-text SMS body (≤160 chars, clause-drop truncation). | Gateway transport, recipient storage, Telegram delivery. |
 | `src/helpers/email_client.js` | SMTP transport: Ethereal dev preview, production SMTP, strict MJML compile. | Template copy, recipient policy beyond `ALERT_EMAIL_TO`. |
@@ -194,9 +194,9 @@ When implementing new roadmap features, preserve the architecture:
 
 1. **Defesa Civil RS Telemetry Fusion:**
    - Integrate station `DCRS-00032` (Charqueadas) river level and sub-hourly precipitation telemetry into `src/monitoring/risk_analyzer.js` as a secondary ground-truth verification stream.
-2. **Self-Service Alert Subscriptions:**
-   - Add `/inscrever` and `/sair` commands in `src/bot/telegram_bot.js`.
-   - Maintain a separate subscriber store so citizens can receive alerts without acquiring administrator privileges.
-   - **Note:** the administrator-managed SMS list (`sms_subscribers`, Configurações → Inscritos SMS) already exists and is separate from this — citizen self-subscribe must reuse `addSmsSubscriber`/`removeSmsSubscriber` rather than inventing a second store.
+2. **Self-Service Alert Subscriptions:** ✅ **Implemented** (`/inscrever` deep link + command, `/sair` revocation).
+   - `/inscrever` and `/sair` live in `src/bot/telegram_bot.js` and are public — citizens subscribe without admin rights.
+   - There is **no separate store**: capture and revocation reuse `addSmsSubscriber`/`removeSmsSubscribersByChatId` on `sms_subscribers`.
+   - The flow is two-step by Telegram platform constraint: official LGPD term with `[✅ Concordo]`, then the native `request_contact` reply button delivers the number; see `docs/ALERT_METHODOLOGY.md` §8.6 and `tests/bot/consent_flow.test.js`.
 3. **Interactive Telegram Admin Management:**
    - Add `/addadmin`, `/deladmin`, and `/listadmins` commands accessible only to verified administrators.

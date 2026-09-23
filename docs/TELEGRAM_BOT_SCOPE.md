@@ -83,10 +83,44 @@ Full pipeline: `ALERT_METHODOLOGY.md` §8.5.
 | Command | Description | Access Level |
 | :--- | :--- | :--- |
 | `/start` or `/menu` | Opens the main interactive dashboard with button navigation. | Administrator |
+| `/inscrever` (ou `/start inscrever`) | Opens the official consent term to subscribe this chat to SMS weather alerts. | All (Public) |
+| `/sair` | Withdraws that consent and deletes the numbers authorized by this chat. | All (Public) |
 | `/status` | Returns system operational health, SQLite fetch stats, and active parameters. | Administrator |
 | `/alertas` | Displays active warnings and alerts from all sources (INMET + Defesa Civil RS). | Administrator |
 | `/config` | Opens the interactive settings menu (interval, radius, alert categories, thresholds). | Administrator |
 | `/help` | Shows operational help, command cheat sheet, and interactive shortcuts. | All (Public) |
+
+### Citizen SMS Subscription (Consent Capture)
+
+Citizens enroll their own number through a two-step consent that never grants
+administrator rights (full pipeline: `ALERT_METHODOLOGY.md` §8.6):
+
+```text
+/start inscrever  ──►  📜 TERMO DE CONSENTIMENTO (LGPD)
+                       [ ✅ Concordo ]  [ ❌ Recusar ]
+                            │
+                            ▼ (only after ✅)
+                       📱 COMPARTILHE O SEU NÚMERO
+                       [ 📱 Compartilhar meu número ]  [ ❌ Cancelar ]
+                            │
+                            ▼
+                       📜 INSCRIÇÃO CONFIRMADA — AUTORIZAÇÃO REGISTRADA
+                       (+55 43 •••••-8888, revogável por /sair)
+```
+
+- The keyword is matched **before** invite-code extraction — `inscrever`
+  contains an 8-character A-Z0-9 run that would otherwise read as a code.
+- `consent:agree` / `consent:decline` are routed **before** the admin gate, so
+  a citizen can subscribe without ever holding (or seeking) admin rights.
+- Telegram's `request_contact` button exists only on a reply keyboard, which is
+  why the capture is a second step: the tap both delivers the number and is the
+  recorded act of consent.
+- A row reaches `sms_subscribers` only while an agreement from **the same
+  chat** is pending and the card belongs to the sender (`contact.user_id`);
+  foreign numbers, third-party cards, unsolicited contacts, and the cancel
+  button store nothing, and the receipt masks the number.
+- `/sair` (and the cancel button) withdraw it: `removeSmsSubscribersByChatId`
+  deletes only the rows that chat authorized.
 
 ---
 

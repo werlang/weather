@@ -561,6 +561,38 @@ failures cannot re-trigger Telegram delivery (§8.1 consequence preserved).
 
 ---
 
+### 8.6 Citizen Self-Service Subscription (Consent Capture)
+
+The list from §8.5 can also be filled by citizens authorizing **their own**
+number. Capture is a two-step consent, never a free-typed field:
+
+1. **Entry:** `/start inscrever` (shareable deep link
+   `https://t.me/<bot>?start=inscrever`) or the `/inscrever` command. The
+   keyword is matched **before** invite-code extraction — `extractInviteCodeFromText`
+   would otherwise read `INSCREVE` as an 8-character invite code.
+2. **Step 1 — term:** `buildConsentRequestMessage()` renders the official LGPD
+   term (finalidade, dados coletados, guarda, revogação, controlador) with the
+   `[✅ Concordo]` / `[❌ Recusar]` callbacks (`consent:agree`,
+   `consent:decline`). Both are routed **before** the administrator gate:
+   subscribing never grants, and never requires, admin rights.
+3. **Step 2 — capture:** only after `consent:agree` does the bot send Telegram's
+   native `request_contact` reply keyboard (`buildConsentContactKeyboard`).
+   Because that button type does not exist on inline keyboards, the tap is
+   itself the recorded act that delivers `message:contact`.
+4. **Invariants:** a row is written only while an agreement from the *same*
+   chat is pending (`_consentContactPending`) and the card belongs to the sender
+   (`contact.user_id`); third-party cards, foreign or malformed numbers, and
+   unsolicited contacts store nothing; an invalid number keeps the consent
+   pending so a valid one can follow; the receipt masks the number
+   (`+55 43 •••••-8888`) and every stored row goes through
+   `addSmsSubscriber` — there is **no second store**.
+5. **Revocation:** `/sair` → `removeSmsSubscribersByChatId` deletes exactly the
+   rows that chat registered (numbers owned by other chats are untouched), and
+   the `❌ Cancelar` button aborts between agreement and share. Both paths, like
+   a refusal, confirm with `NENHUM DADO FOI ARMAZENADO` when nothing was kept.
+
+---
+
 ## 9. Message Formatting & Presentation
 
 `WeatherTelegramBot.formatHighRiskAlert(events, sentAt)` renders broadcasts:
@@ -640,6 +672,7 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
 | SMS subscriber list (admin-managed recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |
 | Compact ≤160-char SMS body | `src/bot/sms_templates.js` | `renderAlertSms` | `tests/bot/sms_templates.test.js` |
+| Citizen consent term, contact capture, `/inscrever` + `/sair` | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` | `buildConsentRequestMessage`, `buildConsentKeyboard`, `buildConsentContactKeyboard`, `startSubscriptionConsent`, `removeSmsSubscribersByChatId` | `tests/bot/consent_flow.test.js` |
 | SMS compose/send callbacks + subscriber screens | `src/bot/telegram_bot.js` + `src/bot/keyboards.js` | `renderSmsCompose`, `sendAlertSms`, `renderSmsResult`, `renderSmsSubscribers`, `buildSmsComposeKeyboard`, `buildSmsSubscribersKeyboard` | `tests/bot/sms_action.test.js` |
 | Persistence of cycles/alerts/settings/fetches + retention | `src/model/log_database.js` | `logMonitorCycle`, `logAlert`, `saveSystemSetting`, `loadAllSettings`, `logFetch`, `getLogRetentionHours`, `cleanupOldLogs` | `tests/model/log_database.test.js` |
 | Admin allowlist & invites (5-min, hash) | `src/model/admin_store.js` | `generateInviteCode`, `createAdminInviteCode`, `consumeInviteCode`, `getPersistedAdminChatIds`, `hashInviteCode` | `tests/model/admin_store.test.js` |

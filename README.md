@@ -86,6 +86,9 @@ bot's `/config` menu; changes persist across restarts.
 
 When a high-risk meteorological event is detected in the next 24h window, the
 service logs it and sends the formatted alert to every configured administrator.
+Citizens can authorize their own phone number for SMS alerts through the public
+`/inscrever` consent flow (official LGPD term + native contact sharing),
+revocable at any time with `/sair`.
 See [Telegram Bot Capabilities and Scope](docs/TELEGRAM_BOT_SCOPE.md) for the
 registration flow and explicit non-goals.
 
