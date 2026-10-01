@@ -14,6 +14,34 @@ import { migrateSync } from '../helpers/migrate.js';
 export const DEFAULT_DB_PATH = process.env.SQLITE_DB_PATH || process.env.DB_PATH || 'database/weather_logs.db';
 
 /**
+ * Upper bound for a recorded duration, in milliseconds (10 minutes).
+ *
+ * No real request or monitoring cycle in this project takes longer than a few
+ * minutes (the worst observed failures sit around 5 minutes). Anything above
+ * this ceiling means the system clock jumped while the measurement was in
+ * flight — on 2026-09-24 a host clock step of ~59 days produced rows of
+ * 5,098,355,648 ms, which dragged `getFetchStats().avgDurationMs` (shown by the
+ * Telegram `/status` command) to 1,413,117 ms for the whole retention window.
+ * @type {number}
+ */
+export const MAX_DURATION_MS = 10 * 60 * 1000;
+
+/**
+ * Clamps a measured duration to a physically measurable range.
+ *
+ * Non-finite, negative and absurd values are not measurements, so they are
+ * stored as `null` (unknown) or capped at {@link MAX_DURATION_MS}. Capping
+ * keeps the row auditable while protecting aggregate latency metrics.
+ *
+ * @param {number|null|undefined} value - Raw duration in milliseconds.
+ * @returns {number|null} The rounded value, the ceiling, or null when unusable.
+ */
+export function clampDurationMs(value) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+    return Math.min(Math.round(value), MAX_DURATION_MS);
+}
+
+/**
  * Initializes or returns the shared SQLite database driver instance.
  * Applies versioned migrations from the migrations directory.
  * 
@@ -62,7 +90,7 @@ export function extractEndpoint(url) {
  * @param {string} logData.url - Full URL fetched.
  * @param {string} [logData.endpoint] - Optional endpoint pathname.
  * @param {number|null} [logData.statusCode] - HTTP status code.
- * @param {number|null} [logData.durationMs] - Request latency in milliseconds.
+ * @param {number|null} [logData.durationMs] - Latency in ms, clamped to `MAX_DURATION_MS` (null when unusable).
  * @param {boolean|number} [logData.success=true] - Whether request succeeded.
  * @param {number|null} [logData.responseSizeBytes] - Size in bytes of response body.
  * @param {number|null} [logData.itemCount] - Number of items/records in response.
@@ -81,7 +109,8 @@ export function logFetch(logData, customDriver = null) {
         const endpoint = logData.endpoint || extractEndpoint(logData.url);
         const success = (logData.success === false || logData.success === 0) ? 0 : 1;
         const statusCode = typeof logData.statusCode === 'number' ? logData.statusCode : null;
-        const durationMs = typeof logData.durationMs === 'number' ? Math.round(logData.durationMs) : null;
+        // Clamped: a clock jump mid-request must not corrupt latency metrics.
+        const durationMs = clampDurationMs(logData.durationMs);
         const responseSizeBytes = typeof logData.responseSizeBytes === 'number' ? Math.round(logData.responseSizeBytes) : null;
         const itemCount = typeof logData.itemCount === 'number' ? Math.round(logData.itemCount) : null;
         const errorMessage = logData.errorMessage ? String(logData.errorMessage) : null;
@@ -118,7 +147,11 @@ export function logFetch(logData, customDriver = null) {
 }
 
 /**
- * Logs a detected severe weather alert event into SQLite using the driver.
+ * Logs a dispatched severe weather alert into SQLite using the driver.
+ *
+ * The monitor dispatcher calls this only for events it actually delivers, so
+ * the table audits what was sent. Scans that merely re-detect an already active
+ * event must not add rows (they used to write one identical row per cycle).
  * 
  * @param {object} alertData
  * @param {string} alertData.type - Alert type / hazard name.
@@ -185,7 +218,7 @@ export function logAlert(alertData, customDriver = null) {
  * @param {number} [cycleData.radiusKm] - Coverage radius in km.
  * @param {number} [cycleData.citiesCount] - Number of verified cities.
  * @param {number} [cycleData.highRiskCount] - Number of high risk events detected.
- * @param {number} [cycleData.durationMs] - Cycle latency in ms.
+ * @param {number} [cycleData.durationMs] - Cycle latency in ms, clamped to `MAX_DURATION_MS`.
  * @param {boolean|number} [cycleData.success=true] - Whether cycle completed without fatal error.
  * @param {string} [cycleData.errorMessage] - Error details if failed.
  * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
@@ -200,7 +233,8 @@ export function logMonitorCycle(cycleData, customDriver = null) {
         const radiusKm = typeof cycleData.radiusKm === 'number' ? cycleData.radiusKm : null;
         const citiesCount = typeof cycleData.citiesCount === 'number' ? cycleData.citiesCount : null;
         const highRiskCount = typeof cycleData.highRiskCount === 'number' ? cycleData.highRiskCount : 0;
-        const durationMs = typeof cycleData.durationMs === 'number' ? Math.round(cycleData.durationMs) : null;
+        // Clamped: a clock jump mid-cycle must not corrupt latency metrics.
+        const durationMs = clampDurationMs(cycleData.durationMs);
         const success = (cycleData.success === false || cycleData.success === 0) ? 0 : 1;
         const errorMessage = cycleData.errorMessage ? String(cycleData.errorMessage) : null;
 
@@ -343,6 +377,9 @@ export function getRecentAlertLogs({ limit = 20, offset = 0 } = {}, customDriver
 
 /**
  * Returns aggregated statistics for all logged API fetch requests via driver.
+ *
+ * Average latency caps every row at `MAX_DURATION_MS`, so legacy rows written
+ * before the duration clamp (e.g. the 2026-09-24 clock jump) cannot distort it.
  * 
  * @param {typeof Sqlite} [customDriver] - Optional custom DB driver.
  * @returns {object} Aggregated stats.
@@ -355,7 +392,7 @@ export function getFetchStats(customDriver = null) {
                 Sqlite.raw('COUNT(*) AS totalFetches'),
                 Sqlite.raw('COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) AS successfulFetches'),
                 Sqlite.raw('COALESCE(SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END), 0) AS failedFetches'),
-                Sqlite.raw('COALESCE(ROUND(AVG(duration_ms), 2), 0) AS avgDurationMs'),
+                Sqlite.raw(`COALESCE(ROUND(AVG(min(duration_ms, ${MAX_DURATION_MS})), 2), 0) AS avgDurationMs`),
                 Sqlite.raw('COALESCE(SUM(response_size_bytes), 0) AS totalResponseBytes'),
                 Sqlite.raw('MIN(timestamp) AS firstFetchAt'),
                 Sqlite.raw('MAX(timestamp) AS lastFetchAt')

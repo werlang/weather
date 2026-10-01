@@ -9,6 +9,7 @@ import {
     getRecentAlertLogs,
     getFetchStats,
     extractEndpoint,
+    MAX_DURATION_MS,
     saveSystemSetting,
     getSystemSetting,
     loadAllSettings,
@@ -163,6 +164,34 @@ describe('SQLite Fetch & Telemetry Logging Operations', () => {
         assert.strictEqual(logAlert({}, testDb), null);
         assert.strictEqual(logMonitorCycle(null, testDb), null);
     });
+
+    it('clamps implausible durations so a system clock jump cannot corrupt metrics', () => {
+        // Observed 2026-09-24: the host clock jumped ~59 days mid-request and the
+        // fetch/cycle rows recorded 5,098,355,648 ms of "latency".
+        const fetchEntry = logFetch({
+            url: 'https://apiprevmet3.inmet.gov.br/previsao/4305355',
+            statusCode: null,
+            durationMs: 5098355648,
+            success: 0,
+            errorMessage: 'fetch failed'
+        }, testDb);
+        assert.strictEqual(fetchEntry.durationMs, MAX_DURATION_MS);
+
+        const negative = logFetch({
+            url: 'https://apiprevmet3.inmet.gov.br/previsao/4305355',
+            durationMs: -25
+        }, testDb);
+        assert.strictEqual(negative.durationMs, null, 'a negative duration is not a measurement');
+
+        const notANumber = logFetch({
+            url: 'https://apiprevmet3.inmet.gov.br/previsao/4305355',
+            durationMs: Number.NaN
+        }, testDb);
+        assert.strictEqual(notANumber.durationMs, null);
+
+        const cycle = logMonitorCycle({ radiusKm: 100, citiesCount: 38, durationMs: 5098356024 }, testDb);
+        assert.strictEqual(cycle.durationMs, MAX_DURATION_MS);
+    });
 });
 
 describe('SQLite Querying & Aggregated Statistics', () => {
@@ -247,6 +276,25 @@ describe('SQLite Querying & Aggregated Statistics', () => {
         assert.strictEqual(stats.totalAlertsRecorded, 1);
         assert.strictEqual(stats.firstFetchAt, '2026-08-20T10:00:00.000Z');
         assert.strictEqual(stats.lastFetchAt, '2026-08-20T10:10:00.000Z');
+    });
+
+    it('getFetchStats ignores legacy rows recorded before the duration clamp', () => {
+        // Row persisted before the fix (59 days of bogus latency) must not drag
+        // the average reported by /status into the millions of milliseconds.
+        testDb.insert('fetch_logs', {
+            timestamp: '2026-08-20T10:15:00.000Z',
+            url: 'https://apiprevmet3.inmet.gov.br/previsao/4305355',
+            endpoint: '/previsao/4305355',
+            status_code: null,
+            duration_ms: 5098355648,
+            success: 0,
+            error_message: 'fetch failed'
+        });
+
+        const stats = getFetchStats(testDb);
+        assert.strictEqual(stats.totalFetches, 4, 'the legacy row is still counted');
+        assert.strictEqual(stats.avgDurationMs, 150150); // (100 + 200 + 300 + 600000) / 4
+        assert.ok(stats.avgDurationMs <= MAX_DURATION_MS);
     });
 });
 

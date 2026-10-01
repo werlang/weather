@@ -506,6 +506,10 @@ availability, forecast failure count, error strings). Rules:
 - An incomplete cycle **must not** emit an "all clear" conclusion.
 - Cycle outcome and errors are persisted via `logMonitorCycle`; each raised
   event is persisted via `logAlert`.
+- Cycle and fetch durations are clamped to `MAX_DURATION_MS` (10 min) by
+  `clampDurationMs` (`src/model/log_database.js`): a system clock jump during a
+  request produced rows of 5,098,355,648 ms on 2026-09-24 and dragged the
+  average latency shown by `/status` to 1,413,117 ms.
 
 ### 8.3 Delivery Target
 
