@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
     EmailConfigurationError,
     EmailService,
-    getAlertEmailRecipient,
+    getAlertEmailRecipients,
     getEmailConfig
 } from '../../src/helpers/email_client.js';
 
@@ -131,18 +131,32 @@ describe('Email configuration contract (node-aec inspired)', () => {
     });
 });
 
-describe('Alert email recipient placeholder', () => {
-    it('uses ALERT_EMAIL_TO when valid', () => {
-        assert.equal(
-            getAlertEmailRecipient({ ALERT_EMAIL_TO: 'secretaria@ifsul.edu.br' }),
-            'secretaria@ifsul.edu.br'
+describe('Alert email recipients (ALERT_EMAIL_TO list)', () => {
+    it('uses a valid single ALERT_EMAIL_TO as a one-item list', () => {
+        assert.deepEqual(
+            getAlertEmailRecipients({ ALERT_EMAIL_TO: 'secretaria@ifsul.edu.br' }),
+            ['secretaria@ifsul.edu.br']
         );
     });
 
-    it('falls back to a placeholder recipient when unset or invalid', () => {
-        assert.match(getAlertEmailRecipient({}), /exemplo/);
-        assert.match(getAlertEmailRecipient({ ALERT_EMAIL_TO: 'not-an-email' }), /exemplo/);
-        assert.match(getAlertEmailRecipient({ ALERT_EMAIL_TO: 'bad\n@example.com' }), /exemplo/);
+    it('accepts several recipients separated by commas, trimming spaces and preserving order', () => {
+        assert.deepEqual(
+            getAlertEmailRecipients({ ALERT_EMAIL_TO: 'secretaria@ifsul.edu.br, coordenacao@ifsul.edu.br , direcao@ifsul.edu.br' }),
+            ['secretaria@ifsul.edu.br', 'coordenacao@ifsul.edu.br', 'direcao@ifsul.edu.br']
+        );
+    });
+
+    it('drops malformed entries but keeps the valid ones', () => {
+        assert.deepEqual(
+            getAlertEmailRecipients({ ALERT_EMAIL_TO: 'secretaria@ifsul.edu.br, not-an-email, bad\n@x.com, , ' }),
+            ['secretaria@ifsul.edu.br']
+        );
+    });
+
+    it('falls back to a placeholder recipient when unset or entirely invalid', () => {
+        assert.match(getAlertEmailRecipients({})[0], /exemplo/);
+        assert.match(getAlertEmailRecipients({ ALERT_EMAIL_TO: 'not-an-email' })[0], /exemplo/);
+        assert.match(getAlertEmailRecipients({ ALERT_EMAIL_TO: 'a@b.com\nbcc:evil@x.com' })[0], /exemplo/);
     });
 });
 
@@ -164,7 +178,7 @@ describe('EmailService delivery (fake transport, no network)', () => {
         assert.equal(result.messageId, '<fake-message-id>');
         assert.equal(result.previewUrl, undefined);
         assert.equal(nodemailer.sent.length, 1);
-        assert.equal(nodemailer.sent[0].to, 'secretaria@ifsul.edu.br');
+        assert.deepEqual(nodemailer.sent[0].to, ['secretaria@ifsul.edu.br']);
         assert.equal(nodemailer.sent[0].subject, 'Alerta Charqueadas');
         assert.equal(nodemailer.sent[0].text, 'derived plain text');
         assert.deepEqual(nodemailer.sent[0].from, {
@@ -219,6 +233,40 @@ describe('EmailService delivery (fake transport, no network)', () => {
         );
     });
 
+    it('addresses one message to every recipient of a list', async () => {
+        const nodemailer = createFakeNodemailer();
+        const service = new EmailService({
+            env: { ...SENDER_ENV, SMTP_HOST: 'smtp.example.com' },
+            nodemailerModule: nodemailer,
+            htmlToTextConverter: () => 'plain text'
+        });
+
+        await service.send({
+            to: ['a@x.com', 'b@y.com'],
+            subject: 'Alerta Charqueadas',
+            html: '<p>Tempestade severa</p>'
+        });
+
+        assert.deepEqual(nodemailer.sent[0].to, ['a@x.com', 'b@y.com']);
+    });
+
+    it('accepts a comma-separated recipient string and normalizes it', async () => {
+        const nodemailer = createFakeNodemailer();
+        const service = new EmailService({
+            env: { ...SENDER_ENV, SMTP_HOST: 'smtp.example.com' },
+            nodemailerModule: nodemailer,
+            htmlToTextConverter: () => 'plain text'
+        });
+
+        await service.send({
+            to: 'a@x.com, b@y.com',
+            subject: 'Alerta Charqueadas',
+            html: '<p>Tempestade severa</p>'
+        });
+
+        assert.deepEqual(nodemailer.sent[0].to, ['a@x.com', 'b@y.com']);
+    });
+
     it('rejects invalid recipients, subjects, and empty content', async () => {
         const nodemailer = createFakeNodemailer();
         const service = new EmailService({
@@ -226,6 +274,8 @@ describe('EmailService delivery (fake transport, no network)', () => {
             nodemailerModule: nodemailer
         });
         await assert.rejects(() => service.send({ to: '', subject: 'x', html: '<p>y</p>', text: 'y' }), TypeError);
+        await assert.rejects(() => service.send({ to: [], subject: 'x', html: '<p>y</p>', text: 'y' }), TypeError);
+        await assert.rejects(() => service.send({ to: ['a@example.com', 'not-an-email'], subject: 'x', html: '<p>y</p>', text: 'y' }), TypeError);
         await assert.rejects(() => service.send({ to: 'not-an-email', subject: 'x', html: '<p>y</p>', text: 'y' }), TypeError);
         await assert.rejects(() => service.send({ to: 'a@example.com', subject: 'Bad\nSubject', html: '<p>y</p>', text: 'y' }), TypeError);
         await assert.rejects(() => service.send({ to: 'a@example.com', subject: 'x', text: 'y' }), TypeError);

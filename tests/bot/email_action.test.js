@@ -173,8 +173,44 @@ describe('Email comunicado keyboards', () => {
     });
 });
 
+/**
+ * Temporarily sets ALERT_EMAIL_TO so recipient-list behavior is exercised
+ * against the real resolver, restoring the previous value afterwards.
+ *
+ * @param {string} value - Comma-separated recipient list.
+ * @param {() => void} fn - Body to run with the env var set.
+ */
+function withAlertEmailTo(value, fn) {
+    const previous = process.env.ALERT_EMAIL_TO;
+    process.env.ALERT_EMAIL_TO = value;
+    try {
+        fn();
+    } finally {
+        if (previous === undefined) delete process.env.ALERT_EMAIL_TO;
+        else process.env.ALERT_EMAIL_TO = previous;
+    }
+}
+
+/**
+ * Async variant of {@link withAlertEmailTo}.
+ *
+ * @param {string} value - Comma-separated recipient list.
+ * @param {() => Promise<void>} fn - Async body to run with the env var set.
+ * @returns {Promise<void>}
+ */
+async function withAlertEmailToAsync(value, fn) {
+    const previous = process.env.ALERT_EMAIL_TO;
+    process.env.ALERT_EMAIL_TO = value;
+    try {
+        await fn();
+    } finally {
+        if (previous === undefined) delete process.env.ALERT_EMAIL_TO;
+        else process.env.ALERT_EMAIL_TO = previous;
+    }
+}
+
 describe('Email compose preview', () => {
-    it('shows hazard summary, impacted zone, recipient, and the default message on first use', () => {
+    it('shows hazard summary, impacted zone, recipients, and the default message on first use', () => {
         const { bot } = createEmailBot();
         const compose = bot.renderMessageCompose();
         assert.equal(compose.canSend, true);
@@ -183,6 +219,16 @@ describe('Email compose preview', () => {
         assert.match(compose.text, /Destinatário/);
         assert.match(compose.text, /comunidade acadêmica/);
         assert.match(compose.text, /COMPOSIÇÃO DA MENSAGEM/);
+    });
+
+    it('lists every recipient configured in ALERT_EMAIL_TO', () => {
+        withAlertEmailTo('secretaria@ifsul.edu.br, direcao@ifsul.edu.br', () => {
+            const { bot } = createEmailBot();
+            const compose = bot.renderMessageCompose();
+            assert.deepEqual(compose.recipients, ['secretaria@ifsul.edu.br', 'direcao@ifsul.edu.br']);
+            assert.match(compose.text, /secretaria@ifsul\.edu\.br/);
+            assert.match(compose.text, /direcao@ifsul\.edu\.br/);
+        });
     });
 
     it('shows the last saved message after an edit', () => {
@@ -215,6 +261,20 @@ describe('Email send flow via admin buttons', () => {
         const text = WeatherTelegramBot.renderEmailResult(result);
         assert.match(text, /E-MAIL ENVIADO/);
         assert.match(text, /ethereal\.email/);
+    });
+
+    it('addresses the message to every configured recipient and reports them', async () => {
+        await withAlertEmailToAsync('secretaria@ifsul.edu.br, direcao@ifsul.edu.br', async () => {
+            const { bot, emailService } = createEmailBot();
+            const result = await bot.sendAlertEmail({ withCustomMessage: true });
+            assert.equal(result.ok, true);
+            assert.deepEqual(emailService.sent[0].to, ['secretaria@ifsul.edu.br', 'direcao@ifsul.edu.br']);
+            assert.deepEqual(result.recipients, ['secretaria@ifsul.edu.br', 'direcao@ifsul.edu.br']);
+
+            const text = WeatherTelegramBot.renderEmailResult(result);
+            assert.match(text, /secretaria@ifsul\.edu\.br/);
+            assert.match(text, /direcao@ifsul\.edu\.br/);
+        });
     });
 
     it('sends without the institution message when skipped', async () => {

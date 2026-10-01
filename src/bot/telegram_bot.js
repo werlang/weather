@@ -23,7 +23,7 @@ import {
     addPersistedAdminChatId,
     clearInviteCode
 } from '../model/admin_store.js';
-import { getAlertEmailRecipient, getEmailService } from '../helpers/email_client.js';
+import { getAlertEmailRecipients, getEmailService } from '../helpers/email_client.js';
 import { getSmsService } from '../helpers/sms_client.js';
 import { renderAlertSms } from './sms_templates.js';
 import {
@@ -397,7 +397,7 @@ export class WeatherTelegramBot {
         const dispatches = this.getDispatches();
         const state = enabled => (enabled ? '✅ ATIVO' : '⬜ DESATIVADO');
         const group = this.getTelegramGroup();
-        const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
+        const recipients = (() => { try { return getAlertEmailRecipients(); } catch { return ['comunicados-charqueadas@exemplo.edu.br']; } })();
         const adminCount = (() => { try { return this.telegram.getAdminChatIds().length; } catch { return 0; } })();
         return [
             '⚙️ CONFIGURAÇÃO DE DISPAROS',
@@ -405,7 +405,7 @@ export class WeatherTelegramBot {
             'Ligue e desligue cada meio. Em produção todos ficam ATIVOs.',
             '',
             `📧 E-mail (comunicado): ${state(dispatches.email)}`,
-            `   Destinatário: ${recipient} — cita a mensagem da instituição.`,
+            `   Destinatários: ${recipients.join(', ')} — cita a mensagem da instituição.`,
             '',
             `📱 SMS para inscritos: ${state(dispatches.sms)}`,
             `   👥 Inscritos: ${countSmsSubscribers()} — envia a mesma mensagem.`,
@@ -1034,7 +1034,7 @@ export class WeatherTelegramBot {
      * structured e-mail and *is* the SMS body in full — so this screen shows
      * the message once and then what each configured mean will do with it.
      *
-     * @returns {{ canSend: boolean, hasSubscribers: boolean, recipientCount: number, body: string, segments: number, credits: number, recipient: string, text: string }}
+     * @returns {{ canSend: boolean, hasSubscribers: boolean, recipientCount: number, body: string, segments: number, credits: number, recipients: string[], text: string }}
      */
     renderMessageCompose() {
         let snapshot = null;
@@ -1045,7 +1045,7 @@ export class WeatherTelegramBot {
         }
         const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
         const subscriberCount = countSmsSubscribers();
-        const recipient = (() => { try { return getAlertEmailRecipient(); } catch { return 'comunicados-charqueadas@exemplo.edu.br'; } })();
+        const recipients = (() => { try { return getAlertEmailRecipients(); } catch { return ['comunicados-charqueadas@exemplo.edu.br']; } })();
 
         if (events.length === 0) {
             return {
@@ -1055,7 +1055,7 @@ export class WeatherTelegramBot {
                 body: '',
                 segments: 1,
                 credits: 0,
-                recipient,
+                recipients,
                 text: [
                     '✉️ COMPOSIÇÃO DA MENSAGEM',
                     CARD_HEADER,
@@ -1100,7 +1100,7 @@ export class WeatherTelegramBot {
             '',
             CARD_DIVIDER,
             '📧 E-mail (estruturado): cita esta mensagem dentro do comunicado.',
-            `   👥 Destinatário: ${recipient}`,
+            `   👥 Destinatários: ${recipients.join(', ')}`,
             '',
             '📱 SMS (corpo integral da mensagem):',
             subscriberCount === 0
@@ -1119,7 +1119,7 @@ export class WeatherTelegramBot {
             body: rendered.text,
             segments: rendered.segments,
             credits: rendered.segments * subscriberCount,
-            recipient,
+            recipients,
             text: lines.join('\n')
         };
     }
@@ -1131,7 +1131,7 @@ export class WeatherTelegramBot {
      *
      * @param {object} [options]
      * @param {boolean} [options.withCustomMessage=true] - Quote the institution message.
-     * @returns {Promise<{ ok: boolean, recipient?: string, subject?: string, hazardCount?: number, messageId?: string, previewUrl?: string, error?: string }>}
+     * @returns {Promise<{ ok: boolean, recipients?: string[], subject?: string, hazardCount?: number, messageId?: string, previewUrl?: string, error?: string }>}
      */
     async sendAlertEmail({ withCustomMessage = true } = {}) {
         try {
@@ -1150,16 +1150,16 @@ export class WeatherTelegramBot {
             }
             const rendered = renderAlertEmail({ events, customMessage });
             const service = this.emailService || getEmailService();
-            const recipient = getAlertEmailRecipient();
+            const recipients = getAlertEmailRecipients();
             const result = await service.send({
-                to: recipient,
+                to: recipients,
                 subject: rendered.subject,
                 mjml: rendered.mjml,
                 text: rendered.text
             });
             return {
                 ok: true,
-                recipient,
+                recipients,
                 subject: rendered.subject,
                 hazardCount: rendered.hazardCount,
                 messageId: result?.messageId,
@@ -1174,7 +1174,7 @@ export class WeatherTelegramBot {
     /**
      * Renders the email send result for display to the administrator.
      *
-     * @param {{ ok: boolean, recipient?: string, subject?: string, messageId?: string, previewUrl?: string, error?: string }} result - Send result.
+     * @param {{ ok: boolean, recipients?: string[], subject?: string, messageId?: string, previewUrl?: string, error?: string }} result - Send result.
      * @returns {string} Result message.
      */
     static renderEmailResult(result) {
@@ -1182,7 +1182,7 @@ export class WeatherTelegramBot {
             const lines = [
                 '✅ E-MAIL ENVIADO',
                 CARD_HEADER,
-                `👥 Para: ${result.recipient || '—'}`,
+                `👥 Para: ${(result.recipients || []).join(', ') || '—'}`,
                 `📨 Assunto: ${result.subject || '—'}`,
                 `🚨 Alertas comunicados: ${result.hazardCount ?? '—'}`,
                 ''

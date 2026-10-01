@@ -173,7 +173,7 @@ Registration is DB-only (no env allowlist):
 | :--- | :--- | :--- | :--- |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Token issued by BotFather. |
 | `SQLITE_DB_PATH` | No | `weather_logs.db` | SQLite database path for fetch logs, metrics, runtime settings and `admin_users`/`admin_invites`. |
-| `ALERT_EMAIL_TO` | No | placeholder | Recipient of the admin-triggered e-mail comunicado. |
+| `ALERT_EMAIL_TO` | No | placeholder | Recipients of the admin-triggered e-mail comunicado: one address or several separated by commas. Malformed entries are dropped; the placeholder is used only when none remain valid. |
 | `EMAIL_TESTING` | No | — | Development guard: the e-mail never leaves the box (Ethereal preview). Must not be `true` in production. |
 | `SMSDEV_KEY` | Prod: Yes | — | SMS Dev gateway key. |
 | `SMSDEV_BASE_URL` | No | `https://api.smsdev.com.br/v1` | SMS Dev gateway base URL (https only). |

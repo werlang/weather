@@ -542,7 +542,9 @@ exactly three actions: **✏️ Compor mensagem**, **⚙️ Ver configurações*
 (never re-fetches sources):
 
 1. `renderMessageCompose` shows the hazard summary, impacted zone, the
-   recipient (`ALERT_EMAIL_TO`, placeholder fallback) and the current
+   recipients (`ALERT_EMAIL_TO` — one address or several separated by commas;
+   malformed entries are dropped and a placeholder is used when none remain
+   valid) and the current
    institution message — the default (`DEFAULT_EMAIL_CUSTOM_MESSAGE`) on
    first use, the last saved value afterwards
    (`system_settings.email_custom_message`). The **same** message is quoted by
@@ -574,7 +576,7 @@ exactly three actions: **✏️ Compor mensagem**, **⚙️ Ver configurações*
 ### 8.5 Admin-Triggered SMS Dispatch
 
 A second admin-triggered channel mirrors §8.4 but targets the **subscriber
-list** rather than a single `ALERT_EMAIL_TO` address. It is deliberately *not*
+list** rather than the configured `ALERT_EMAIL_TO` recipient list. It is deliberately *not*
 part of `createAlertCallback`: SMS never enters the at-least-once batch, so SMS
 failures cannot re-trigger Telegram delivery (§8.1 consequence preserved).
 
@@ -757,7 +759,7 @@ Required behavior for the 24/7 process (enforced by tests and review):
 | Config precedence, cycle orchestration, dispatcher, scheduling | `src/monitoring/monitor_service.js` | `parseMonitorConfig`, `performRegionalRiskMonitoring`, `createAlertDispatcher`, `startMonitoringService` | `tests/monitoring/monitor_service.test.js` |
 | Thresholds menus, badges, presentation copy, message layout, dispatch screens | `src/bot/presentation.js` + `src/bot/keyboards.js` + `src/bot/telegram_bot.js` (orchestrator) | `INMET_SEVERITY_OPTIONS`, `DEFESA_CIVIL_SEVERITY_OPTIONS`, `CATEGORY_SEVERITY_OPTIONS`, `renderSeverityBadge`, `build*Keyboard`, `formatHighRiskAlert`, `renderActiveAlertsReport`, `renderLastScanReport`, `sendAlertEmail` | `tests/bot/telegram.test.js`, `tests/bot/email_action.test.js`, `tests/bot/dispatches.test.js` |
 | Admin delivery + chunking | `src/bot/telegram.js` | `splitTelegramMessage`, `sendToAdmins` | `tests/bot/telegram.test.js` |
-| Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipient`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
+| Alert email transport (Ethereal dev, SMTP prod) | `src/helpers/email_client.js` | `getEmailConfig`, `getAlertEmailRecipients`, `EmailService`, `getEmailService` | `tests/helpers/email_client.test.js` |
 | Alert email MJML template + custom-message store | `src/bot/email_templates.js` | `renderAlertEmail`, `getEmailCustomMessage`, `saveEmailCustomMessage`, `getEmailTierBadge` | `tests/bot/email_templates.test.js` |
 | SMS gateway transport (env contract, E.164, credit math) | `src/helpers/sms_client.js` | `getSmsConfig`, `normalizeSmsNumber`, `countSmsSegments`, `SmsService`, `getSmsService` | `tests/helpers/sms_client.test.js` |
 | SMS subscriber list (admin + citizen consent recipients) | `src/model/sms_subscriber_store.js` | `addSmsSubscriber`, `removeSmsSubscriber`, `removeSmsSubscribersByChatId`, `listSmsSubscribers`, `countSmsSubscribers`, `getSmsNumbers` | `tests/model/sms_subscriber_store.test.js` |

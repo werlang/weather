@@ -79,17 +79,18 @@ export function getEmailConfig(env = process.env) {
 }
 
 /**
- * Resolves the alert comunicado recipient.
- * Falls back to a placeholder address when `ALERT_EMAIL_TO` is unset or
- * invalid, so the admin button always has a target in development.
+ * Resolves the alert comunicado recipients from `ALERT_EMAIL_TO`.
+ * Accepts one address or several separated by commas. Malformed entries are
+ * dropped (the composer preview shows the resolved list before dispatch);
+ * when nothing valid remains, a placeholder address keeps the admin button
+ * targetable in development.
  *
  * @param {NodeJS.ProcessEnv} [env=process.env] - Environment values.
- * @returns {string} Recipient email address.
+ * @returns {string[]} Validated recipient email addresses.
  */
-export function getAlertEmailRecipient(env = process.env) {
-    const raw = String(env.ALERT_EMAIL_TO || '').trim();
-    if (raw && EMAIL_PATTERN.test(raw) && !HEADER_NEWLINE_PATTERN.test(raw)) return raw;
-    return 'comunicados-charqueadas@exemplo.edu.br';
+export function getAlertEmailRecipients(env = process.env) {
+    const valid = splitRecipients(env.ALERT_EMAIL_TO).filter(address => EMAIL_PATTERN.test(address));
+    return valid.length ? valid : ['comunicados-charqueadas@exemplo.edu.br'];
 }
 
 /**
@@ -106,19 +107,39 @@ function assertHeaderValue(value, field) {
 }
 
 /**
- * Normalizes the single alert recipient address.
+ * Splits a recipient spec into trimmed, non-empty candidate addresses.
+ * Accepts a comma-separated string (the `ALERT_EMAIL_TO` format) or an array.
  *
- * @param {unknown} value - Candidate recipient.
- * @returns {string} Validated address.
- * @throws {TypeError} When the address is missing or malformed.
+ * @param {unknown} value - Raw recipient spec.
+ * @returns {string[]} Trimmed candidates, validation not applied.
+ */
+function splitRecipients(value) {
+    const entries = Array.isArray(value) ? value : String(value ?? '').split(',');
+    return entries
+        .map(entry => String(entry ?? '').trim())
+        .filter(Boolean);
+}
+
+/**
+ * Normalizes the recipient spec into validated addresses.
+ * Accepts one address, a comma-separated string, or an array of addresses.
+ *
+ * @param {unknown} value - Candidate recipient spec.
+ * @returns {string[]} Validated addresses for the mail envelope.
+ * @throws {TypeError} When the spec is empty or any address is malformed.
  */
 function normalizeRecipient(value) {
-    const address = String(value || '').trim();
-    assertHeaderValue(address, 'to address');
-    if (!EMAIL_PATTERN.test(address)) {
-        throw new TypeError('to contains an invalid recipient.');
+    const addresses = splitRecipients(value);
+    if (!addresses.length) {
+        throw new TypeError('to must be a non-empty header-safe string.');
     }
-    return address;
+    for (const address of addresses) {
+        assertHeaderValue(address, 'to address');
+        if (!EMAIL_PATTERN.test(address)) {
+            throw new TypeError('to contains an invalid recipient.');
+        }
+    }
+    return addresses;
 }
 
 /**
@@ -200,16 +221,16 @@ export class EmailService {
     }
 
     /**
-     * Sends one alert message after validating headers, recipient, and content.
+     * Sends one alert message after validating headers, recipients, and content.
      *
      * @param {object} [message] - Message fields.
-     * @param {string} message.to - Recipient address.
+     * @param {string|string[]} message.to - Recipient address, comma-separated list, or array of addresses.
      * @param {string} message.subject - Single-line subject.
      * @param {string} [message.mjml] - MJML source (compiled strictly).
      * @param {string} [message.html] - Pre-compiled HTML alternative.
      * @param {string} [message.text] - Plain-text alternative (auto-derived when omitted).
      * @returns {Promise<{ messageId: string|undefined, previewUrl: string|undefined }>} Provider result without message contents.
-     * @throws {TypeError} When headers, recipient, or content are invalid.
+     * @throws {TypeError} When headers, recipients, or content are invalid.
      */
     async send({ to, subject, mjml, html, text } = {}) {
         const normalizedTo = normalizeRecipient(to);
