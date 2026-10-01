@@ -7,7 +7,7 @@
  * @module defesaCivilClient
  */
 
-import { logFetch } from '../model/log_database.js';
+import { logFetch, logUnknownAlert } from '../model/log_database.js';
 
 export const DEFESA_CIVIL_GRAPHQL_URL = process.env.DEFESA_CIVIL_GRAPHQL_URL || 'https://redehidrometeorologica.defesacivil.rs.gov.br/graphql';
 export const DEFESA_CIVIL_CLIENT_NAME = 'casa-militar-defesa-civil-rs';
@@ -31,6 +31,51 @@ export const REGIONAL_STATIONS = [
     { code: 'DCRS-00033', name: 'Porto Alegre - Ipanema', river: 'Rio Lago Guaíba', basin: 'RS - Lago Guaíba', alertLevelM: 2.55, floodLevelM: 3 },
     { code: 'DCRS-00122', name: 'Porto Alegre - Cristal', river: 'Rio Lago Guaíba', basin: 'RS - Lago Guaíba', alertLevelM: 2.55, floodLevelM: 3 }
 ];
+
+/**
+ * Upper bound for a plausible surface wind gust, in km/h.
+ *
+ * The highest reliably instrumented gust outside a tornado is 408 km/h
+ * (Cyclone Olivia, Barrow Island AU, 1996), and an ordinary river-gauge
+ * station never approaches it. Above this ceiling the reading is an instrument
+ * fault: DCRS-00093 published a saturated 16-bit register (65535/100 =
+ * 655.35 km/h) continuously from 2026-09-21 to 2026-09-24, re-firing a RED
+ * "Vendaval" alert on every scan cycle.
+ * @type {number}
+ */
+export const MAX_PLAUSIBLE_WIND_GUST_KMH = 300;
+
+/**
+ * Upper bound for a wind direction reading, in degrees (a compass bearing is 0–360).
+ * @type {number}
+ */
+export const MAX_PLAUSIBLE_WIND_DIRECTION_DEG = 360;
+
+/**
+ * Detects wind telemetry that cannot be a meteorological measurement.
+ *
+ * Covers the two fault signatures seen in the field:
+ * - an impossible magnitude, typically a raw register saturating at 0xFFFF;
+ * - an impossible direction (a bearing outside 0–360°, e.g. 6553.5°).
+ *
+ * Absent or null channels are not faults: stations legitimately publish null
+ * when a sensor drops, and the caller already treats them as zero.
+ *
+ * @param {object|null} [vento=null] - The station `data.vento` block.
+ * @returns {string|null} Human-readable fault description, or null when the reading is usable.
+ */
+export function detectWindSensorFault(vento = null) {
+    const gust = parseFloat(vento?.velocidade_maxima?.value);
+    const direction = parseFloat(vento?.direcao?.value);
+
+    if (Number.isFinite(gust) && gust > MAX_PLAUSIBLE_WIND_GUST_KMH) {
+        return `rajada de ${gust} km/h acima do teto plausível (${MAX_PLAUSIBLE_WIND_GUST_KMH} km/h)`;
+    }
+    if (Number.isFinite(direction) && (direction < 0 || direction > MAX_PLAUSIBLE_WIND_DIRECTION_DEG)) {
+        return `direção de ${direction}° fora do intervalo 0-${MAX_PLAUSIBLE_WIND_DIRECTION_DEG}°`;
+    }
+    return null;
+}
 
 export const TAGS_DATA_QUERY = `
 query GetStationTelemetry($stations: [String!]!, $clients: [String!]!) {
@@ -201,9 +246,12 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
  * trend-only detection. See `docs/ALERT_METHODOLOGY.md` §5.3.1 for sources.
  *
  * Reporting policy: telemetry values are relayed verbatim as published by
- * the station. The pipeline never discards or downscales extreme readings
- * (e.g. the 655 km/h gust on DCRS-00093) — plausibility judgment belongs
- * to the reader. Station labels covering two municipalities
+ * the station, with one exception — readings that cannot be meteorological
+ * data at all are discarded and registered in `unknown_alert_sources` instead
+ * of raising an alert (see `detectWindSensorFault`: a saturated 16-bit
+ * register such as the 655.35 km/h / 6553.5° pair published by DCRS-00093, or
+ * a bearing outside 0–360°). Genuine extreme values are still relayed without
+ * downscaling. Station labels covering two municipalities
  * (e.g. "General Camara / Sao Jeronimo") are split so `affectedCities`
  * contains real municipality names.
  * 
@@ -229,6 +277,8 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         const rain3h = (() => { const n = parseFloat(data.chuva?.acumulado?.h003?.value); return Number.isFinite(n) ? n : 0; })();
         const rain24h = (() => { const n = parseFloat(data.chuva?.acumulado?.h024?.value); return Number.isFinite(n) ? n : 0; })();
         const windGust = (() => { const n = parseFloat(data.vento?.velocidade_maxima?.value); return Number.isFinite(n) ? n : 0; })();
+        // Sensor-quality gate: an impossible reading must never reach the thresholds.
+        const windFault = detectWindSensorFault(data.vento);
         const riverLevel = (() => { const v = data.rio?.rio_nivel?.value; if (v === null || v === undefined || v === '') return null; const n = parseFloat(v); return Number.isFinite(n) ? n : null; })();
         const riverTrend = (() => { const n = parseFloat(data.rio?.rio_nivel_tendencia?.value); return Number.isFinite(n) ? n : 0; })();
         const riverName = data.rio?.rio_nome?.value || stationMeta.river || 'Rio Jacuí';
@@ -263,7 +313,17 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         }
 
         // 2. Rajadas de Vento Severas (Orange / Red)
-        if (windGust >= 100) {
+        // Sensor-quality gate: a faulted reading is registered once per station
+        // (dedupe key) for audit and never reaches the severity thresholds.
+        if (windFault) {
+            logUnknownAlert({
+                dedupeKey: `defesa_civil_wind_fault:${code}`,
+                sourceType: 'defesa_civil_telemetry',
+                externalId: code,
+                rawText: `Leitura de vento descartada por falha do sensor: ${windFault} (estação ${code} / ${cityName})`,
+                city: cityName
+            });
+        } else if (windGust >= 100) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Vendaval / Rajada Extrema (Telemetria)',

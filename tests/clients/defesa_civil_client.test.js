@@ -7,6 +7,8 @@ process.env.DB_PATH = ':memory:';
 import {
     getDefesaCivilTelemetry,
     evaluateDefesaCivilRisks,
+    detectWindSensorFault,
+    MAX_PLAUSIBLE_WIND_GUST_KMH,
     CHARQUEADAS_STATION_CODE,
     REGIONAL_STATIONS,
     TAGS_DATA_QUERY
@@ -80,6 +82,69 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks.some(r => r.type.includes('Chuva Torrencial Extrema')));
         assert.ok(risks.some(r => r.type.includes('Rajada Extrema')));
         assert.ok(risks.some(r => r.type.includes('Elevação Crítica')));
+    });
+
+    it('detectWindSensorFault flags only physically impossible wind readings', () => {
+        // Healthy readings pass untouched (mean/gust/direction from real stations).
+        assert.strictEqual(detectWindSensorFault({ velocidade_media: { value: 3.5 }, velocidade_maxima: { value: 22.4 }, direcao: { value: 114.6 } }), null);
+        assert.strictEqual(detectWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: 359 } }), null);
+
+        // Missing channels are not a fault (stations publish nulls when a sensor drops).
+        assert.strictEqual(detectWindSensorFault(null), null);
+        assert.strictEqual(detectWindSensorFault({ velocidade_maxima: { value: null }, direcao: { value: null } }), null);
+
+        // 16-bit sentinel / impossible geometry: 65535/100 km/h with direction 6553.5°.
+        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: 655.3499755859375 }, direcao: { value: 6553.5 } }));
+        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: MAX_PLAUSIBLE_WIND_GUST_KMH + 1 } }));
+        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: -1 } }));
+    });
+
+    it('discards implausible wind telemetry (sensor sentinel) but keeps genuine gust alerts', () => {
+        // Regression (2026-09-21..24): DCRS-00093 published a stuck 16-bit sentinel
+        // (655.35 km/h = 65535/100, direction 6553.5°) for 3.5 days, re-firing a
+        // "Vendaval / Rajada Extrema" RED alert on every 30-minute scan cycle.
+        const faultyStation = [{
+            codigo: 'DCRS-00093',
+            data: {
+                chuva: { acumulado: { h001: { value: 5 } } },
+                vento: {
+                    velocidade_media: { value: 655.3499755859375 },
+                    velocidade_maxima: { value: 655.3499755859375 },
+                    direcao: { value: 6553.5 }
+                },
+                rio: { rio_nivel: { value: 3.42 }, rio_nivel_tendencia: { value: -0.05 } }
+            }
+        }];
+
+        const faultyRisks = evaluateDefesaCivilRisks(faultyStation);
+        assert.strictEqual(
+            faultyRisks.filter(r => r.category === 'vento').length,
+            0,
+            'a sensor sentinel must never raise a wind alert'
+        );
+        assert.strictEqual(faultyRisks.length, 0, 'the healthy rain/river channels stay quiet below threshold');
+
+        // The fault is registered once per station for audit (dedupe key).
+        const faults = getDatabase().find('unknown_alert_sources', {
+            filter: { source_type: 'defesa_civil_telemetry' }
+        });
+        assert.strictEqual(faults.length, 1, 'the sensor fault must be logged exactly once');
+        assert.match(faults[0].raw_text, /655/);
+        assert.strictEqual(faults[0].external_id, 'DCRS-00093');
+
+        // A real gust with a valid direction keeps raising the RED alert.
+        const healthyStation = [{
+            codigo: 'DCRS-00076',
+            data: {
+                chuva: { acumulado: {} },
+                vento: { velocidade_media: { value: 95 }, velocidade_maxima: { value: 120 }, direcao: { value: 275 } },
+                rio: { rio_nivel: { value: 2 } }
+            }
+        }];
+        const healthyRisks = evaluateDefesaCivilRisks(healthyStation);
+        assert.strictEqual(healthyRisks.length, 1);
+        assert.strictEqual(healthyRisks[0].colorTier, 'RED');
+        assert.ok(healthyRisks[0].type.includes('Rajada Extrema'));
     });
 
     it('evaluateHighRisksIn24hWindow strictly enforces: Orange for Defesa Civil OR Red with INMET', () => {
@@ -276,15 +341,16 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks[0].type.includes('Elevação do Rio Jacuí')); // default river name
     });
 
-    it('reports extreme telemetry readings verbatim, including 655 km/h gusts', () => {
-        // Reporting policy: the service relays what the station published;
-        // plausibility judgment belongs to the reader, not the pipeline.
+    it('relays genuine extreme telemetry verbatim (a 250.5 km/h gust keeps its raw value)', () => {
+        // Reporting policy: real extremes are never downscaled. Only readings
+        // that cannot be meteorological data at all are discarded — see the
+        // sensor-fault test above for the 655.35 km/h sentinel case.
         const risks = evaluateDefesaCivilRisks([
             {
                 codigo: 'DCRS-00093',
                 data: {
                     chuva: { acumulado: {} },
-                    vento: { velocidade_maxima: { value: 655.3499755859375 } },
+                    vento: { velocidade_maxima: { value: 250.5 }, direcao: { value: 310 } },
                     rio: { rio_nivel: { value: 3.0 }, rio_nivel_tendencia: { value: 0 } }
                 }
             }
@@ -292,7 +358,7 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.strictEqual(risks.length, 1);
         assert.strictEqual(risks[0].colorTier, 'RED');
         assert.ok(risks[0].type.includes('Rajada Extrema'));
-        assert.ok(risks[0].details.includes('655.3499755859375'));
+        assert.ok(risks[0].details.includes('250.5'));
     });
 
     it('splits slash station labels into real municipality names for counting', () => {

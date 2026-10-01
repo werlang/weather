@@ -348,9 +348,15 @@ Notes:
 - Events pass the Defesa Civil threshold gate from §4.1 (`colorTier` rank ≥
   configured rank).
 - Reporting policy: telemetry values are relayed verbatim as published by the
-  station. The pipeline applies thresholds but never discards or downscales
-  extreme readings (e.g. the 655 km/h gust on DCRS-00093 on 2026-09-21) —
-  plausibility judgment belongs to the reader.
+  station, with **one exception** — readings that cannot be meteorological data
+  at all are discarded instead of alerted, and registered once per station in
+  `unknown_alert_sources` (`detectWindSensorFault`,
+  `src/clients/defesa_civil_client.js`): a gust above
+  `MAX_PLAUSIBLE_WIND_GUST_KMH` (300 km/h) or a bearing outside 0–360°. This
+  rejects the saturated 16-bit register DCRS-00093 published from 2026-09-21 to
+  2026-09-24 (655.35 km/h = 65535/100 with direction 6553.5°), which used to
+  re-fire a RED "Vendaval" alert on every scan. Genuine extreme readings are
+  still relayed without downscaling.
 - Station-to-municipality mapping: a station label covering two municipalities
   (DCRS-00093 "General Camara / Sao Jeronimo") is split on "/" so
   `affectedCities` contains real municipality names and unique-city counts can
