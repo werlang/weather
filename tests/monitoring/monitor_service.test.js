@@ -747,6 +747,58 @@ describe('Monitoring data quality', () => {
     }
   });
 
+  it('writes alert_logs only for alerts actually dispatched, never once per scan cycle', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+
+    globalThis.fetch = async url => {
+      if (String(url).includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
+      if (String(url).includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: {
+            tags_data: {
+              qualle_meteorologia: [{
+                codigo: 'DCRS-00032',
+                data: {
+                  chuva: { acumulado: { min015: { value: 25 } } },
+                  vento: { velocidade_maxima: { value: 0 } },
+                  rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
+                }
+              }]
+            }
+          }
+        })
+      };
+    };
+
+    try {
+      const scan = await performRegionalRiskMonitoring({ radiusKm: 25, alertCallback: null });
+      assert.strictEqual(scan.highRiskCount, 2, 'the mocked telemetry must raise two events');
+      assert.strictEqual(
+        getDatabase().count('alert_logs'),
+        0,
+        'a scan without dispatch must not write alert_logs'
+      );
+
+      const dispatch = createAlertDispatcher(async () => ({ sent: [{ chatId: '123', chunks: 1 }], failed: [] }));
+      await dispatch(scan.events);
+      assert.strictEqual(getDatabase().count('alert_logs'), 2, 'every dispatched event must be recorded once');
+
+      await dispatch(scan.events);
+      assert.strictEqual(getDatabase().count('alert_logs'), 2, 're-scanning an active alert must not duplicate rows');
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  });
+
   it('does not report no-risk when forecasts fail or return empty payloads', async () => {
     const originalFetch = globalThis.fetch;
     const originalDbPath = process.env.DB_PATH;

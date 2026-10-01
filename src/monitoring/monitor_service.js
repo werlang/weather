@@ -252,6 +252,9 @@ export function onHighRiskEventDetected(highRiskEvents) {
  * the 2026-09-24 restart re-sent a RED vendaval alert to all administrators
  * because the state lived only in memory.
  *
+ * Delivered events are also written to `alert_logs` here, so the table audits
+ * what was actually dispatched instead of repeating one row per scan cycle.
+ *
  * @param {function} alertCallback - Callback that delivers an alert batch.
  * @param {import('./database_driver.js').Sqlite|null} [customDriver=null] - Optional DB driver.
  * @returns {function(Array<object>, object): Promise<object>} Alert dispatcher.
@@ -281,6 +284,9 @@ export function createAlertDispatcher(alertCallback, customDriver = null) {
         if (dataComplete && !deliveryFailed && !sameAlertKeySet(activeAlertKeys, currentAlertKeys)) {
             activeAlertKeys = currentAlertKeys;
             persistActiveAlertKeys(activeAlertKeys, customDriver);
+            for (const event of newEvents) {
+                logAlert(event, customDriver);
+            }
         }
 
         return {
@@ -293,6 +299,10 @@ export function createAlertDispatcher(alertCallback, customDriver = null) {
 
 /**
  * Executa uma verificação completa de riscos nos municípios dentro do raio definido.
+ *
+ * Os eventos detectados são contabilizados e snapshotados aqui; as linhas de
+ * `alert_logs` são gravadas pelo `createAlertDispatcher` somente para os
+ * eventos efetivamente entregues.
  * 
  * @param {object} [options]
  * @param {number} [options.radiusKm=50] - Raio de monitoramento em KM.
@@ -417,10 +427,9 @@ export async function performRegionalRiskMonitoring({
             errorMessage: dataQuality.errors.join('; ') || null
         });
 
-        // Persist each detected high-risk alert to SQLite
-        for (const event of highRiskEvents) {
-            logAlert(event);
-        }
+        // `alert_logs` is intentionally NOT written here: detection repeats every
+        // cycle while an event stays active. The dispatcher records one row per
+        // event it actually delivers (see `createAlertDispatcher`).
 
         // Cleanup logs older than retention (env LOG_RETENTION_HOURS, default 168h) at every scan
         try { cleanupOldLogs(); } catch (err) { console.error('[monitor_service] cleanupOldLogs failed:', err.message); }

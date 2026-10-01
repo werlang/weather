@@ -54,6 +54,7 @@ never duplicate a stage's responsibility elsewhere.
         │  createAlertDispatcher                         │
         │  (src/monitoring/monitor_service.js)             │
         │  cross-cycle suppression of already-active keys  │
+        │  persisted keys + alert_logs row per dispatch    │
         └───────────────────────┬─────────────────────────┘
                                 ▼
         ┌─────────────────────────────────────────────────┐
@@ -73,8 +74,10 @@ never duplicate a stage's responsibility elsewhere.
 - The standalone CLI (`scripts/monitor_regional_risks.js`) is a **report-only**
   tool: it prints warnings and forecast risks without severity thresholds,
   deduplication state, or Telegram delivery. It is not part of the alert path.
-- Every cycle and every detected event is persisted to SQLite via
-  `logMonitorCycle` / `logAlert` (`src/model/log_database.js`).
+- Every cycle is persisted to SQLite via `logMonitorCycle`, and every
+  **delivered** event via `logAlert` (`src/model/log_database.js`) — the
+  dispatcher writes the alert row, so a scan that only re-detects an already
+  active event adds no rows.
 
 ---
 
@@ -91,7 +94,7 @@ All alert logic operates on four canonical tiers defined in
 | `YELLOW` | 1 | Perigo Potencial / Atenção (moderate) | 🟡 |
 | `ORANGE` | 2 | Perigo / Alerta (severe) | 🟠 |
 | `RED` | 3 | Grande Perigo / Alerta Máximo (extreme) | 🔴 |
-| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/model/log_database.js:470` `logUnknownAlert`) | ❓ |
+| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/model/log_database.js:507` `logUnknownAlert`) | ❓ |
 
 An event fires when `rank(event.tier) >= rank(configured threshold)` for its
 source, with `UNKNOWN` (`4`) outranking `RED` so unrecognized sources never miss. A threshold of `OFF` (rank 0) disables that source entirely.
@@ -491,7 +494,9 @@ new-events-only** delivery:
    was complete **and** delivery reported no failures
    (`delivery.failed.length === 0`) **and** the key set actually changed.
 4. On that same condition the new key set is persisted to
-   `system_settings.active_alert_keys`.
+   `system_settings.active_alert_keys` and every delivered event is written to
+   `alert_logs` via `logAlert` (one row per dispatched alert — a scan that only
+   re-detects an active event writes nothing).
 
 Consequences (intentional, keep them):
 
@@ -503,6 +508,8 @@ Consequences (intentional, keep them):
 - An event that persists across cycles is delivered once, not every cycle,
   **including across process restarts** (the key set is persisted, not
   in-memory only).
+- `alert_logs` audits deliveries: 43 identical rows/day regression of
+  2026-09-24 came from logging detections at every scan instead.
 
 ### 8.2 Data Quality Gating
 
@@ -512,8 +519,8 @@ availability, forecast failure count, error strings). Rules:
 
 - An incomplete cycle can still raise alerts from whichever sources succeeded.
 - An incomplete cycle **must not** emit an "all clear" conclusion.
-- Cycle outcome and errors are persisted via `logMonitorCycle`; each raised
-  event is persisted via `logAlert`.
+- Cycle outcome and errors are persisted via `logMonitorCycle`; each
+  **delivered** event is persisted via `logAlert` (§8.1 step 4).
 - Cycle and fetch durations are clamped to `MAX_DURATION_MS` (10 min) by
   `clampDurationMs` (`src/model/log_database.js`): a system clock jump during a
   request produced rows of 5,098,355,648 ms on 2026-09-24 and dragged the
@@ -797,7 +804,7 @@ that violate them.
    America/Sao_Paulo; user-facing timestamps are rendered in
    `America/Sao_Paulo` with `pt-BR` formatting. Parse only through
    `parseWarningDate` / `parseForecastDate`.
-8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/model/log_database.js:534` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitoring/monitor_service.js:361`.
+8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/model/log_database.js:571` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitoring/monitor_service.js:435`.
 9. **Documentation parity.** Any PR that changes filtering, thresholds, colors,
    wording, or delivery semantics updates this file in the same commit and adds
    or amends deterministic unit tests (mocked `fetch`, fake bot objects — no
