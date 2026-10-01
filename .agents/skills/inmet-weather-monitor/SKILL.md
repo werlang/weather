@@ -83,7 +83,7 @@ The continuous monitor evaluates two distinct risk streams for the upcoming 24-h
    - Checks if any regional city within configured radius is listed in `warning.geocodes` or `warning.municipios`.
 
 2. **Forecast Telemetry Analysis (`FORECAST_ANALYSIS`):**
-   - Evaluates forecast condition summaries and numerical parameters (`src/monitoring/risk_analyzer.js:210` `analyzeForecastRisks()`, canonical `docs/ALERT_METHODOLOGY.md:282`):
+   - Evaluates forecast condition summaries and numerical parameters (`src/monitoring/risk_analyzer.js:263` `analyzeForecastRisks()`, canonical `docs/ALERT_METHODOLOGY.md:290`):
      - **Storms / Tempests:** `resumo` containing `ciclone`/`temporal`/`tempestade` or `granizo+chuva`.
      - **Extreme Cold / Frost:** `temp_min <=0°C` (HIGH sub-zero) or `<=4°C` + `geada` (MODERATE) or `<=8°C` (LOW); `resumo` `neve`/`chuva congelada`.
      - **Extreme Heat / Heatwave:** `temp_max >=40°C` (HIGH) or `>=34°C` (MODERATE).

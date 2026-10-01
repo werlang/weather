@@ -36,7 +36,7 @@ export const MAX_DURATION_MS = 10 * 60 * 1000;
  * @param {number|null|undefined} value - Raw duration in milliseconds.
  * @returns {number|null} The rounded value, the ceiling, or null when unusable.
  */
-export function clampDurationMs(value) {
+function clampDurationMs(value) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
     return Math.min(Math.round(value), MAX_DURATION_MS);
 }
@@ -109,7 +109,6 @@ export function logFetch(logData, customDriver = null) {
         const endpoint = logData.endpoint || extractEndpoint(logData.url);
         const success = (logData.success === false || logData.success === 0) ? 0 : 1;
         const statusCode = typeof logData.statusCode === 'number' ? logData.statusCode : null;
-        // Clamped: a clock jump mid-request must not corrupt latency metrics.
         const durationMs = clampDurationMs(logData.durationMs);
         const responseSizeBytes = typeof logData.responseSizeBytes === 'number' ? Math.round(logData.responseSizeBytes) : null;
         const itemCount = typeof logData.itemCount === 'number' ? Math.round(logData.itemCount) : null;
@@ -233,7 +232,6 @@ export function logMonitorCycle(cycleData, customDriver = null) {
         const radiusKm = typeof cycleData.radiusKm === 'number' ? cycleData.radiusKm : null;
         const citiesCount = typeof cycleData.citiesCount === 'number' ? cycleData.citiesCount : null;
         const highRiskCount = typeof cycleData.highRiskCount === 'number' ? cycleData.highRiskCount : 0;
-        // Clamped: a clock jump mid-cycle must not corrupt latency metrics.
         const durationMs = clampDurationMs(cycleData.durationMs);
         const success = (cycleData.success === false || cycleData.success === 0) ? 0 : 1;
         const errorMessage = cycleData.errorMessage ? String(cycleData.errorMessage) : null;

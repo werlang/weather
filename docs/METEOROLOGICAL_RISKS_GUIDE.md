@@ -27,15 +27,15 @@ INMET classifies meteorological risk situations into three primary severity leve
 
 ## 3. High-Priority Alert Policy: Configurable Thresholds (Default Orange for Defesa Civil OR Red with INMET)
 
-Thresholds are **configurable per institute and per category** via SQLite `system_settings` and Telegram `/config` (see `docs/ALERT_METHODOLOGY.md:201` and `src/monitoring/monitor_service.js:170` `parseMonitorConfig()`). Defaults match the school advisory intent but can be widened to `YELLOW` or silenced to `OFF`:
+Thresholds are **configurable per institute and per category** via SQLite `system_settings` and Telegram `/config` (see `docs/ALERT_METHODOLOGY.md:217` and `src/monitoring/monitor_service.js:153` `parseMonitorConfig()`). Defaults match the school advisory intent but can be widened to `YELLOW` or silenced to `OFF`:
 
 1. **🔴 INMET Warnings:** Default `inmet_min_severity=RED` (`#FF0000` `Grande Perigo`) — only `Grande Perigo` dispatches; `ORANGE`/`YELLOW` advisory. Configurable to `ORANGE`/`YELLOW`/`OFF` via `/config` → `Limiar INMET`.
 2. **🟠 Defesa Civil RS Telemetry & Warnings:** Default `defesa_civil_min_severity=ORANGE` (`Alerta`/`Alerta Máximo`) (Rain $\ge 20\text{ mm/15min}$ or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or Jacuí river rise $\ge 0.25\text{ m/h}$, or absolute cota — Charqueadas: alerta 4.05 m / inundação 4.6 m). Configurable similarly.
-3. **🔴 24h Extreme Forecasts:** Triggered on extreme conditions ($T_{\min} \le 0^\circ\text{C}$ sub-zero freezing/black ice, $T_{\max} \ge 40^\circ\text{C}$, severe storms with cyclone/hail, or $RH_{\min} \le 12\%`) — filtered by same `inmetMinSeverity` (`HIGH`→`RED`, `MODERATE`→`ORANGE`, `LOW`→`YELLOW`) `src/monitoring/risk_analyzer.js:481` and secondarily by per-category `alert_cat_*` `src/monitoring/monitor_service.js:390`.
+3. **🔴 24h Extreme Forecasts:** Triggered on extreme conditions ($T_{\min} \le 0^\circ\text{C}$ sub-zero freezing/black ice, $T_{\max} \ge 40^\circ\text{C}$, severe storms with cyclone/hail, or $RH_{\min} \le 12\%`) — filtered by same `inmetMinSeverity` (`HIGH`→`RED`, `MODERATE`→`ORANGE`, `LOW`→`YELLOW`) `src/monitoring/risk_analyzer.js:510` and secondarily by per-category `alert_cat_*` `src/monitoring/monitor_service.js:369`.
 
-Official INMET warnings are eligible only when their reported start/end interval overlaps the next 24 hours. Forecasts for the first two days are evaluated across the `manha`, `tarde`, and `noite` periods; later daily summaries are evaluated as full-day data. See `docs/ALERT_METHODOLOGY.md:248` for full window logic.
+Official INMET warnings are eligible only when their reported start/end interval overlaps the next 24 hours. Forecasts for the first two days are evaluated across the `manha`, `tarde`, and `noite` periods; later daily summaries are evaluated as full-day data. See `docs/ALERT_METHODOLOGY.md:278` (warning interval gate) and `docs/ALERT_METHODOLOGY.md:294` (forecast period gate) for full window logic.
 
-The monitor marks a cycle as incomplete when a source fails or returns no usable telemetry. An incomplete cycle can still report risks found by available sources, but it does not emit a no-risk conclusion and does not clear previously active alerts (`src/monitoring/monitor_service.js:370` `dataQuality.complete`).
+The monitor marks a cycle as incomplete when a source fails or returns no usable telemetry. An incomplete cycle can still report risks found by available sources, but it does not emit a no-risk conclusion and does not clear previously active alerts (`src/monitoring/monitor_service.js:351` `dataQuality.complete`).
 
 ---
 

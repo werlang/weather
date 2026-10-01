@@ -7,8 +7,9 @@ process.env.DB_PATH = ':memory:';
 import {
     getDefesaCivilTelemetry,
     evaluateDefesaCivilRisks,
-    detectWindSensorFault,
+    describeWindSensorFault,
     MAX_PLAUSIBLE_WIND_GUST_KMH,
+    MAX_PLAUSIBLE_WIND_DIRECTION_DEG,
     CHARQUEADAS_STATION_CODE,
     REGIONAL_STATIONS,
     TAGS_DATA_QUERY
@@ -84,19 +85,24 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks.some(r => r.type.includes('Elevação Crítica')));
     });
 
-    it('detectWindSensorFault flags only physically impossible wind readings', () => {
+    it('describeWindSensorFault flags only physically impossible wind readings', () => {
         // Healthy readings pass untouched (mean/gust/direction from real stations).
-        assert.strictEqual(detectWindSensorFault({ velocidade_media: { value: 3.5 }, velocidade_maxima: { value: 22.4 }, direcao: { value: 114.6 } }), null);
-        assert.strictEqual(detectWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: 359 } }), null);
+        assert.strictEqual(describeWindSensorFault({ velocidade_media: { value: 3.5 }, velocidade_maxima: { value: 22.4 }, direcao: { value: 114.6 } }), null);
+        assert.strictEqual(describeWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: MAX_PLAUSIBLE_WIND_DIRECTION_DEG - 1 } }), null);
+
+        // Both bounds are inclusive: the ceiling value itself is still a reading.
+        assert.strictEqual(describeWindSensorFault({ velocidade_maxima: { value: MAX_PLAUSIBLE_WIND_GUST_KMH } }), null);
+        assert.strictEqual(describeWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: MAX_PLAUSIBLE_WIND_DIRECTION_DEG } }), null);
 
         // Missing channels are not a fault (stations publish nulls when a sensor drops).
-        assert.strictEqual(detectWindSensorFault(null), null);
-        assert.strictEqual(detectWindSensorFault({ velocidade_maxima: { value: null }, direcao: { value: null } }), null);
+        assert.strictEqual(describeWindSensorFault(null), null);
+        assert.strictEqual(describeWindSensorFault({ velocidade_maxima: { value: null }, direcao: { value: null } }), null);
 
         // 16-bit sentinel / impossible geometry: 65535/100 km/h with direction 6553.5°.
-        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: 655.3499755859375 }, direcao: { value: 6553.5 } }));
-        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: MAX_PLAUSIBLE_WIND_GUST_KMH + 1 } }));
-        assert.ok(detectWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: -1 } }));
+        assert.ok(describeWindSensorFault({ velocidade_maxima: { value: 655.3499755859375 }, direcao: { value: 6553.5 } }));
+        assert.ok(describeWindSensorFault({ velocidade_maxima: { value: MAX_PLAUSIBLE_WIND_GUST_KMH + 1 } }));
+        assert.ok(describeWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: MAX_PLAUSIBLE_WIND_DIRECTION_DEG + 1 } }));
+        assert.ok(describeWindSensorFault({ velocidade_maxima: { value: 120 }, direcao: { value: -1 } }));
     });
 
     it('discards implausible wind telemetry (sensor sentinel) but keeps genuine gust alerts', () => {

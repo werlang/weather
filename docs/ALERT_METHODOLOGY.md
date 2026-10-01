@@ -94,7 +94,7 @@ All alert logic operates on four canonical tiers defined in
 | `YELLOW` | 1 | Perigo Potencial / Atenção (moderate) | 🟡 |
 | `ORANGE` | 2 | Perigo / Alerta (severe) | 🟠 |
 | `RED` | 3 | Grande Perigo / Alerta Máximo (extreme) | 🔴 |
-| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/model/log_database.js:507` `logUnknownAlert`) | ❓ |
+| `UNKNOWN` | 4 | Unrecognized source (color/severity/summary outside vocabulary) — treated as red-equivalent, always fires, flagged `❓ NÃO CLASSIFICADO` and recorded in `unknown_alert_sources` (`migrations/004`, `src/model/log_database.js:505` `logUnknownAlert`) | ❓ |
 
 An event fires when `rank(event.tier) >= rank(configured threshold)` for its
 source, with `UNKNOWN` (`4`) outranking `RED` so unrecognized sources never miss. A threshold of `OFF` (rank 0) disables that source entirely.
@@ -353,7 +353,7 @@ Notes:
 - Reporting policy: telemetry values are relayed verbatim as published by the
   station, with **one exception** — readings that cannot be meteorological data
   at all are discarded instead of alerted, and registered once per station in
-  `unknown_alert_sources` (`detectWindSensorFault`,
+  `unknown_alert_sources` (`describeWindSensorFault`,
   `src/clients/defesa_civil_client.js`): a gust above
   `MAX_PLAUSIBLE_WIND_GUST_KMH` (300 km/h) or a bearing outside 0–360°. This
   rejects the saturated 16-bit register DCRS-00093 published from 2026-09-21 to
@@ -804,7 +804,7 @@ that violate them.
    America/Sao_Paulo; user-facing timestamps are rendered in
    `America/Sao_Paulo` with `pt-BR` formatting. Parse only through
    `parseWarningDate` / `parseForecastDate`.
-8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/model/log_database.js:571` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitoring/monitor_service.js:435`.
+8. **Retention.** Log tables (`fetch_logs`, `alert_logs`, `monitor_cycle_logs`, `unknown_alert_sources`) and expired `admin_invites` are purged every scan via `cleanupOldLogs()` `src/model/log_database.js:569` using `LOG_RETENTION_HOURS` env (default `168h`, `0`=keep forever) with indexed `timestamp < cutoff` deletes `src/monitoring/monitor_service.js:415`.
 9. **Documentation parity.** Any PR that changes filtering, thresholds, colors,
    wording, or delivery semantics updates this file in the same commit and adds
    or amends deterministic unit tests (mocked `fetch`, fake bot objects — no

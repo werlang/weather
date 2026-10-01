@@ -64,7 +64,7 @@ export const MAX_PLAUSIBLE_WIND_DIRECTION_DEG = 360;
  * @param {object|null} [vento=null] - The station `data.vento` block.
  * @returns {string|null} Human-readable fault description, or null when the reading is usable.
  */
-export function detectWindSensorFault(vento = null) {
+export function describeWindSensorFault(vento = null) {
     const gust = parseFloat(vento?.velocidade_maxima?.value);
     const direction = parseFloat(vento?.direcao?.value);
 
@@ -248,7 +248,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
  * Reporting policy: telemetry values are relayed verbatim as published by
  * the station, with one exception — readings that cannot be meteorological
  * data at all are discarded and registered in `unknown_alert_sources` instead
- * of raising an alert (see `detectWindSensorFault`: a saturated 16-bit
+ * of raising an alert (see `describeWindSensorFault`: a saturated 16-bit
  * register such as the 655.35 km/h / 6553.5° pair published by DCRS-00093, or
  * a bearing outside 0–360°). Genuine extreme values are still relayed without
  * downscaling. Station labels covering two municipalities
@@ -277,8 +277,7 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         const rain3h = (() => { const n = parseFloat(data.chuva?.acumulado?.h003?.value); return Number.isFinite(n) ? n : 0; })();
         const rain24h = (() => { const n = parseFloat(data.chuva?.acumulado?.h024?.value); return Number.isFinite(n) ? n : 0; })();
         const windGust = (() => { const n = parseFloat(data.vento?.velocidade_maxima?.value); return Number.isFinite(n) ? n : 0; })();
-        // Sensor-quality gate: an impossible reading must never reach the thresholds.
-        const windFault = detectWindSensorFault(data.vento);
+        const windFaultReason = describeWindSensorFault(data.vento);
         const riverLevel = (() => { const v = data.rio?.rio_nivel?.value; if (v === null || v === undefined || v === '') return null; const n = parseFloat(v); return Number.isFinite(n) ? n : null; })();
         const riverTrend = (() => { const n = parseFloat(data.rio?.rio_nivel_tendencia?.value); return Number.isFinite(n) ? n : 0; })();
         const riverName = data.rio?.rio_nome?.value || stationMeta.river || 'Rio Jacuí';
@@ -315,12 +314,12 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         // 2. Rajadas de Vento Severas (Orange / Red)
         // Sensor-quality gate: a faulted reading is registered once per station
         // (dedupe key) for audit and never reaches the severity thresholds.
-        if (windFault) {
+        if (windFaultReason) {
             logUnknownAlert({
                 dedupeKey: `defesa_civil_wind_fault:${code}`,
                 sourceType: 'defesa_civil_telemetry',
                 externalId: code,
-                rawText: `Leitura de vento descartada por falha do sensor: ${windFault} (estação ${code} / ${cityName})`,
+                rawText: `Leitura de vento descartada por falha do sensor: ${windFaultReason} (estação ${code} / ${cityName})`,
                 city: cityName
             });
         } else if (windGust >= 100) {

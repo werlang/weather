@@ -6,6 +6,7 @@ import assert from 'node:assert';
 // must never be the developer's real database file.
 process.env.DB_PATH = ':memory:';
 import {
+  ACTIVE_ALERT_KEYS_SETTING,
   parseMonitorConfig,
   parseForecastDate,
   evaluateHighRisksIn24hWindow,
@@ -594,8 +595,8 @@ describe('Alert dispatch state', () => {
   // Dispatch state is now persisted (bug fix: a container restart used to
   // re-broadcast every still-active alert). Each test therefore starts from a
   // clean persisted key set, exactly like a fresh production database.
-  const resetDispatchedState = () => saveSystemSetting('active_alert_keys', '[]');
-  const readPersistedKeys = () => JSON.parse(getSystemSetting('active_alert_keys', '[]'));
+  const resetDispatchedState = () => saveSystemSetting(ACTIVE_ALERT_KEYS_SETTING, '[]');
+  const readPersistedKeys = () => JSON.parse(getSystemSetting(ACTIVE_ALERT_KEYS_SETTING, '[]'));
   const makeActiveEvent = () => ({
     source: 'INMET_OFFICIAL_WARNING',
     eventId: 'warning-1',
@@ -680,35 +681,40 @@ describe('Alert dispatch state', () => {
 });
 
 describe('Monitoring data quality', () => {
+  // Shared fixture: no INMET warnings, no usable forecast payload, and one
+  // station simultaneously over the orange rain rule and the red river rule —
+  // exactly two high-risk events, enough to exercise category filtering and
+  // dispatcher bookkeeping.
+  const fetchAlertingTelemetry = async url => {
+    if (String(url).includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
+    if (String(url).includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          tags_data: {
+            qualle_meteorologia: [{
+              codigo: 'DCRS-00032',
+              data: {
+                chuva: { acumulado: { min015: { value: 25 } } },
+                vento: { velocidade_maxima: { value: 0 } },
+                rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
+              }
+            }]
+          }
+        }
+      })
+    };
+  };
+
   it('filters high-risk events by the enabled alert categories', async () => {
     const originalFetch = globalThis.fetch;
     const originalDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
 
-    // Telemetry station simultaneously exceeding the orange rain rule and the red river rule
-    globalThis.fetch = async url => {
-      if (String(url).includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
-      if (String(url).includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          data: {
-            tags_data: {
-              qualle_meteorologia: [{
-                codigo: 'DCRS-00032',
-                data: {
-                  chuva: { acumulado: { min015: { value: 25 } } },
-                  vento: { velocidade_maxima: { value: 0 } },
-                  rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
-                }
-              }]
-            }
-          }
-        })
-      };
-    };
+    globalThis.fetch = fetchAlertingTelemetry;
 
     try {
       const unfiltered = await performRegionalRiskMonitoring({
@@ -753,28 +759,7 @@ describe('Monitoring data quality', () => {
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
 
-    globalThis.fetch = async url => {
-      if (String(url).includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
-      if (String(url).includes('/previsao/')) return { ok: true, status: 200, json: async () => ({}) };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          data: {
-            tags_data: {
-              qualle_meteorologia: [{
-                codigo: 'DCRS-00032',
-                data: {
-                  chuva: { acumulado: { min015: { value: 25 } } },
-                  vento: { velocidade_maxima: { value: 0 } },
-                  rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
-                }
-              }]
-            }
-          }
-        })
-      };
-    };
+    globalThis.fetch = fetchAlertingTelemetry;
 
     try {
       const scan = await performRegionalRiskMonitoring({ radiusKm: 25, alertCallback: null });
