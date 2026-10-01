@@ -17,7 +17,7 @@ import {
 import { analyzeForecastRisks, parseRadiusArg, getEventCategory, classifyInmetWarningCategory } from '../../src/monitoring/risk_analyzer.js';
 import { getSurroundingCities } from '../../src/clients/inmet_client.js';
 import { Sqlite } from '../../src/helpers/database_driver.js';
-import { getDatabase } from '../../src/model/log_database.js';
+import { getDatabase, saveSystemSetting, getSystemSetting } from '../../src/model/log_database.js';
 
 describe('Shared Risk Analyzer Utilities', () => {
   it('parseRadiusArg uses CLI args or the default and ignores environment variables', () => {
@@ -591,19 +591,27 @@ describe('24-Hour Window High-Risk Evaluation', () => {
 });
 
 describe('Alert dispatch state', () => {
+  // Dispatch state is now persisted (bug fix: a container restart used to
+  // re-broadcast every still-active alert). Each test therefore starts from a
+  // clean persisted key set, exactly like a fresh production database.
+  const resetDispatchedState = () => saveSystemSetting('active_alert_keys', '[]');
+  const readPersistedKeys = () => JSON.parse(getSystemSetting('active_alert_keys', '[]'));
+  const makeActiveEvent = () => ({
+    source: 'INMET_OFFICIAL_WARNING',
+    eventId: 'warning-1',
+    type: 'Tempestade',
+    affectedCities: ['Charqueadas'],
+    timeframe: '21/08/2026 10:00 -> 12:00'
+  });
+
   it('sends an active event once and sends it again after it clears', async () => {
+    resetDispatchedState();
     const deliveries = [];
     const dispatch = createAlertDispatcher(async events => {
       deliveries.push(events);
       return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
     });
-    const event = {
-      source: 'INMET_OFFICIAL_WARNING',
-      eventId: 'warning-1',
-      type: 'Tempestade',
-      affectedCities: ['Charqueadas'],
-      timeframe: '21/08/2026 10:00 -> 12:00'
-    };
+    const event = makeActiveEvent();
 
     await dispatch([event], { dataComplete: true });
     await dispatch([event], { dataComplete: true });
@@ -614,24 +622,60 @@ describe('Alert dispatch state', () => {
   });
 
   it('does not clear active alert state when source data is incomplete', async () => {
+    resetDispatchedState();
     const deliveries = [];
     const dispatch = createAlertDispatcher(async events => {
       deliveries.push(events);
       return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
     });
-    const event = {
-      source: 'INMET_OFFICIAL_WARNING',
-      eventId: 'warning-1',
-      type: 'Tempestade',
-      affectedCities: ['Charqueadas'],
-      timeframe: '21/08/2026 10:00 -> 12:00'
-    };
+    const event = makeActiveEvent();
 
     await dispatch([event], { dataComplete: true });
     await dispatch([], { dataComplete: false });
     await dispatch([event], { dataComplete: true });
 
     assert.strictEqual(deliveries.length, 1);
+  });
+
+  it('does not re-broadcast an active event after a process restart', async () => {
+    resetDispatchedState();
+    const event = makeActiveEvent();
+
+    const beforeRestart = [];
+    const dispatcher = createAlertDispatcher(async events => {
+      beforeRestart.push(events);
+      return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
+    });
+    await dispatcher([event], { dataComplete: true });
+
+    // The dispatched key set must outlive the dispatcher (i.e. the process).
+    assert.deepStrictEqual(readPersistedKeys().length, 1, 'dispatched keys must be persisted');
+
+    const afterRestart = [];
+    const restarted = createAlertDispatcher(async events => {
+      afterRestart.push(events);
+      return { sent: [{ chatId: '123', chunks: 1 }], failed: [] };
+    });
+    await restarted([event], { dataComplete: true });
+
+    assert.strictEqual(beforeRestart.length, 1, 'the first cycle must deliver');
+    assert.strictEqual(afterRestart.length, 0, 'a restart must not re-send an already delivered alert');
+  });
+
+  it('persists dispatched keys only after a complete cycle with successful delivery', async () => {
+    resetDispatchedState();
+    const event = makeActiveEvent();
+
+    const failing = createAlertDispatcher(async () => ({ sent: [], failed: [{ chatId: '123' }] }));
+    await failing([event], { dataComplete: true });
+    assert.deepStrictEqual(readPersistedKeys(), [], 'failed delivery must not be recorded as dispatched');
+
+    const working = createAlertDispatcher(async () => ({ sent: [{ chatId: '123', chunks: 1 }], failed: [] }));
+    await working([event], { dataComplete: false });
+    assert.deepStrictEqual(readPersistedKeys(), [], 'an incomplete cycle must not persist state');
+
+    await working([event], { dataComplete: true });
+    assert.strictEqual(readPersistedKeys().length, 1, 'a complete delivered cycle must persist state');
   });
 });
 

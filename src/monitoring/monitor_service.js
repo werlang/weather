@@ -49,6 +49,61 @@ export { parseForecastDate, evaluateHighRisksIn24hWindow };
 let lastScanSnapshotCache = null;
 
 /**
+ * `system_settings` key holding the JSON array of alert keys already delivered.
+ * Persisting it is what keeps a process restart from re-broadcasting alerts
+ * that are still active (see `createAlertDispatcher`).
+ * @type {string}
+ */
+export const ACTIVE_ALERT_KEYS_SETTING = 'active_alert_keys';
+
+/**
+ * Loads the persisted set of already-delivered alert keys.
+ *
+ * @param {import('./database_driver.js').Sqlite|null} [customDriver=null]
+ * @returns {Set<string>} Keys delivered in the last complete cycle (empty set when none).
+ */
+function loadActiveAlertKeys(customDriver = null) {
+    try {
+        const raw = getSystemSetting(ACTIVE_ALERT_KEYS_SETTING, null, customDriver);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return new Set(Array.isArray(parsed) ? parsed : []);
+    } catch (err) {
+        console.error('[monitor_service] loadActiveAlertKeys failed:', err.message);
+        return new Set();
+    }
+}
+
+/**
+ * Persists the active alert key set so a restart cannot re-broadcast it.
+ *
+ * @param {Set<string>} keys - Keys delivered in the last complete cycle.
+ * @param {import('./database_driver.js').Sqlite|null} [customDriver=null]
+ * @returns {void}
+ */
+function persistActiveAlertKeys(keys, customDriver = null) {
+    try {
+        saveSystemSetting(ACTIVE_ALERT_KEYS_SETTING, JSON.stringify([...keys]), customDriver);
+    } catch (err) {
+        console.error('[monitor_service] persistActiveAlertKeys failed:', err.message);
+    }
+}
+
+/**
+ * Compares two alert key sets without allocating a merged structure.
+ *
+ * @param {Set<string>} active - Keys delivered previously.
+ * @param {Set<string>} current - Keys detected in this cycle.
+ * @returns {boolean} True when both sets hold exactly the same keys.
+ */
+function sameAlertKeySet(active, current) {
+    if (active.size !== current.size) return false;
+    for (const key of current) {
+        if (!active.has(key)) return false;
+    }
+    return true;
+}
+
+/**
  * Persists the last scan snapshot to system_settings and in-memory cache.
  *
  * @param {object} snapshot - Snapshot data { timestamp, radiusKm, citiesCount, highRiskCount, events, dataQuality, durationMs }.
@@ -189,14 +244,20 @@ export function onHighRiskEventDetected(highRiskEvents) {
 
 /**
  * Creates a stateful dispatcher that sends only newly active events.
+ *
  * The active set is replaced only after a complete data cycle and successful
  * delivery, so a transient source outage cannot clear an alert or create spam.
+ * The set is persisted in `system_settings` (`active_alert_keys`), which is
+ * what stops a process restart from re-broadcasting every still-active alert —
+ * the 2026-09-24 restart re-sent a RED vendaval alert to all administrators
+ * because the state lived only in memory.
  *
  * @param {function} alertCallback - Callback that delivers an alert batch.
+ * @param {import('./database_driver.js').Sqlite|null} [customDriver=null] - Optional DB driver.
  * @returns {function(Array<object>, object): Promise<object>} Alert dispatcher.
  */
-export function createAlertDispatcher(alertCallback) {
-    let activeAlertKeys = new Set();
+export function createAlertDispatcher(alertCallback, customDriver = null) {
+    let activeAlertKeys = loadActiveAlertKeys(customDriver);
 
     return async (events = [], { dataComplete = true } = {}) => {
         const normalizedEvents = Array.isArray(events) ? events : [];
@@ -217,8 +278,9 @@ export function createAlertDispatcher(alertCallback) {
         }
 
         const deliveryFailed = Array.isArray(delivery?.failed) && delivery.failed.length > 0;
-        if (dataComplete && !deliveryFailed) {
+        if (dataComplete && !deliveryFailed && !sameAlertKeySet(activeAlertKeys, currentAlertKeys)) {
             activeAlertKeys = currentAlertKeys;
+            persistActiveAlertKeys(activeAlertKeys, customDriver);
         }
 
         return {

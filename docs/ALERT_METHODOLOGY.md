@@ -457,7 +457,11 @@ single cycle (first occurrence wins).
 ### 7.3 Cross-Cycle Suppression
 
 `createAlertDispatcher` (§8) suppresses events whose key was already active in
-the previous completed cycle.
+the previous completed cycle. The active key set is persisted in
+`system_settings.active_alert_keys`, so a process or container restart does
+**not** re-broadcast alerts that are still active (regression fixed on
+2026-09-24: a restart re-sent an active RED vendaval alert to every
+administrator).
 
 ### 7.4 Presentation Aggregation — `aggregateRiskEvents`
 
@@ -477,15 +481,17 @@ Aggregation is presentation-only: metrics persist the raw event count.
 
 ### 8.1 Dispatcher Semantics
 
-`createAlertDispatcher(alertCallback)` enforces **at-least-once, new-events-only**
-delivery:
+`createAlertDispatcher(alertCallback, customDriver?)` enforces **at-least-once,
+new-events-only** delivery:
 
 1. Compute the key set of the current batch; select events whose keys are not in
    the previously active set (deduplicating within the batch).
 2. Deliver only those new events via the callback.
 3. Replace the active set with the current batch **only if** the cycle's data
    was complete **and** delivery reported no failures
-   (`delivery.failed.length === 0`).
+   (`delivery.failed.length === 0`) **and** the key set actually changed.
+4. On that same condition the new key set is persisted to
+   `system_settings.active_alert_keys`.
 
 Consequences (intentional, keep them):
 
@@ -494,7 +500,9 @@ Consequences (intentional, keep them):
 - Partial Telegram failure means the whole batch is retried next cycle —
   surviving admins may receive duplicates. At-least-once beats silently
   dropped alerts.
-- An event that persists across cycles is delivered once, not every cycle.
+- An event that persists across cycles is delivered once, not every cycle,
+  **including across process restarts** (the key set is persisted, not
+  in-memory only).
 
 ### 8.2 Data Quality Gating
 
