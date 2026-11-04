@@ -79,6 +79,8 @@ docker compose up --build
 Configurable via `.env`:
 - `TELEGRAM_BOT_TOKEN`: Token issued by Telegram's BotFather.
 - `SQLITE_DB_PATH`: Path to SQLite logs database (default: `weather_logs.db`, holds `admin_users`/`admin_invites`)
+- `DEV_TELEGRAM_CHAT_ID`: Optional developer DM chat ID for operational-error notifications. Independent of the administrator allowlist; disabled when empty.
+- `DEV_NOTIFY_COOLDOWN_MINUTES`: Minimum minutes between identical developer notifications (default: `360`).
 
 Monitoring radius (default: `50` km) and cycle interval (default: `15` minutes)
 live in the SQLite `system_settings` table — adjust them at runtime through the

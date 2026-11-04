@@ -694,6 +694,29 @@ automatic batch of §8.3, which stays administrator-only.
    so an unreachable group degrades to one failed receipt line while e-mail and
    SMS still complete (§10).
 
+### 8.8 Developer Operational Notifications
+
+Operational failures are reported **out of band** to a single developer chat
+(`DEV_TELEGRAM_CHAT_ID`) as a plain Telegram DM. This channel is deliberately
+separate from the administrator alert path: it does not use the admin
+allowlist, the alert keyboard, or `alert_logs`, and it never blocks a
+monitoring cycle.
+
+Reported conditions:
+
+- an incomplete data cycle (`monitor-data-quality`) — lists the source errors;
+- an unexpected cycle failure (`monitor-cycle`);
+- a failed administrator alert delivery (`telegram-alert-delivery`);
+- a failed Telegram update handler (`telegram-update`);
+- a stopped polling loop (`telegram-polling`);
+- an unhandled promise rejection (`process-unhandled-rejection`).
+
+`createDevNotifier` (`src/helpers/dev_notifier.js`) rate-limits identical keys
+for `DEV_NOTIFY_COOLDOWN_MINUTES` (default **360**), so a persistent upstream
+outage produces a reminder every six hours instead of one message per cycle.
+Failed transport attempts are not recorded, so the next occurrence retries.
+The notifier never throws: a broken developer channel cannot break the bot.
+
 ---
 
 ## 9. Message Formatting & Presentation

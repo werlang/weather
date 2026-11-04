@@ -97,6 +97,7 @@ ifsul/weather/
 │   │   └── sms_subscriber_store.js   # SMS recipients (sms_subscribers, E.164) + per-chat withdrawal
 │   └── helpers/                      # Cross-cutting infrastructure (no domain logic)
 │       ├── database_driver.js        # Generic SQLite query-builder & CRUD driver (adapted from node-aec)
+│       ├── dev_notifier.js           # Developer DM operational-error notifications (per-key cooldown)
 │       ├── migrate.js                # Versioned SQLite database migration runner
 │       ├── email_client.js           # SMTP transport (Ethereal dev, SMTP prod, MJML compile)
 │       └── sms_client.js             # SMS Dev gateway transport (key contract, E.164, credit math)
@@ -126,6 +127,7 @@ ifsul/weather/
 | `src/model/sms_subscriber_store.js` | SMS recipients (`sms_subscribers`): E.164 normalization, idempotent add/remove, sorted dispatch list, per-chat withdrawal (`removeSmsSubscribersByChatId`). | SMS transport, Telegram delivery, forecast parsing. |
 | `src/helpers/database_driver.js` | Generic SQLite query builder, CRUD helpers, transactions, and param quoting. | Application business logic, external network I/O. |
 | `src/helpers/migrate.js` | Parsing SQL migration files, applying versioned scripts atomically, tracking `schema_migrations`. | Direct Telegram messaging, forecast polling. |
+| `src/helpers/dev_notifier.js` | Developer DM operational-error notifications with per-key cooldown; transport is injected. | Alert dispatch, domain logic. |
 | `src/model/log_database.js` | SQLite persistence for API fetch performance, response times, status codes, telemetry logs, retention (`LOG_RETENTION_HOURS`), unknown sources. | Direct external network I/O, Telegram alert dispatch. |
 | `src/monitoring/risk_analyzer.js` | Parsing forecast parameters, classifying risk types/severities, 24h window matching, `UNKNOWN` tier. | Network I/O, Telegram delivery, formatting CLI UI. |
 | `src/monitoring/monitor_service.js` | Managing `setInterval` timer, coordinating fetch & analysis, calling alert callback, `last_scan_snapshot` caching. | Direct Telegram API calls, command handling. |
