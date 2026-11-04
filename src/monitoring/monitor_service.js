@@ -228,8 +228,12 @@ export function onHighRiskEventDetected(highRiskEvents) {
 /**
  * Creates a stateful dispatcher that sends only newly active events.
  *
- * The active set is replaced only after a complete data cycle and successful
- * delivery, so a transient source outage cannot clear an alert or create spam.
+ * A complete data cycle replaces the active set, so an event that is no longer
+ * detected can fire again later. An incomplete cycle never clears events that
+ * were merely missing from that scan, but it still merges the events that were
+ * actually delivered into the set: a persistent upstream outage must not turn
+ * the same alert into an hourly re-broadcast (2026-11-04 incident), and the
+ * delivered keys must survive a process restart.
  *
  * The set is persisted in `system_settings.active_alert_keys`, so a process
  * restart cannot re-broadcast alerts that are still active (2026-09-24
@@ -261,8 +265,18 @@ export function createAlertDispatcher(alertCallback) {
         }
 
         const deliveryFailed = Array.isArray(delivery?.failed) && delivery.failed.length > 0;
-        if (dataComplete && !deliveryFailed) {
-            activeAlertKeys = currentAlertKeys;
+        if (!deliveryFailed && (dataComplete || newEvents.length > 0)) {
+            if (dataComplete) {
+                // Complete scan: the current set is authoritative, so events
+                // that ended are cleared and may alert again if they return.
+                activeAlertKeys = currentAlertKeys;
+            } else {
+                // Incomplete scan: only add what was actually delivered. Never
+                // clear keys that this scan could not confirm as inactive.
+                for (const event of newEvents) {
+                    activeAlertKeys.add(getRiskEventKey(event));
+                }
+            }
             persistActiveAlertKeys(activeAlertKeys);
             for (const event of newEvents) {
                 logAlert(event);

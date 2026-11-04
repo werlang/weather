@@ -15,7 +15,7 @@ import {
   createAlertDispatcher,
   performRegionalRiskMonitoring
 } from '../../src/monitoring/monitor_service.js';
-import { analyzeForecastRisks, parseRadiusArg, getEventCategory, classifyInmetWarningCategory } from '../../src/monitoring/risk_analyzer.js';
+import { analyzeForecastRisks, parseRadiusArg, getEventCategory, classifyInmetWarningCategory, getRiskEventKey } from '../../src/monitoring/risk_analyzer.js';
 import { getSurroundingCities } from '../../src/clients/inmet_client.js';
 import { Sqlite } from '../../src/helpers/database_driver.js';
 import { getDatabase, saveSystemSetting, getSystemSetting } from '../../src/model/log_database.js';
@@ -663,20 +663,36 @@ describe('Alert dispatch state', () => {
     assert.strictEqual(afterRestart.length, 0, 'a restart must not re-send an already delivered alert');
   });
 
-  it('persists dispatched keys only after a complete cycle with successful delivery', async () => {
+  it('persists delivered keys on incomplete cycles and only clears them after a complete cycle', async () => {
     resetDispatchedState();
     const event = makeActiveEvent();
+    const eventKey = getRiskEventKey(event);
 
     const failing = createAlertDispatcher(async () => ({ sent: [], failed: [{ chatId: '123' }] }));
-    await failing([event], { dataComplete: true });
+    await failing([event], { dataComplete: false });
     assert.deepStrictEqual(readPersistedKeys(), [], 'failed delivery must not be recorded as dispatched');
 
     const working = createAlertDispatcher(async () => ({ sent: [{ chatId: '123', chunks: 1 }], failed: [] }));
     await working([event], { dataComplete: false });
-    assert.deepStrictEqual(readPersistedKeys(), [], 'an incomplete cycle must not persist state');
+    assert.deepStrictEqual(
+      readPersistedKeys(),
+      [eventKey],
+      'a delivered event must be persisted even when the cycle is incomplete'
+    );
 
+    // A restart plus another incomplete cycle must keep suppressing it.
+    const restarted = createAlertDispatcher(async () => {
+      throw new Error('an already delivered event must not be re-sent');
+    });
+    await restarted([event], { dataComplete: false });
+
+    // A complete cycle with the event still active keeps it suppressed.
     await working([event], { dataComplete: true });
-    assert.strictEqual(readPersistedKeys().length, 1, 'a complete delivered cycle must persist state');
+    assert.strictEqual(readPersistedKeys().length, 1);
+
+    // A complete cycle without the event clears it, so it can alert again.
+    await working([], { dataComplete: true });
+    assert.deepStrictEqual(readPersistedKeys(), []);
   });
 });
 
@@ -697,7 +713,7 @@ describe('Monitoring data quality', () => {
             qualle_meteorologia: [{
               codigo: 'DCRS-00032',
               data: {
-                chuva: { acumulado: { min015: { value: 25 } } },
+                chuva: { acumulado: { min005: { value: 9 } } },
                 vento: { velocidade_maxima: { value: 0 } },
                 rio: { rio_nivel: { value: 6.6 }, rio_nivel_tendencia: { value: 0 } }
               }
@@ -771,10 +787,14 @@ describe('Monitoring data quality', () => {
       );
 
       const dispatch = createAlertDispatcher(async () => ({ sent: [{ chatId: '123', chunks: 1 }], failed: [] }));
-      await dispatch(scan.events);
-      assert.strictEqual(getDatabase().count('alert_logs'), 2, 'every dispatched event must be recorded once');
+      await dispatch(scan.events, { dataComplete: false });
+      assert.strictEqual(
+        getDatabase().count('alert_logs'),
+        2,
+        'a delivery during an incomplete cycle must still be recorded'
+      );
 
-      await dispatch(scan.events);
+      await dispatch(scan.events, { dataComplete: true });
       assert.strictEqual(getDatabase().count('alert_logs'), 2, 're-scanning an active alert must not duplicate rows');
     } finally {
       globalThis.fetch = originalFetch;
