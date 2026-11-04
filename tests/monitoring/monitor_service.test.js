@@ -850,4 +850,41 @@ describe('Monitoring data quality', () => {
       else process.env.SQLITE_DB_PATH = originalSqliteDbPath;
     }
   });
+
+  it('reports incomplete data cycles to the developer notifier', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    const originalSqliteDbPath = process.env.SQLITE_DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    delete process.env.SQLITE_DB_PATH;
+    Sqlite.close();
+
+    globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
+    const notifications = [];
+    const monitor = startMonitoringService({
+      radiusKm: 25,
+      intervalMs: 60 * 60 * 1000,
+      registerSignalHandlers: false,
+      onOperationalError: payload => notifications.push(payload)
+    });
+
+    try {
+      for (let attempt = 0; attempt < 100 && notifications.length === 0; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      const notification = notifications.find(payload => payload.key === 'monitor-data-quality');
+      assert.ok(notification, 'an incomplete cycle must reach the developer notifier');
+      assert.match(notification.error, /INMET|Defesa Civil/);
+      assert.match(notification.details, /municípios/);
+    } finally {
+      monitor.stop();
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+      if (originalSqliteDbPath === undefined) delete process.env.SQLITE_DB_PATH;
+      else process.env.SQLITE_DB_PATH = originalSqliteDbPath;
+    }
+  });
 });

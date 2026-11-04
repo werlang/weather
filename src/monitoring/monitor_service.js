@@ -468,6 +468,7 @@ export async function performRegionalRiskMonitoring({
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.inmetMinSeverity] - Nível mínimo para alertas INMET.
  * @param {'RED'|'ORANGE'|'YELLOW'|'OFF'} [options.defesaCivilMinSeverity] - Nível mínimo para Defesa Civil RS.
  * @param {function} [options.alertCallback] - Callback customizado para alertas.
+ * @param {function} [options.onOperationalError] - Optional developer-notification sink for incomplete cycles and cycle failures. Called fire-and-forget.
  * @param {boolean} [options.registerSignalHandlers=true] - Registra encerramento gracioso no processo.
  */
 export function startMonitoringService(options = {}) {
@@ -481,6 +482,19 @@ export function startMonitoringService(options = {}) {
         ? options.alertCallback
         : onHighRiskEventDetected;
     const dispatchAlerts = createAlertDispatcher(alertCallback);
+    const onOperationalError = typeof options.onOperationalError === 'function'
+        ? options.onOperationalError
+        : null;
+    const reportOperationalError = payload => {
+        if (!onOperationalError) return;
+        try {
+            Promise.resolve(onOperationalError(payload)).catch(error => {
+                console.error('[monitor_service] onOperationalError failed:', error?.message || error);
+            });
+        } catch (error) {
+            console.error('[monitor_service] onOperationalError failed:', error?.message || error);
+        }
+    };
     const registerSignalHandlers = options.registerSignalHandlers !== false;
     const intervalMins = Math.round((currentIntervalMs / (60 * 1000)) * 100) / 100;
 
@@ -511,11 +525,26 @@ export function startMonitoringService(options = {}) {
                 categoryMinSeverities: currentCategoryMinSeverities,
                 alertCallback: null
             });
+            if (result.dataQuality?.complete === false) {
+                reportOperationalError({
+                    key: 'monitor-data-quality',
+                    component: 'monitor',
+                    title: 'Ciclo com dados incompletos',
+                    error: (result.dataQuality.errors || []).join(' | ') || 'Fonte de dados indisponível',
+                    details: `${result.citiesCount ?? '?'} municípios; ${result.highRiskCount ?? 0} evento(s) de alto risco`
+                });
+            }
             await dispatchAlerts(result.events, {
                 dataComplete: result.dataQuality?.complete !== false
             });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);
+            reportOperationalError({
+                key: 'monitor-cycle',
+                component: 'monitor',
+                title: 'Falha no ciclo de monitoramento',
+                error: err
+            });
         } finally {
             isRunning = false;
         }

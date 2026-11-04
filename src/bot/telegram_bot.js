@@ -165,14 +165,16 @@ export class WeatherTelegramBot {
      * @param {object|null} [options.emailStore] - Custom-message store seam `{ getCustomMessage, saveCustomMessage }`.
      * @param {object|null} [options.smsService] - Injected SMS service (defaults to lazy singleton).
      * @param {() => object|null} [options.getSnapshot] - Last-scan snapshot provider seam.
+     * @param {function} [options.onOperationalError] - Developer notification sink for operational failures.
      */
-    constructor({ telegram, monitorService = null, getStatus = null, logger = console, emailService = null, emailStore = null, smsService = null, getSnapshot = null }) {
+    constructor({ telegram, monitorService = null, getStatus = null, logger = console, emailService = null, emailStore = null, smsService = null, getSnapshot = null, onOperationalError = null }) {
         if (!telegram) throw new Error('A Telegram bot client is required.');
 
         this.telegram = telegram;
         this.monitorService = monitorService;
         this.getStatus = getStatus;
         this.logger = logger;
+        this.onOperationalError = typeof onOperationalError === 'function' ? onOperationalError : null;
         this.emailService = emailService;
         this.smsService = smsService;
         this.emailStore = emailStore || {
@@ -1602,6 +1604,13 @@ export class WeatherTelegramBot {
 
         if (delivery?.failed?.length > 0) {
             this.logger.error?.(`Telegram alert delivery failed for ${delivery.failed.length} administrator chat(s).`);
+            this.onOperationalError?.({
+                key: 'telegram-alert-delivery',
+                component: 'telegram',
+                title: 'Falha na entrega de alerta',
+                error: `${delivery.failed.length} administrador(es) não receberam o alerta`,
+                details: delivery.failed.map(item => `${item.chatId}: ${item.error?.message || item.error}`).join(' | ')
+            });
         }
         return delivery;
     }
@@ -2573,7 +2582,14 @@ export class WeatherTelegramBot {
 
         // Global Error Handler
         this.telegram.onError(errorInfo => {
-            this.logger.error?.('Telegram bot update failed:', errorInfo.error || errorInfo);
+            const error = errorInfo.error || errorInfo;
+            this.logger.error?.('Telegram bot update failed:', error);
+            this.onOperationalError?.({
+                key: 'telegram-update',
+                component: 'telegram',
+                title: 'Falha ao processar update',
+                error
+            });
         });
     }
 }

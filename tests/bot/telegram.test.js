@@ -544,4 +544,43 @@ describe('Weather Telegram bot presentation & keyboards', () => {
         assert.strictEqual(fakeBot.sentMessages[0].chatId, '123');
         assert.match(fakeBot.sentMessages[0].text, /Teste/);
     });
+
+    it('reports administrator delivery failures to the operational notifier', async () => {
+        const { client } = createClient();
+        client.sendToAdmins = async () => ({
+            sent: [],
+            failed: [{ chatId: '123', error: new Error('network down') }]
+        });
+        const notifications = [];
+        const bot = new WeatherTelegramBot({
+            telegram: client,
+            onOperationalError: payload => notifications.push(payload)
+        });
+
+        const result = await bot.sendHighRiskAlerts([{
+            type: 'Teste',
+            affectedCities: ['Charqueadas']
+        }]);
+
+        assert.strictEqual(result.failed.length, 1);
+        assert.strictEqual(notifications.length, 1);
+        assert.strictEqual(notifications[0].key, 'telegram-alert-delivery');
+        assert.match(notifications[0].error, /1 administrador/);
+        assert.match(notifications[0].details, /123/);
+    });
+
+    it('reports Telegram update failures to the operational notifier', () => {
+        const { client, fakeBot } = createClient();
+        const notifications = [];
+        new WeatherTelegramBot({
+            telegram: client,
+            onOperationalError: payload => notifications.push(payload)
+        });
+
+        fakeBot.errorHandler({ error: new Error('update failed') });
+
+        assert.strictEqual(notifications.length, 1);
+        assert.strictEqual(notifications[0].key, 'telegram-update');
+        assert.match(notifications[0].error.message, /update failed/);
+    });
 });
