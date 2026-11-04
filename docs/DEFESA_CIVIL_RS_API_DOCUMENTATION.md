@@ -16,7 +16,7 @@ The **Rede Hidrometeorológica da Defesa Civil RS** is an automated telemetry an
 
 It serves as a **secondary source of meteorological risk information** alongside INMET:
 * **Real-Time Hydrometric Monitoring:** Measures river level heights (`rio_nivel` in meters) and trend velocity (`rio_nivel_tendencia`) specifically for the **Baixo Jacuí** river basin impacting Charqueadas.
-* **Granular Rain Telemetry:** Captures precipitation accumulation in short windows (10 seconds `s015`, 5 min, 15 min, 1h, 3h, 6h, up to 7 days `h168`).
+* **Granular Rain Telemetry:** Captures precipitation accumulation in short windows (5 min `min005`, 1h, 3h, 6h, up to 7 days `h168`). The live `ChuvaAcumulado` schema no longer exposes the legacy 15-minute `min015` field (2026-10 schema change); use `min005` for sub-hourly rain.
 * **Microclimate & Wind Tracking:** Provides live wind speed, wind gust maxima (`velocidade_maxima`), barometric pressure trend, and temperature.
 
 ---
@@ -66,7 +66,7 @@ The rainfall field `chuva.acumulado` and the historical query field `interval` u
 | `s015` | N/A | 10 seconds |
 | `min005` | `MIN_5` | 5 minutes |
 | `min010` | `MIN_10` | 10 minutes |
-| `min015` | `MIN_15` | 15 minutes |
+| ~~`min015`~~ | `MIN_15` | Removed from the live `ChuvaAcumulado` schema in 2026-10; use `min005` |
 | `min030` | `MIN_30` | 30 minutes |
 | `h001` | `HOUR_1` | 1 hour |
 | `h1min30` | `H_1_MIN_30` | 1 hour 30 minutes |
@@ -87,12 +87,19 @@ The rainfall field `chuva.acumulado` and the historical query field `interval` u
 
 ### 5.1 `Tags_data` Query (Current Telemetry by Station Code)
 
-Used to poll recent measurements for one or more station codes:
+> **Exact-text allowlist:** the endpoint validates the query document against
+> the text published in the API guide and rejects any other spelling with
+> `QUERY_NOT_ALLOWED`. The canonical query used by this repository is stored
+> verbatim at `src/clients/tags_data.graphql`; replace it only with the
+> published text. The query returns every station in the network, so callers
+> must filter the response locally.
+
+Used to poll current measurements (the official query takes no station
+argument and returns the full station list):
 
 ```graphql
 query Tags_data {
   tags_data(
-    station: ["DCRS-00032"]
     clients: ["casa-militar-defesa-civil-rs"]
   ) {
     qualle_meteorologia {
@@ -120,7 +127,6 @@ query Tags_data {
         chuva {
           acumulado {
             min005 { value }
-            min015 { value }
             h001 { value }
             h003 { value }
             h006 { value }

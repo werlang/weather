@@ -18,16 +18,19 @@ Detailed technical reference for the GraphQL schema, query structures, interval 
 
 Retrieves the latest sensor measurements and metadata for a list of station codes.
 
+> **Exact-text allowlist:** the endpoint only accepts the query text published
+> in its API guide and rejects any edited document with `QUERY_NOT_ALLOWED`.
+> The canonical query used by this repository is stored verbatim at
+> `src/clients/tags_data.graphql`; it returns every station, so callers filter
+> the response locally. The sample below is illustrative — replace it with the
+> published text before use.
+
 ### GraphQL Query Document
 
 ```graphql
-query GetStationTelemetry(
-  $stations: [String!] = ["DCRS-00032", "DCRS-00093", "DCRS-00076", "DCRS-00054", "DCRS-00033", "DCRS-00122"]
-  $clients: [String!] = ["casa-militar-defesa-civil-rs"]
-) {
+query Tags_data {
   tags_data(
-    station: $stations
-    clients: $clients
+    clients: ["casa-militar-defesa-civil-rs"]
   ) {
     qualle_meteorologia {
       codigo
@@ -56,7 +59,6 @@ query GetStationTelemetry(
             s015 { value }
             min005 { value }
             min010 { value }
-            min015 { value }
             min030 { value }
             h001 { value }
             h1min30 { value }
@@ -154,7 +156,7 @@ query GetStationHistory(
 | :--- | :--- | :--- |
 | `MIN_5` | 5 minutes | Flash rain peak analysis |
 | `MIN_10` | 10 minutes | High-resolution storm analysis |
-| `MIN_15` | 15 minutes | Standard short-term deluge tracking |
+| `MIN_15` | 15 minutes | Historical interval only; the live `ChuvaAcumulado` field `min015` was removed in 2026-10 (use `min005` ×3 for the same rain rate) |
 | `MIN_30` | 30 minutes | Half-hourly trend |
 | `HOUR_1` | 1 hour | Standard hourly time-series |
 | `H_1_MIN_30` | 1 hour 30 minutes | Extended interval |
@@ -205,7 +207,7 @@ subscription StreamLiveTelemetry(
         }
         chuva {
           acumulado {
-            min015 { value }
+            min005 { value }
             h001 { value }
             h003 { value }
             h024 { value }

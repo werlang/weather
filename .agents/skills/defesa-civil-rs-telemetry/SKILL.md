@@ -1,6 +1,6 @@
 ---
 name: defesa-civil-rs-telemetry
-description: "Use this skill whenever querying the Defesa Civil RS (Rede Hidrometeorológica do Estado do Rio Grande do Sul) GraphQL or WebSocket APIs, retrieving real-time telemetry from station DCRS-00032 (Charqueadas / Baixo Jacuí) or regional stations (DCRS-00093, DCRS-00076, DCRS-00054, DCRS-00033, DCRS-00122), monitoring river levels (rio_nivel, rio_nivel_tendencia), rain accumulation intervals (min005, min015, h001, h003, h024, h168), peak wind gusts (velocidade_maxima), or implementing dual-source risk fusion."
+description: "Use this skill whenever querying the Defesa Civil RS (Rede Hidrometeorológica do Estado do Rio Grande do Sul) GraphQL or WebSocket APIs, retrieving real-time telemetry from station DCRS-00032 (Charqueadas / Baixo Jacuí) or regional stations (DCRS-00093, DCRS-00076, DCRS-00054, DCRS-00033, DCRS-00122), monitoring river levels (rio_nivel, rio_nivel_tendencia), rain accumulation intervals (min005, h001, h003, h024, h168), peak wind gusts (velocidade_maxima), or implementing dual-source risk fusion."
 ---
 
 # Defesa Civil RS Hydrometeorological Network & Telemetry
@@ -63,7 +63,7 @@ Station `DCRS-00032` (Charqueadas) provides real-time sensor metrics updated at 
 | :--- | :--- | :--- | :--- | :--- |
 | **River Level** | `rio.rio_nivel.value` | meters (`m`) | Above the station's official quotas (see §3.1): Charqueadas cota de alerta 4.05 m, **cota de inundação 4.6 m** | Flooding of riverside communities in Charqueadas |
 | **River Trend** | `rio.rio_nivel_tendencia.value` | rate / hr | `>= +0.25 m/h` (Orange), `>= +0.50 m/h` (Red) | Rapid flood wave propagation down Baixo Jacuí |
-| **Flash Rain (15m)** | `chuva.acumulado.min015.value` | `mm` | `>= 20 mm` in 15 minutes | Flash flood / urban drainage overflow |
+| **Flash Rain (5m)** | `chuva.acumulado.min005.value` | `mm` | `>= 20 mm/15min equivalent` (`min005 × 3`, i.e. `>= 6.7 mm` in 5 minutes) | Flash flood / urban drainage overflow |
 | **Intense Rain (1h)** | `chuva.acumulado.h001.value` | `mm` | `>= 30 mm` in 1 hour (Orange); `>= 50 mm` or `>= 80 mm` in 3h (Red) | Severe downpour / localized flooding |
 | **Daily Rain (24h)** | `chuva.acumulado.h024.value` | `mm` | `>= 80 mm` in 24 hours | Basin saturation / major river level surge |
 | **Wind Gust Max** | `vento.velocidade_maxima.value` | `km/h` | `>= 75 km/h` (Orange), `>= 100 km/h` (Red). INMET official bands for comparison: Yellow 40–60, Orange 61–99, Red > 100 km/h | Destructive winds, falling trees, power grid outages |
@@ -104,10 +104,13 @@ Use native `fetch` to POST GraphQL queries directly:
 export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
     const GRAPHQL_ENDPOINT = 'https://redehidrometeorologica.defesacivil.rs.gov.br/graphql';
     
+    // The endpoint allowlists the exact text of the official `Tags_data`
+    // query. The canonical document lives in src/clients/tags_data.graphql;
+    // this abbreviated sample must be replaced by that text before use, since
+    // any edited query is rejected with QUERY_NOT_ALLOWED.
     const query = `
-      query GetStationTelemetry($stationList: [String!]!) {
+      query Tags_data {
         tags_data(
-          station: $stationList
           clients: ["casa-militar-defesa-civil-rs"]
         ) {
           qualle_meteorologia {
@@ -123,7 +126,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
               }
               chuva {
                 acumulado {
-                  min015 { value }
+                  min005 { value }
                   h001 { value }
                   h003 { value }
                   h024 { value }
@@ -149,10 +152,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
     const response = await fetch(GRAPHQL_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            query,
-            variables: { stationList: stations }
-        })
+        body: JSON.stringify({ query })
     });
 
     if (!response.ok) {
@@ -160,7 +160,10 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032']) {
     }
 
     const payload = await response.json();
-    return payload?.data?.tags_data?.qualle_meteorologia || [];
+    // The official query returns every station; keep only the requested codes.
+    const stationCodes = new Set(stations);
+    return (payload?.data?.tags_data?.qualle_meteorologia || [])
+        .filter(station => stationCodes.has(station.codigo));
 }
 ```
 
@@ -181,16 +184,18 @@ export function verifyTelemetryRisks(stationTelemetry) {
         const meta = REGIONAL_STATIONS.find(s => s.code === station.codigo)
             || { name: station.name?.local || station.codigo };
         const data = station.data || {};
-        const rain15min = parseFloat(data.chuva?.acumulado?.min015?.value) || 0;
+        const rain5min = parseFloat(data.chuva?.acumulado?.min005?.value) || 0;
+        // min005 replaced min015: normalize x3 to keep the same 20 mm/15min rain rate.
+        const rain15minEquivalent = rain5min * 3;
         const rain1h = parseFloat(data.chuva?.acumulado?.h001?.value) || 0;
         const windGust = parseFloat(data.vento?.velocidade_maxima?.value) || 0;
         const riverLevel = parseFloat(data.rio?.rio_nivel?.value) || null;
         const riverTrend = parseFloat(data.rio?.rio_nivel_tendencia?.value) || 0;
 
-        // 1. Rain: RED >= 50mm/1h or 80mm/3h; ORANGE >= 20mm/15min, 30mm/1h, 50mm/3h or 80mm/24h
+        // 1. Rain: RED >= 50mm/1h or 80mm/3h; ORANGE >= 20mm/15min equivalent, 30mm/1h, 50mm/3h or 80mm/24h
         if (rain1h >= 50) {
             verifiedRisks.push({ type: 'CHUVA TORRENCIAL EXTREMA', severity: 'CRITICAL', ... });
-        } else if (rain15min >= 20 || rain1h >= 30) {
+        } else if (rain15minEquivalent >= 20 || rain1h >= 30) {
             verifiedRisks.push({ type: 'CHUVA INTENSA / ALAGAMENTO', severity: 'HIGH', ... });
         }
 

@@ -327,13 +327,16 @@ present). Default queried stations: `DCRS-00032` (Charqueadas),
 `DCRS-00054` (Barra do Ribeiro). Metadata for `DCRS-00033` / `DCRS-00122`
 (Porto Alegre) exists in `REGIONAL_STATIONS` for name resolution.
 
-Measurements read per station: rain accumulations `min015`, `h001`, `h003`,
+Measurements read per station: rain accumulations `min005`, `h001`, `h003`,
 `h024` (mm); wind gust `velocidade_maxima` (km/h); river `rio_nivel` (m) and
-`rio_nivel_tendencia` (m/h). Rules per station:
+`rio_nivel_tendencia` (m/h). The API replaced the 15-minute bucket (`min015`)
+with a 5-minute one (`min005`), so the Orange trigger normalizes it as
+`rain_15min_equivalent = rain_5min * 3` to preserve the previous 20 mm/15min
+rain rate (~84 mm/h) instead of making the rule 3x stricter. Rules per station:
 
 | Group | RED (Alerta Máximo) 🔴 | ORANGE (Alerta) 🟠 |
 | :--- | :--- | :--- |
-| Rain accumulation | `rain_1h >= 50` **or** `rain_3h >= 80` | `rain_15min >= 20` **or** `rain_1h >= 30` **or** `rain_3h >= 50` **or** `rain_24h >= 80` |
+| Rain accumulation | `rain_1h >= 50` **or** `rain_3h >= 80` | `rain_5min * 3 >= 20` **or** `rain_1h >= 30` **or** `rain_3h >= 50` **or** `rain_24h >= 80` |
 | Wind gust | `gust >= 100 km/h` | `gust >= 75 km/h` |
 | River level / trend | `level >= floodLevelM` **or** `trend >= 0.5 m/h` | `level > alertLevelM` **or** `trend >= 0.25 m/h` |
 
@@ -459,8 +462,11 @@ single cycle (first occurrence wins).
 
 ### 7.3 Cross-Cycle Suppression
 
-`createAlertDispatcher` (§8) suppresses events whose key was already active in
-the previous completed cycle. The active key set is persisted in
+`createAlertDispatcher` (§8) suppresses events whose key is already in the
+active set. A complete cycle replaces that set; an incomplete cycle only merges
+the events it actually delivered, so an outage cannot clear a live alert and
+cannot turn the same alert into an hourly re-broadcast either (regression fixed
+on 2026-11-04). The active key set is persisted in
 `system_settings.active_alert_keys`, so a process or container restart does
 **not** re-broadcast alerts that are still active (regression fixed on
 2026-09-24: a restart re-sent an active RED vendaval alert to every
@@ -490,18 +496,23 @@ new-events-only** delivery:
 1. Compute the key set of the current batch; select events whose keys are not in
    the previously active set (deduplicating within the batch).
 2. Deliver only those new events via the callback.
-3. Replace the active set with the current batch **only if** the cycle's data
-   was complete **and** delivery reported no failures
-   (`delivery.failed.length === 0`) **and** the key set actually changed.
-4. On that same condition the new key set is persisted to
-   `system_settings.active_alert_keys` and every delivered event is written to
-   `alert_logs` via `logAlert` (one row per dispatched alert — a scan that only
-   re-detects an active event writes nothing).
+3. If delivery reported no failures (`delivery.failed.length === 0`):
+   - on a **complete** cycle, replace the active set with the current batch, so
+     events that ended are cleared and may alert again if they return;
+   - on an **incomplete** cycle, never replace the set (missing events may
+     simply be unobserved) and merge the keys actually delivered into it.
+4. Persist the resulting set to `system_settings.active_alert_keys` and write
+   every delivered event to `alert_logs` via `logAlert` (one row per dispatched
+   alert — a scan that only re-detects an active event writes nothing).
 
 Consequences (intentional, keep them):
 
 - A transient source outage cannot "clear" an active alert: incomplete cycles
   never replace the active set.
+- A persistent source outage cannot re-broadcast an alert every cycle:
+  delivered keys are merged into the persisted set even when the cycle is
+  incomplete (2026-11-04 regression: a permanent Defesa Civil 400 kept
+  `dataComplete=false`, so the same INMET warning was re-sent 29 times).
 - Partial Telegram failure means the whole batch is retried next cycle —
   surviving admins may receive duplicates. At-least-once beats silently
   dropped alerts.

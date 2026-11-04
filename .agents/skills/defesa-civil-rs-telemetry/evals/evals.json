@@ -5,9 +5,10 @@
       "prompt": "How do you query real-time river level and precipitation accumulation for Charqueadas using the Defesa Civil RS GraphQL API?",
       "expected_criteria": [
         "Specifies endpoint https://redehidrometeorologica.defesacivil.rs.gov.br/graphql",
-        "Uses tags_data query with station [\"DCRS-00032\"] and client \"casa-militar-defesa-civil-rs\"",
+        "Uses the official Tags_data query with client \"casa-militar-defesa-civil-rs\" and filters the returned stations to DCRS-00032",
+        "Uses the exact query text accepted by the API allowlist (edited documents are rejected with QUERY_NOT_ALLOWED)",
         "Queries data.rio.rio_nivel.value and data.rio.rio_nivel_tendencia.value",
-        "Queries data.chuva.acumulado with intervals like min015, h001, h024",
+        "Queries data.chuva.acumulado with intervals like min005, h001, h024",
         "Uses native Node.js 26 fetch with POST method and JSON payload"
       ]
     },
@@ -17,7 +18,7 @@
       "expected_criteria": [
         "Explains role of INMET as primary forecasting and official warning polygon source",
         "Explains role of Defesa Civil RS as hyper-local real-time ground truth verification layer",
-        "Describes correlation of INMET Orange/Red storm warnings with Defesa Civil live rainfall (min015, h001) and river level (rio_nivel)",
+        "Describes correlation of INMET Orange/Red storm warnings with Defesa Civil live rainfall (min005, h001) and river level (rio_nivel)",
         "Outlines critical threshold escalation when live sensors confirm forecasted hazards",
         "Mentions automated delivery via Telegram bot alerts"
       ]

@@ -30,12 +30,12 @@ INMET classifies meteorological risk situations into three primary severity leve
 Thresholds are **configurable per institute and per category** via SQLite `system_settings` and Telegram `/config` (see `docs/ALERT_METHODOLOGY.md:217` and `src/monitoring/monitor_service.js:153` `parseMonitorConfig()`). Defaults match the school advisory intent but can be widened to `YELLOW` or silenced to `OFF`:
 
 1. **🔴 INMET Warnings:** Default `inmet_min_severity=RED` (`#FF0000` `Grande Perigo`) — only `Grande Perigo` dispatches; `ORANGE`/`YELLOW` advisory. Configurable to `ORANGE`/`YELLOW`/`OFF` via `/config` → `Limiar INMET`.
-2. **🟠 Defesa Civil RS Telemetry & Warnings:** Default `defesa_civil_min_severity=ORANGE` (`Alerta`/`Alerta Máximo`) (Rain $\ge 20\text{ mm/15min}$ or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or Jacuí river rise $\ge 0.25\text{ m/h}$, or absolute cota — Charqueadas: alerta 4.05 m / inundação 4.6 m). Configurable similarly.
+2. **🟠 Defesa Civil RS Telemetry & Warnings:** Default `defesa_civil_min_severity=ORANGE` (`Alerta`/`Alerta Máximo`) (Rain $\ge 20\text{ mm/15min equivalent}$ — `min005 * 3` — or $\ge 30\text{ mm/h}$, wind gusts $\ge 75\text{ km/h}$, or Jacuí river rise $\ge 0.25\text{ m/h}$, or absolute cota — Charqueadas: alerta 4.05 m / inundação 4.6 m). Configurable similarly.
 3. **🔴 24h Extreme Forecasts:** Triggered on extreme conditions ($T_{\min} \le 0^\circ\text{C}$ sub-zero freezing/black ice, $T_{\max} \ge 40^\circ\text{C}$, severe storms with cyclone/hail, or $RH_{\min} \le 12\%`) — filtered by same `inmetMinSeverity` (`HIGH`→`RED`, `MODERATE`→`ORANGE`, `LOW`→`YELLOW`) `src/monitoring/risk_analyzer.js:510` and secondarily by per-category `alert_cat_*` `src/monitoring/monitor_service.js:369`.
 
 Official INMET warnings are eligible only when their reported start/end interval overlaps the next 24 hours. Forecasts for the first two days are evaluated across the `manha`, `tarde`, and `noite` periods; later daily summaries are evaluated as full-day data. See `docs/ALERT_METHODOLOGY.md:278` (warning interval gate) and `docs/ALERT_METHODOLOGY.md:294` (forecast period gate) for full window logic.
 
-The monitor marks a cycle as incomplete when a source fails or returns no usable telemetry. An incomplete cycle can still report risks found by available sources, but it does not emit a no-risk conclusion and does not clear previously active alerts (`src/monitoring/monitor_service.js:351` `dataQuality.complete`).
+The monitor marks a cycle as incomplete when a source fails or returns no usable telemetry. An incomplete cycle can still report risks found by available sources, but it does not emit a no-risk conclusion and does not clear previously active alerts (`src/monitoring/monitor_service.js:351` `dataQuality.complete`). Delivered alerts are still merged into the persisted active set, so a persistent source outage cannot re-broadcast the same alert every cycle.
 
 ---
 
@@ -57,7 +57,7 @@ In addition to official INMET weather alerts, **Defesa Civil RS (Rede Hidrometeo
 While INMET provides broader regional forecasts and severe weather warnings, the Defesa Civil RS API provides **hyper-local real-time hydrometeorological telemetry**:
 
 * **Hydrometric River Level Monitoring (`rio_nivel`):** Monitored in real-time at station `DCRS-00032` in Charqueadas (Rio Baixo Jacuí). Critical for flash flood and river overflow risk assessments. **Official quotas for Charqueadas: cota de inundação = 4.6 m; cota de alerta ≤ 4.05 m** (Defesa Civil RS, July 2026 flood bulletins). Upstream ANA gauge São Jerônimo: cota de inundação 4.64 m. Guaíba reference (Cais Mauá C6): alerta 2.55 m / inundação 3.0 m.
-* **Rapid Rain Accumulation (`chuva.acumulado`):** Tracks short-term high-intensity rainfall spikes in 15-minute (`min015`), 1-hour (`h001`), and 3-hour (`h003`) intervals, plus 24-hour accumulation (`h024`) to detect sudden deluge and basin-saturation conditions.
+* **Rapid Rain Accumulation (`chuva.acumulado`):** Tracks short-term high-intensity rainfall spikes in 5-minute (`min005`, normalized ×3 to the previous 15-minute rate), 1-hour (`h001`), and 3-hour (`h003`) intervals, plus 24-hour accumulation (`h024`) to detect sudden deluge and basin-saturation conditions.
 * **Real-time Wind Gusts (`vento.velocidade_maxima`):** Provides instant wind vector data from regional stations.
 * **Absolute River Level (`rio_nivel`):** Keeps a critical or orange river alert active when the measured level remains high, even after the short-term rise has stabilized.
 

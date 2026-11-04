@@ -103,4 +103,4 @@ Understanding river level behavior at Charqueadas requires analyzing the interac
 When assessing flood or severe weather risks in Charqueadas:
 * **Check `DCRS-00093` (General Câmara):** If river level or 24h rain is surging upstream, expect a crest in Charqueadas within 6 to 18 hours.
 * **Check `DCRS-00076` (Eldorado do Sul) & `DCRS-00033` (Ipanema):** If Guaíba levels are high and wind direction is South (`S`/`SE`), the Jacuí will suffer severe drainage blockage at Charqueadas.
-* **Check Station `DCRS-00032` (Charqueadas) `min015` vs `h001`:** Distinguish between instantaneous microbursts / flash floods (`min015 >= 20mm`) and continuous basin flooding (`h024 >= 80mm` + `rio_nivel` approaching the 4.6 m cota de inundação).
+* **Check Station `DCRS-00032` (Charqueadas) `min005` vs `h001`:** Distinguish between instantaneous microbursts / flash floods (`min005 >= 6.7mm`, equivalent to the old 20 mm/15min rate) and continuous basin flooding (`h024 >= 80mm` + `rio_nivel` approaching the 4.6 m cota de inundação).
