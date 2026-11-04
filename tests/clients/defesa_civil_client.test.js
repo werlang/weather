@@ -12,6 +12,7 @@ import {
     MAX_PLAUSIBLE_WIND_DIRECTION_DEG,
     CHARQUEADAS_STATION_CODE,
     REGIONAL_STATIONS,
+    DEFESA_CIVIL_GRAPHQL_URL,
     TAGS_DATA_QUERY
 } from '../../src/clients/defesa_civil_client.js';
 import { evaluateHighRisksIn24hWindow } from '../../src/monitoring/risk_analyzer.js';
@@ -31,11 +32,48 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(REGIONAL_STATIONS.some(s => s.code === 'DCRS-00076'));
     });
 
-    it('declares non-null GraphQL list variables required by the server schema', () => {
-        // The live API rejects nullable "$stations"/"$clients" with HTTP 400
-        // (GRAPHQL_VALIDATION_FAILED: position expects type "[String!]!").
-        assert.ok(TAGS_DATA_QUERY.includes('$stations: [String!]!'));
-        assert.ok(TAGS_DATA_QUERY.includes('$clients: [String!]!'));
+    it('uses the official Tags_data query text accepted by the API allowlist', () => {
+        // The live API validates the query text against an exact allowlist and
+        // rejects anything else with QUERY_NOT_ALLOWED. It also renamed the
+        // 15-minute rain bucket to min005 in 2026-10; the old min015 query now
+        // fails with GRAPHQL_VALIDATION_FAILED.
+        assert.ok(TAGS_DATA_QUERY.includes('query Tags_data'));
+        assert.ok(TAGS_DATA_QUERY.includes('tags_data(clients: ["casa-militar-defesa-civil-rs"])'));
+        assert.ok(TAGS_DATA_QUERY.includes('min005'));
+        assert.ok(!TAGS_DATA_QUERY.includes('min015'));
+    });
+
+    it('requests the official query and filters the full network payload to the requested stations', async () => {
+        const originalFetch = globalThis.fetch;
+        let capturedRequest = null;
+
+        globalThis.fetch = async (url, options) => {
+            capturedRequest = { url, body: JSON.parse(options.body) };
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    data: {
+                        tags_data: {
+                            qualle_meteorologia: [
+                                { codigo: 'DCRS-00032', data: { chuva: { acumulado: { min005: { value: 2 } } } } },
+                                { codigo: 'DCRS-99999', data: { chuva: { acumulado: { min005: { value: 99 } } } } }
+                            ]
+                        }
+                    }
+                })
+            };
+        };
+
+        try {
+            const stations = await getDefesaCivilTelemetry(['DCRS-00032'], { log: false });
+            assert.strictEqual(capturedRequest.url, DEFESA_CIVIL_GRAPHQL_URL);
+            assert.strictEqual(capturedRequest.body.query, TAGS_DATA_QUERY);
+            assert.strictEqual(capturedRequest.body.variables, undefined);
+            assert.deepStrictEqual(stations.map(station => station.codigo), ['DCRS-00032']);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
     });
 
     it('evaluates Orange Alert for rain >= 30mm/h or wind >= 75km/h or rapid river rise >= 0.25m/h', () => {
@@ -43,7 +81,7 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
             {
                 codigo: 'DCRS-00032',
                 data: {
-                    chuva: { acumulado: { min015: { value: 10 }, h001: { value: 35 }, h003: { value: 40 } } },
+                    chuva: { acumulado: { min005: { value: 3 }, h001: { value: 35 }, h003: { value: 40 } } },
                     vento: { velocidade_maxima: { value: 60 } },
                     rio: { rio_nivel: { value: 3.8 }, rio_nivel_tendencia: { value: 0.1 } }
                 }
@@ -63,6 +101,29 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
         assert.ok(risks.some(r => r.colorTier === 'ORANGE' && r.type.includes('Chuva Intensa')));
         assert.ok(risks.some(r => r.colorTier === 'ORANGE' && r.type.includes('Vendaval')));
         assert.ok(risks.some(r => r.colorTier === 'ORANGE' && r.type.includes('Elevação do Rio')));
+    });
+
+    it('normalizes the 5-minute rain bucket to the 15-minute Orange threshold', () => {
+        const telemetry = min005 => [{
+            codigo: 'DCRS-00032',
+            data: {
+                chuva: { acumulado: { min005: { value: min005 } } },
+                vento: { velocidade_maxima: { value: 0 } },
+                rio: { rio_nivel: { value: 0 }, rio_nivel_tendencia: { value: 0 } }
+            }
+        }];
+
+        // 6.6 mm in 5 min = 19.8 mm/15min equivalent: just below the 20 mm rule.
+        const below = evaluateDefesaCivilRisks(telemetry(6.6));
+        assert.strictEqual(below.filter(risk => risk.category === 'chuva').length, 0);
+
+        // 7 mm in 5 min = 21 mm/15min equivalent: at/above the same rain rate.
+        const atThreshold = evaluateDefesaCivilRisks(telemetry(7));
+        const rainRisk = atThreshold.find(risk => risk.category === 'chuva');
+        assert.ok(rainRisk);
+        assert.strictEqual(rainRisk.colorTier, 'ORANGE');
+        assert.match(rainRisk.details, /7 mm em 5min/);
+        assert.match(rainRisk.details, /21 mm equivalentes em 15min/);
     });
 
     it('evaluates Red Alert for rain >= 50mm/h or wind >= 100km/h or critical river rise >= 0.5m/h', () => {

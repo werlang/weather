@@ -1,0 +1,268 @@
+
+  query Tags_data {
+    tags_data(clients: ["casa-militar-defesa-civil-rs"]) {
+         qualle_meteorologia {
+            codigo
+            name {
+                prefix
+                general
+                local
+            }
+            show
+            timestamp
+            position {
+                bacia
+                latitude
+                longitude
+                regiao
+                altitude
+                filtros {
+                    outros {
+                        crepdec {
+                            nome {
+                                value
+                            }
+                            codigo {
+                                value
+                            }
+                        }
+                    }
+                }
+            }
+            data {
+                rio {
+                    rio_alarmes {
+                        inundacao {
+                            ativo {
+                                value
+                            }
+                            status {
+                                value
+                            }
+                        }
+                    }
+                    rio_nome {
+                        value
+                    }
+                    rio_nivel {
+                        value
+                    }
+                    rio_nivel_tendencia {
+                        value
+                    }
+                    rio_area_drenagem {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                chuva {
+                    acumulado {
+                        min005 {
+                            value
+                        }
+                        h001 {
+                            value
+                        }
+                        h003 {
+                            value
+                        }
+                        h006 {
+                            value
+                        }
+                        h012 {
+                            value
+                        }
+                        h024 {
+                            value
+                        }
+                        h048 {
+                            value
+                        }
+                        h168 {
+                            value
+                        }
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                pressaoatmos {
+                    atual {
+                        value
+                    }
+                    historico {
+                        diaanterior {
+                            media {
+                                value
+                            }
+                        }
+                        diaatual {
+                            media {
+                                value
+                            }
+                        }
+                    }
+                    tendencia {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                senstermica {
+                    atual {
+                        value
+                    }
+                    historico {
+                        diaatual {
+                            media {
+                                value
+                            }
+                        }
+                        diaanterior {
+                            media {
+                                value
+                            }
+                        }
+                    }
+                    tendencia {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                radiacaosolar {
+                    atual {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                temperatura {
+                    atual {
+                        value
+                    }
+                    historico {
+                        diaanterior {
+                            media {
+                                value
+                            }
+                        }
+                        diaatual {
+                            media {
+                                value
+                            }
+                            maxima {
+                                value
+                            }
+                            minima {
+                                value
+                            }
+                        }
+                    }
+                    tendencia {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                umidade {
+                    atual {
+                        value
+                    }
+                    historico {
+                        diaanterior {
+                            media {
+                                value
+                            }
+                        }
+                        diaatual {
+                            media {
+                                value
+                            }
+                        }
+                    }
+                    tendencia {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+                vento {
+                    direcao {
+                        value
+                    }
+                    velocidade_maxima {
+                        value
+                    }
+                    velocidade_media {
+                        value
+                    }
+                    homologacao {
+                        relacao {
+                            valido {
+                                value
+                            }
+                        }
+                    }
+                }
+            }
+            type
+            filter {
+                relacao {
+                    tem_chuva_acumulada
+                    tem_nivel_do_rio
+                    tem_pressao_atmosferica
+                    tem_sensacao_termica
+                    tem_umidade
+                    tem_vazao_do_rio
+                    tem_vento
+                }
+            }
+            resource {
+                estacao {
+                    estado {
+                        manutencao {
+                            value
+                        }
+                    }
+                }
+            }
+        }
+        proximaAtualizacaoEm
+    }
+  }

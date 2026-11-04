@@ -7,6 +7,8 @@
  * @module defesaCivilClient
  */
 
+import { readFileSync } from 'node:fs';
+
 import { logFetch, logUnknownAlert } from '../model/log_database.js';
 
 export const DEFESA_CIVIL_GRAPHQL_URL = process.env.DEFESA_CIVIL_GRAPHQL_URL || 'https://redehidrometeorologica.defesacivil.rs.gov.br/graphql';
@@ -77,62 +79,25 @@ export function describeWindSensorFault(vento = null) {
     return null;
 }
 
-export const TAGS_DATA_QUERY = `
-query GetStationTelemetry($stations: [String!]!, $clients: [String!]!) {
-  tags_data(station: $stations, clients: $clients) {
-    qualle_meteorologia {
-      codigo
-      name {
-        prefix
-        general
-        local
-      }
-      timestamp
-      position {
-        bacia
-        latitude
-        longitude
-        regiao
-        altitude
-      }
-      data {
-        rio {
-          rio_nome { value }
-          rio_nivel { value }
-          rio_nivel_tendencia { value }
-        }
-        chuva {
-          acumulado {
-            min015 { value }
-            h001 { value }
-            h003 { value }
-            h024 { value }
-          }
-        }
-        temperatura {
-          atual { value }
-        }
-        umidade {
-          atual { value }
-        }
-        pressaoatmos {
-          atual { value }
-          tendencia { value }
-        }
-        vento {
-          velocidade_media { value }
-          velocidade_maxima { value }
-          direcao { value }
-        }
-      }
-    }
-  }
-}
-`;
+/**
+ * Official `Tags_data` GraphQL query published by Defesa Civil RS.
+ *
+ * The endpoint validates the query text against an exact allowlist and rejects
+ * any other spelling with `QUERY_NOT_ALLOWED`, so this string is loaded
+ * byte-for-byte from `tags_data.graphql`. Do not re-indent or edit it locally;
+ * replace the file only with the text published in the API guide. The client
+ * name is embedded in the query and must match `DEFESA_CIVIL_CLIENT_NAME`.
+ * @type {string}
+ */
+export const TAGS_DATA_QUERY = readFileSync(new URL('./tags_data.graphql', import.meta.url), 'utf8');
 
 /**
  * Fetches real-time hydrometeorological telemetry from Defesa Civil RS GraphQL endpoint.
- * 
+ *
+ * The official query returns every station in the network. The response is
+ * filtered down to the requested `stations`, so callers keep receiving only
+ * the regional stations they asked for.
+ *
  * @param {Array<string>} [stations] - List of station codes (defaults to target regional stations).
  * @param {object} [options]
  * @param {boolean} [options.log=true] - Whether to record fetch metadata in SQLite.
@@ -143,13 +108,7 @@ query GetStationTelemetry($stations: [String!]!, $clients: [String!]!) {
  */
 export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054'], { log = true, db = null, throwOnError = false } = {}) {
     const startTime = Date.now();
-    const payload = {
-        query: TAGS_DATA_QUERY,
-        variables: {
-            stations,
-            clients: [DEFESA_CIVIL_CLIENT_NAME]
-        }
-    };
+    const payload = { query: TAGS_DATA_QUERY };
 
     try {
         const response = await fetch(DEFESA_CIVIL_GRAPHQL_URL, {
@@ -196,7 +155,9 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
             }
             return [];
         }
-        const stationsList = data?.data?.tags_data?.qualle_meteorologia || [];
+        const requestedStations = new Set(stations);
+        const stationsList = (data?.data?.tags_data?.qualle_meteorologia || [])
+            .filter(station => requestedStations.has(station.codigo));
 
         if (log) {
             let responseSizeBytes = null;
@@ -239,7 +200,7 @@ export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00
  * 
  * Criteria:
  * - 🔴 Red (Extremo): Rain > 50 mm/h or > 80 mm/3h, Wind >= 100 km/h, river level >= the station's official cota de inundação (`floodLevelM`) or rising >= 0.5 m/h.
- * - 🟠 Orange (Alerta / Risco Severo): Rain >= 20 mm/15min or >= 30 mm/h or >= 50 mm/3h, Wind >= 75 km/h, river level above the station's official cota de alerta (`alertLevelM`) or rising >= 0.25 m/h.
+ * - 🟠 Orange (Alerta / Risco Severo): Rain >= 20 mm/15min equivalent (5-minute `min005` reading x3) or >= 30 mm/h or >= 50 mm/3h, Wind >= 75 km/h, river level above the station's official cota de alerta (`alertLevelM`) or rising >= 0.25 m/h.
  * 
  * River absolute-level rules use the per-station official quotas declared in
  * `REGIONAL_STATIONS`; stations without registered quotas fall back to
@@ -272,7 +233,11 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
         const affectedCities = String(cityName || code).split('/').map(s => s.trim()).filter(Boolean);
         const data = station.data || {};
 
-        const rain15min = (() => { const n = parseFloat(data.chuva?.acumulado?.min015?.value); return Number.isFinite(n) ? n : 0; })();
+        const rain5min = (() => { const n = parseFloat(data.chuva?.acumulado?.min005?.value); return Number.isFinite(n) ? n : 0; })();
+        // The API replaced the 15-minute bucket (`min015`) with a 5-minute one
+        // (`min005`). Normalizing x3 preserves the old 20 mm/15min rain rate
+        // (84 mm/h) instead of silently making the Orange trigger 3x stricter.
+        const rain15minEquivalent = rain5min * 3;
         const rain1h = (() => { const n = parseFloat(data.chuva?.acumulado?.h001?.value); return Number.isFinite(n) ? n : 0; })();
         const rain3h = (() => { const n = parseFloat(data.chuva?.acumulado?.h003?.value); return Number.isFinite(n) ? n : 0; })();
         const rain24h = (() => { const n = parseFloat(data.chuva?.acumulado?.h024?.value); return Number.isFinite(n) ? n : 0; })();
@@ -296,7 +261,7 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 details: `Acúmulo crítico registrado: ${rain1h} mm em 1h (${rain3h} mm em 3h) na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Precipitação extrema (${rain1h} mm/h) com risco iminente de alagamentos severos.`
             });
-        } else if (rain15min >= 20 || rain1h >= 30 || rain3h >= 50 || rain24h >= 80) {
+        } else if (rain15minEquivalent >= 20 || rain1h >= 30 || rain3h >= 50 || rain24h >= 80) {
             risks.push({
                 source: 'DEFESA_CIVIL_RS',
                 type: 'Chuva Intensa / Risco de Alagamento (Telemetria)',
@@ -306,7 +271,7 @@ export function evaluateDefesaCivilRisks(stationsData = []) {
                 emoji: '🟠',
                 affectedCities: [...affectedCities],
                 timeframe: 'Telemetria em Tempo Real',
-                details: `Acúmulo de chuva registrado: ${rain15min} mm em 15min / ${rain1h} mm em 1h / ${rain3h} mm em 3h / ${rain24h} mm em 24h na estação ${code} (${cityName}).`,
+                details: `Acúmulo de chuva registrado: ${rain5min} mm em 5min (${rain15minEquivalent} mm equivalentes em 15min) / ${rain1h} mm em 1h / ${rain3h} mm em 3h / ${rain24h} mm em 24h na estação ${code} (${cityName}).`,
                 triggerReason: `Defesa Civil RS: Acúmulo de chuva com risco de saturação e alagamentos.`
             });
         }
