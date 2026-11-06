@@ -41,6 +41,14 @@ import {
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
 
 /**
+ * Minimum share of municipalities that must deliver an INMET forecast before a
+ * cycle counts as complete (`MONITOR_FORECAST_COVERAGE_PCT`, default 95).
+ * A single transient gap among ~38 cities must not suppress the "no risk"
+ * message; a real outage must. Gaps under the limit are logged, not alerted.
+ */
+const FORECAST_COVERAGE_PCT = Number(process.env.MONITOR_FORECAST_COVERAGE_PCT ?? 95);
+
+/**
  * In-memory cache for the last completed regional scan snapshot.
  * Survives across calls in the same process; persisted to system_settings
  * for cross-restart availability (regular users read last scan without live API calls).
@@ -347,7 +355,14 @@ export async function performRegionalRiskMonitoring({
             }).length;
             forecastFailures = missingForecasts + unusableForecasts;
             if (forecastFailures > 0) {
-                dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities`);
+                const coveragePct = cities.length > 0
+                    ? ((cities.length - forecastFailures) / cities.length) * 100
+                    : 100;
+                if (coveragePct < FORECAST_COVERAGE_PCT) {
+                    dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities (coverage ${coveragePct.toFixed(1)}% < ${FORECAST_COVERAGE_PCT}%)`);
+                } else {
+                    console.warn(`[${timestamp}] ℹ️ Cobertura parcial tolerada: ${forecastFailures} de ${cities.length} municípios sem previsão (cobertura ${coveragePct.toFixed(1)}%, limite ${FORECAST_COVERAGE_PCT}%).`);
+                }
             }
         } else {
             forecastFailures = cities.length;

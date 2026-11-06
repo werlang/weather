@@ -59,77 +59,114 @@ export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [
 
 export const CHARQUEADAS_SURROUNDING_CITIES = CHARQUEADAS_SURROUNDING_CITIES_100KM;
 
+const DEFAULT_FETCH_RETRIES = Number(process.env.INMET_FETCH_RETRIES ?? 1);
+const DEFAULT_FETCH_RETRY_DELAY_MS = Number(process.env.INMET_FETCH_RETRY_DELAY_MS ?? 600);
+
 /**
- * Performs an HTTP GET request with standard headers, logs request and response metadata
- * to SQLite, and returns parsed JSON.
+ * Waits before another fetch attempt.
+ *
+ * @param {number} ms - Delay in milliseconds.
+ * @returns {Promise<void>} Resolves once the delay elapses.
+ */
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Decides whether a failed fetch is worth retrying.
+ *
+ * Transport failures (no HTTP status) and server-side responses (429, 5xx) are
+ * transient; client errors (4xx) will fail again and must not be retried.
+ *
+ * @param {{ statusCode?: number }} err - Error raised by one fetch attempt.
+ * @returns {boolean} True when another attempt may succeed.
+ */
+function isRetryableFetchError(err) {
+    const statusCode = err?.statusCode;
+    if (!statusCode) return true;
+    return statusCode === 429 || statusCode >= 500;
+}
+
+/**
+ * Performs an HTTP GET request with standard headers, retries transient
+ * failures, logs request and response metadata to SQLite, and returns parsed JSON.
  * 
  * @param {string} url - The target URL to fetch.
  * @param {object} [options]
  * @param {boolean} [options.log=true] - Whether to record this fetch into SQLite.
  * @param {object} [options.db] - Optional custom SQLite database instance.
+ * @param {number} [options.retries] - Extra attempts after the first failure (`INMET_FETCH_RETRIES`, default 1).
+ * @param {number} [options.retryDelayMs] - Base backoff between attempts, multiplied per attempt (`INMET_FETCH_RETRY_DELAY_MS`, default 600).
  * @returns {Promise<any>} The parsed JSON payload.
  */
-export async function httpGet(url, { log = true, db = null } = {}) {
+export async function httpGet(url, {
+    log = true,
+    db = null,
+    retries = DEFAULT_FETCH_RETRIES,
+    retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS
+} = {}) {
     const startTime = Date.now();
-    try {
-        const response = await fetch(url, { headers: HEADERS });
-        const durationMs = Date.now() - startTime;
+    const attemptLimit = Math.max(0, Number(retries) || 0) + 1;
+    let lastError = null;
+    let lastStatusCode = null;
 
-        if (!response.ok) {
-            const errorMsg = `HTTP error ${response.status} when fetching ${url}`;
+    for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
+        try {
+            const response = await fetch(url, { headers: HEADERS });
+
+            if (!response.ok) {
+                const error = new Error(`HTTP error ${response.status} when fetching ${url}`);
+                error.statusCode = response.status;
+                throw error;
+            }
+
+            const data = await response.json();
+
             if (log) {
+                let responseSizeBytes = null;
+                try {
+                    const jsonStr = JSON.stringify(data);
+                    responseSizeBytes = Buffer.byteLength(jsonStr, 'utf8');
+                } catch {}
+
+                let itemCount = null;
+                if (Array.isArray(data)) {
+                    itemCount = data.length;
+                } else if (data && typeof data === 'object') {
+                    itemCount = Object.keys(data).length;
+                }
+
                 logFetch({
                     url,
                     statusCode: response.status,
-                    durationMs,
-                    success: 0,
-                    errorMessage: errorMsg
+                    durationMs: Date.now() - startTime,
+                    success: 1,
+                    responseSizeBytes,
+                    itemCount,
+                    errorMessage: null
                 }, db);
             }
-            throw new Error(errorMsg);
+
+            return data;
+        } catch (err) {
+            lastError = err;
+            lastStatusCode = err?.statusCode ?? null;
+            if (attempt >= attemptLimit || !isRetryableFetchError(err)) break;
+            await sleep(retryDelayMs * attempt);
         }
-
-        const data = await response.json();
-
-        if (log) {
-            let responseSizeBytes = null;
-            try {
-                const jsonStr = JSON.stringify(data);
-                responseSizeBytes = Buffer.byteLength(jsonStr, 'utf8');
-            } catch {}
-
-            let itemCount = null;
-            if (Array.isArray(data)) {
-                itemCount = data.length;
-            } else if (data && typeof data === 'object') {
-                itemCount = Object.keys(data).length;
-            }
-
-            logFetch({
-                url,
-                statusCode: response.status,
-                durationMs,
-                success: 1,
-                responseSizeBytes,
-                itemCount,
-                errorMessage: null
-            }, db);
-        }
-
-        return data;
-    } catch (err) {
-        const durationMs = Date.now() - startTime;
-        if (log && !err.message?.startsWith('HTTP error')) {
-            logFetch({
-                url,
-                statusCode: null,
-                durationMs,
-                success: 0,
-                errorMessage: err.message
-            }, db);
-        }
-        throw err;
     }
+
+    if (log) {
+        logFetch({
+            url,
+            statusCode: lastStatusCode,
+            durationMs: Date.now() - startTime,
+            success: 0,
+            errorMessage: lastError?.message ?? 'fetch failed'
+        }, db);
+    }
+
+    throw lastError;
 }
 
 /**
