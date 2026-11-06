@@ -41,36 +41,60 @@ import {
 
 export { parseForecastDate, evaluateHighRisksIn24hWindow };
 
-/**
- * Minimum share of municipalities that must deliver an INMET forecast before a
- * cycle counts as complete (`MONITOR_FORECAST_COVERAGE_PCT`, default 95).
- */
-const FORECAST_COVERAGE_PCT = readBoundedNumber(process.env.MONITOR_FORECAST_COVERAGE_PCT, 95, { min: 1, max: 100 });
 
 /**
- * Number of unobserved municipalities a cycle may carry before it stops being
- * complete. `100` disables tolerance entirely.
+ * Shortens a fetch failure into a label the operator can scan; a raw message
+ * carries the full URL and floods the notification.
  *
- * @param {number} totalCities - Municipalities tracked in this cycle.
- * @returns {number} Tolerated gap count.
+ * @param {string} message - Error message from the forecast fetch.
+ * @returns {string} Compact reason, e.g. `HTTP 404`, `falha de rede`.
  */
-export function toleratedForecastGaps(totalCities, coveragePct = FORECAST_COVERAGE_PCT) {
-    if (coveragePct >= 100) return 0;
-    const proportional = Math.floor((totalCities * (100 - coveragePct)) / 100);
-    return Math.max(1, proportional);
+function compactFetchReason(message) {
+    const text = String(message ?? '');
+    const http = text.match(/HTTP error (\d{3})/);
+    if (http) return `HTTP ${http[1]}`;
+    if (/invalid json/i.test(text)) return 'JSON inválido';
+    if (/abort|timeout|timed out/i.test(text)) return 'timeout';
+    if (/fetch failed|socket|ECONN|ENOTFOUND|EAI_AGAIN/i.test(text)) return 'falha de rede';
+    return text.slice(0, 40) || 'erro desconhecido';
 }
 
 /**
- * Whether a cycle's alert-key set may replace the stored one. A tolerated
- * forecast gap leaves part of the region unobserved, so the set must be merged
- * instead of replaced, or live events resume as re-broadcasts (§8.1).
+ * Lists the municipalities whose INMET forecast was missing or unusable so the
+ * operator message names them instead of only counting them. Capped at five
+ * entries to keep the notification readable.
  *
- * @param {{ complete?: boolean, forecastFailures?: number }} [dataQuality] - Cycle quality report.
- * @returns {boolean} True when the cycle observed every source completely.
+ * @param {Array<{ name: string, ibgeCode: string, forecast?: object, error?: string }>} regionalForecasts - Per-city results.
+ * @param {Array<{ name: string, ibgeCode: string }>} cities - Municipalities requested this cycle.
+ * @returns {string} Suffix starting with ": " and the offenders, or an empty string.
  */
-export function isAuthoritativeCycle(dataQuality) {
-    return dataQuality?.complete !== false && (dataQuality?.forecastFailures ?? 0) === 0;
+function describeForecastGaps(regionalForecasts, cities) {
+    const offenders = [];
+
+    for (const entry of regionalForecasts) {
+        const forecast = entry?.forecast;
+        const unusable = entry?.error
+            || !forecast
+            || typeof forecast !== 'object'
+            || Array.isArray(forecast)
+            || Object.keys(forecast).length === 0;
+        if (unusable) {
+            offenders.push(entry?.error ? `${entry.name} (${compactFetchReason(entry.error)})` : `${entry.name} (previsão vazia)`);
+        }
+    }
+
+    const observed = new Set(regionalForecasts.map(entry => entry?.ibgeCode));
+    for (const city of cities) {
+        if (!observed.has(city.ibgeCode)) offenders.push(`${city.name} (sem resposta)`);
+    }
+
+    if (offenders.length === 0) return '';
+
+    const shown = offenders.slice(0, 5).join(', ');
+    return `: ${shown}${offenders.length > 5 ? ` e mais ${offenders.length - 5}` : ''}`;
 }
+
+
 
 /**
  * In-memory cache for the last completed regional scan snapshot.
@@ -370,7 +394,6 @@ export async function performRegionalRiskMonitoring({
         }
 
         let forecastFailures = 0;
-        let toleratedForecastGapsSeen = 0;
         let coveragePct = 100;
         if (forecastsResult.status === 'fulfilled' && Array.isArray(forecastsResult.value)) {
             regionalForecasts = forecastsResult.value;
@@ -384,13 +407,8 @@ export async function performRegionalRiskMonitoring({
                 coveragePct = cities.length > 0
                     ? ((cities.length - forecastFailures) / cities.length) * 100
                     : 100;
-                const toleratedGaps = toleratedForecastGaps(cities.length);
-                if (forecastFailures > toleratedGaps) {
-                    dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities (coverage ${coveragePct.toFixed(1)}%, tolerated gaps ${toleratedGaps})`);
-                } else {
-                    toleratedForecastGapsSeen = forecastFailures;
-                    console.warn(`[${timestamp}] ℹ️ Cobertura parcial tolerada: ${forecastFailures} de ${cities.length} municípios sem previsão (cobertura ${coveragePct.toFixed(1)}%, lacunas toleradas ${toleratedGaps}).`);
-                }
+                const detail = describeForecastGaps(regionalForecasts, cities);
+                dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities (coverage ${coveragePct.toFixed(1)}%)${detail}`);
             }
         } else {
             forecastFailures = cities.length;
@@ -410,7 +428,6 @@ export async function performRegionalRiskMonitoring({
             forecastsAvailable: forecastsResult.status === 'fulfilled' && forecastFailures === 0,
             telemetryAvailable: telemetryResult.status === 'fulfilled' && defesaCivilTelemetry.length > 0,
             forecastFailures,
-            toleratedForecastGaps: toleratedForecastGapsSeen,
             coveragePct,
             errors: dataErrors
         };
@@ -580,7 +597,7 @@ export function startMonitoringService(options = {}) {
                 });
             }
             await dispatchAlerts(result.events, {
-                dataComplete: isAuthoritativeCycle(result.dataQuality)
+                dataComplete: result.dataQuality?.complete !== false
             });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);
