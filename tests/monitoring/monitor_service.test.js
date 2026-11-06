@@ -13,9 +13,7 @@ import {
   onHighRiskEventDetected,
   startMonitoringService,
   createAlertDispatcher,
-  performRegionalRiskMonitoring,
-  toleratedForecastGaps,
-  isAuthoritativeCycle
+  performRegionalRiskMonitoring
 } from '../../src/monitoring/monitor_service.js';
 import { analyzeForecastRisks, parseRadiusArg, getEventCategory, classifyInmetWarningCategory, getRiskEventKey } from '../../src/monitoring/risk_analyzer.js';
 import { getSurroundingCities } from '../../src/clients/inmet_client.js';
@@ -891,7 +889,7 @@ describe('Monitoring data quality', () => {
   });
 });
 
-describe('Forecast coverage tolerance', () => {
+describe('Strict forecast gating and operator message', () => {
   const benignTelemetry = {
     data: {
       tags_data: {
@@ -907,19 +905,13 @@ describe('Forecast coverage tolerance', () => {
     }
   };
 
-  // A 404 is deterministic, so httpGet does not retry it: the test stays fast
-  // while still exercising a city without a usable forecast.
-  const stubForecasts = failingCodes => {
+  const stub = failingCodes => {
     globalThis.fetch = async url => {
       const target = String(url);
-      if (target.includes('/avisos/ativos')) {
-        return { ok: true, status: 200, json: async () => [] };
-      }
+      if (target.includes('/avisos/ativos')) return { ok: true, status: 200, json: async () => [] };
       if (target.includes('/previsao/')) {
         const code = target.split('/').pop();
-        if (failingCodes.has(code)) {
-          return { ok: false, status: 404, json: async () => ({}) };
-        }
+        if (failingCodes.has(code)) return { ok: false, status: 404, json: async () => ({}) };
         const day = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
         const key = [
           String(day.getDate()).padStart(2, '0'),
@@ -936,21 +928,50 @@ describe('Forecast coverage tolerance', () => {
     };
   };
 
-  it('keeps the cycle complete when a single municipality is missing (coverage >= 95%)', async () => {
+  const runCycle = async (radiusKm, failingCodes) => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+    const cities = await getSurroundingCities(radiusKm);
+    stub(failingCodes(cities));
+
+    try {
+      return await performRegionalRiskMonitoring({ radiusKm, alertCallback: null });
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  };
+
+  it('flags the cycle incomplete for a single missing municipality, with no tolerance', async () => {
+    const scan = await runCycle(100, cities => new Set([cities[0].ibgeCode]));
+
+    assert.strictEqual(scan.dataQuality.forecastFailures, 1);
+    assert.strictEqual(scan.dataQuality.complete, false, 'one gap must still block the all-clear');
+    assert.strictEqual(Number(scan.dataQuality.coveragePct.toFixed(1)), 97.4);
+  });
+
+  it('names the offending municipality and the coverage in the operator message', async () => {
     const originalFetch = globalThis.fetch;
     const originalDbPath = process.env.DB_PATH;
     process.env.DB_PATH = ':memory:';
     Sqlite.close();
 
     const cities = await getSurroundingCities(100);
-    stubForecasts(new Set([cities[0].ibgeCode]));
+    const target = cities[0];
+    stub(new Set([target.ibgeCode]));
 
     try {
       const scan = await performRegionalRiskMonitoring({ radiusKm: 100, alertCallback: null });
+      const message = scan.dataQuality.errors.join(' | ');
 
-      assert.strictEqual(scan.dataQuality.forecastFailures, 1, 'exactly one forecast must be missing');
-      assert.strictEqual(scan.dataQuality.complete, true, 'a 97% coverage cycle must not be flagged incomplete');
-      assert.deepStrictEqual(scan.dataQuality.errors, [], 'no source error may reach the operational alert');
+      assert.match(message, /INMET forecasts failed or were empty for 1 of 38 municipalities \(coverage 97\.4%\)/);
+      assert.ok(message.includes(target.name), 'the operator must see which municipality is missing');
+      assert.match(message, /\(HTTP 404\)/, 'the reason must be compact');
+      assert.doesNotMatch(message, /https?:\/\//, 'no URLs in the operator message');
     } finally {
       globalThis.fetch = originalFetch;
       Sqlite.close();
@@ -959,91 +980,12 @@ describe('Forecast coverage tolerance', () => {
     }
   });
 
-  it('flags the cycle incomplete when coverage drops below the limit', async () => {
-    const originalFetch = globalThis.fetch;
-    const originalDbPath = process.env.DB_PATH;
-    process.env.DB_PATH = ':memory:';
-    Sqlite.close();
+  it('stays complete when every municipality delivers a forecast', async () => {
+    const scan = await runCycle(100, () => new Set());
 
-    const cities = await getSurroundingCities(100);
-    stubForecasts(new Set([cities[0].ibgeCode, cities[1].ibgeCode, cities[2].ibgeCode]));
-
-    try {
-      const scan = await performRegionalRiskMonitoring({ radiusKm: 100, alertCallback: null });
-
-      assert.strictEqual(scan.dataQuality.forecastFailures, 3);
-      assert.strictEqual(scan.dataQuality.complete, false, '92% coverage must block the all-clear');
-      assert.match(
-        scan.dataQuality.errors.join(' | '),
-        /INMET forecasts failed or were empty for 3 of \d+ municipalities \(coverage \d+\.\d%, tolerated gaps 1\)/
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-      Sqlite.close();
-      if (originalDbPath === undefined) delete process.env.DB_PATH;
-      else process.env.DB_PATH = originalDbPath;
-    }
-  });
-
-  it('tolerates one gap at the exact 95% boundary of the default radius', async () => {
-    const originalFetch = globalThis.fetch;
-    const originalDbPath = process.env.DB_PATH;
-    process.env.DB_PATH = ':memory:';
-    Sqlite.close();
-
-    const cities = await getSurroundingCities(50);
-    assert.strictEqual(cities.length, 20, 'the default 50km radius tracks 20 municipalities');
-    stubForecasts(new Set([cities[0].ibgeCode]));
-
-    try {
-      const scan = await performRegionalRiskMonitoring({ radiusKm: 50, alertCallback: null });
-
-      assert.strictEqual(scan.dataQuality.coveragePct, 95);
-      assert.strictEqual(scan.dataQuality.complete, true, 'exactly 95% must pass (a <= mutation must fail here)');
-    } finally {
-      globalThis.fetch = originalFetch;
-      Sqlite.close();
-      if (originalDbPath === undefined) delete process.env.DB_PATH;
-      else process.env.DB_PATH = originalDbPath;
-    }
-  });
-
-  it('tolerates a single gap at the 25km radius instead of alerting at 83%', async () => {
-    const originalFetch = globalThis.fetch;
-    const originalDbPath = process.env.DB_PATH;
-    process.env.DB_PATH = ':memory:';
-    Sqlite.close();
-
-    const cities = await getSurroundingCities(25);
-    stubForecasts(new Set([cities[0].ibgeCode]));
-
-    try {
-      const scan = await performRegionalRiskMonitoring({ radiusKm: 25, alertCallback: null });
-
-      assert.strictEqual(scan.dataQuality.forecastFailures, 1);
-      assert.strictEqual(scan.dataQuality.complete, true, 'the floor of one gap must hold for small radii');
-      assert.strictEqual(scan.dataQuality.toleratedForecastGaps, 1);
-    } finally {
-      globalThis.fetch = originalFetch;
-      Sqlite.close();
-      if (originalDbPath === undefined) delete process.env.DB_PATH;
-      else process.env.DB_PATH = originalDbPath;
-    }
-  });
-});
-
-describe('Coverage policy unit', () => {
-  it('maps the configured percentage to a tolerated gap count with a floor of one', () => {
-    assert.strictEqual(toleratedForecastGaps(38, 95), 1);
-    assert.strictEqual(toleratedForecastGaps(20, 95), 1);
-    assert.strictEqual(toleratedForecastGaps(6, 95), 1, 'a 25km radius must still tolerate one transient gap');
-    assert.strictEqual(toleratedForecastGaps(38, 100), 0, '100% disables tolerance');
-    assert.strictEqual(toleratedForecastGaps(38, 90), 3);
-  });
-
-  it('treats a cycle with any forecast failure as non-authoritative even when tolerated', () => {
-    assert.strictEqual(isAuthoritativeCycle({ complete: true, forecastFailures: 0 }), true);
-    assert.strictEqual(isAuthoritativeCycle({ complete: true, forecastFailures: 1 }), false);
-    assert.strictEqual(isAuthoritativeCycle({ complete: false, forecastFailures: 0 }), false);
+    assert.strictEqual(scan.dataQuality.forecastFailures, 0);
+    assert.strictEqual(scan.dataQuality.complete, true);
+    assert.deepStrictEqual(scan.dataQuality.errors, []);
+    assert.strictEqual(scan.dataQuality.coveragePct, 100);
   });
 });

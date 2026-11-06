@@ -463,8 +463,8 @@ single cycle (first occurrence wins).
 ### 7.3 Cross-Cycle Suppression
 
 `createAlertDispatcher` (§8) suppresses events whose key is already in the
-active set. A complete cycle replaces that set; an incomplete **or tolerated
-partial** cycle (§8.2) only merges the events it actually delivered, so an outage cannot clear a live alert and
+active set. A complete cycle replaces that set; an incomplete cycle (§8.2) only
+merges the events it actually delivered, so an outage cannot clear a live alert and
 cannot turn the same alert into an hourly re-broadcast either (regression fixed
 on 2026-11-04). The active key set is persisted in
 `system_settings.active_alert_keys`, so a process or container restart does
@@ -530,21 +530,15 @@ availability, forecast failure count, error strings). Rules:
 
 - An incomplete cycle can still raise alerts from whichever sources succeeded.
 - An incomplete cycle **must not** emit an "all clear" conclusion.
-- A **partial** forecast set is not incomplete once the number of gaps stays
-  within the tolerance derived from `MONITOR_FORECAST_COVERAGE_PCT` (default
-  `95`): `floor(totalCities × (100 - pct) / 100)` gaps, with a **floor of one**
-  so a small radius (25 km tracks 6 municipalities) still absorbs a single
-  transient gap instead of alerting at 83%. `pct: 100` disables tolerance.
-  Gaps inside the limit are logged as `ℹ️ Cobertura parcial tolerada` and the
-  cycle may still conclude "no risk"; exceeding it restores the full
-  `INMET forecasts failed ...` error and suppresses the all-clear. Rationale:
-  one transient gap in 38 municipalities fired an operational alert on
-  2026-11-05 and again on 2026-11-06 with no meteorological cause.
-- A **tolerated** partial cycle is *not authoritative* for cross-cycle
-  suppression (§7.3): some municipalities went unobserved, so the active alert
-  key set is merged, never replaced (`isAuthoritativeCycle`). Otherwise a live
-  event in an unobserved city would drop out of the set and be re-broadcast on
-  the next cycle — the 2026-11-04 regression class.
+- **Any** missing or unusable forecast makes the cycle incomplete: no tolerance,
+  no percentage threshold. One city without a forecast is enough to suppress the
+  "all clear" conclusion and to notify the developer, because the region is not
+  fully observed. Transient gaps are prevented at the source instead — the fetch
+  retries before the cycle counts a failure (below).
+- The operator error names the offenders, not only the count:
+  `INMET forecasts failed or were empty for 1 of 38 municipalities (coverage 97.4%): Butiá (fetch failed)`.
+  Up to five are listed, with `e mais N` beyond that; cities that returned no
+  row at all appear as `(sem resposta)`.
 - Forecast HTTP fetches retry transient failures before the cycle counts them:
   `INMET_FETCH_RETRIES` extra attempts (default `1`) spaced by
   `INMET_FETCH_RETRY_DELAY_MS` × attempt (default `600`), with each attempt
@@ -556,8 +550,7 @@ availability, forecast failure count, error strings). Rules:
   duration.
 - Every numeric env knob is parsed by `readBoundedNumber`
   (`src/helpers/env_number.js`): a blank line, a `95%` typo, or an out-of-range
-  value falls back to the default instead of becoming `0`/`NaN` and silently
-  disabling the gate.
+  value falls back to the default instead of becoming `0`/`NaN`.
 - Cycle outcome and errors are persisted via `logMonitorCycle`; each
   **delivered** event is persisted via `logAlert` (§8.1 step 4).
 - Cycle and fetch durations are clamped to `MAX_DURATION_MS` (10 min) by
