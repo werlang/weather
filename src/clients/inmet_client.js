@@ -5,6 +5,7 @@
  */
 
 import { logFetch } from '../model/log_database.js';
+import { readBoundedNumber } from '../helpers/env_number.js';
 
 export const CHARQUEADAS_IBGE_CODE = process.env.CHARQUEADAS_IBGE_CODE || '4305355';
 export const BASE_PREVMET_URL = process.env.INMET_PREVMET_URL || 'https://apiprevmet3.inmet.gov.br';
@@ -59,8 +60,9 @@ export const CHARQUEADAS_SURROUNDING_CITIES_100KM = [
 
 export const CHARQUEADAS_SURROUNDING_CITIES = CHARQUEADAS_SURROUNDING_CITIES_100KM;
 
-const DEFAULT_FETCH_RETRIES = Number(process.env.INMET_FETCH_RETRIES ?? 1);
-const DEFAULT_FETCH_RETRY_DELAY_MS = Number(process.env.INMET_FETCH_RETRY_DELAY_MS ?? 600);
+const DEFAULT_FETCH_RETRIES = readBoundedNumber(process.env.INMET_FETCH_RETRIES, 1, { min: 0, max: 5, integer: true });
+const DEFAULT_FETCH_RETRY_DELAY_MS = readBoundedNumber(process.env.INMET_FETCH_RETRY_DELAY_MS, 600, { min: 0, max: 60000 });
+const DEFAULT_FETCH_TIMEOUT_MS = readBoundedNumber(process.env.INMET_FETCH_TIMEOUT_MS, 15000, { min: 1000, max: 120000 });
 
 /**
  * Waits before another fetch attempt.
@@ -97,13 +99,15 @@ function isRetryableFetchError(err) {
  * @param {object} [options.db] - Optional custom SQLite database instance.
  * @param {number} [options.retries] - Extra attempts after the first failure (`INMET_FETCH_RETRIES`, default 1).
  * @param {number} [options.retryDelayMs] - Base backoff between attempts, multiplied per attempt (`INMET_FETCH_RETRY_DELAY_MS`, default 600).
+ * @param {number} [options.timeoutMs] - Per-attempt ceiling for the whole request (`INMET_FETCH_TIMEOUT_MS`, default 15000); a stalled socket must fail so the retry can run.
  * @returns {Promise<any>} The parsed JSON payload.
  */
 export async function httpGet(url, {
     log = true,
     db = null,
     retries = DEFAULT_FETCH_RETRIES,
-    retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS
+    retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS,
+    timeoutMs = DEFAULT_FETCH_TIMEOUT_MS
 } = {}) {
     const startTime = Date.now();
     const attemptLimit = Math.max(0, Number(retries) || 0) + 1;
@@ -112,15 +116,26 @@ export async function httpGet(url, {
 
     for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
         try {
-            const response = await fetch(url, { headers: HEADERS });
+            const response = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(timeoutMs) });
+            const statusCode = response.status;
 
             if (!response.ok) {
-                const error = new Error(`HTTP error ${response.status} when fetching ${url}`);
-                error.statusCode = response.status;
+                const error = new Error(`HTTP error ${statusCode} when fetching ${url}`);
+                error.statusCode = statusCode;
                 throw error;
             }
 
-            const data = await response.json();
+            let data;
+            try {
+                data = await response.json();
+            } catch (parseError) {
+                // A 200 carrying a broken body (WAF page, truncated payload) will
+                // not heal on retry. `statusCode` is set so `isRetryableFetchError`
+                // treats it as deterministic and does not double upstream load.
+                const error = new Error(`Invalid JSON from ${url}: ${parseError.message}`);
+                error.statusCode = statusCode;
+                throw error;
+            }
 
             if (log) {
                 let responseSizeBytes = null;
@@ -138,7 +153,7 @@ export async function httpGet(url, {
 
                 logFetch({
                     url,
-                    statusCode: response.status,
+                    statusCode,
                     durationMs: Date.now() - startTime,
                     success: 1,
                     responseSizeBytes,
@@ -156,17 +171,19 @@ export async function httpGet(url, {
         }
     }
 
+    const failure = lastError instanceof Error ? lastError : new Error(String(lastError));
+
     if (log) {
         logFetch({
             url,
             statusCode: lastStatusCode,
             durationMs: Date.now() - startTime,
             success: 0,
-            errorMessage: lastError?.message ?? 'fetch failed'
+            errorMessage: failure.message || 'fetch failed'
         }, db);
     }
 
-    throw lastError;
+    throw failure;
 }
 
 /**
