@@ -17,6 +17,7 @@ import {
 } from '../clients/inmet_client.js';
 
 import { getDefesaCivilTelemetry } from '../clients/defesa_civil_client.js';
+import { readBoundedNumber } from '../helpers/env_number.js';
 
 import {
     parseForecastDate,
@@ -43,10 +44,33 @@ export { parseForecastDate, evaluateHighRisksIn24hWindow };
 /**
  * Minimum share of municipalities that must deliver an INMET forecast before a
  * cycle counts as complete (`MONITOR_FORECAST_COVERAGE_PCT`, default 95).
- * A single transient gap among ~38 cities must not suppress the "no risk"
- * message; a real outage must. Gaps under the limit are logged, not alerted.
  */
-const FORECAST_COVERAGE_PCT = Number(process.env.MONITOR_FORECAST_COVERAGE_PCT ?? 95);
+const FORECAST_COVERAGE_PCT = readBoundedNumber(process.env.MONITOR_FORECAST_COVERAGE_PCT, 95, { min: 1, max: 100 });
+
+/**
+ * Number of unobserved municipalities a cycle may carry before it stops being
+ * complete. `100` disables tolerance entirely.
+ *
+ * @param {number} totalCities - Municipalities tracked in this cycle.
+ * @returns {number} Tolerated gap count.
+ */
+export function toleratedForecastGaps(totalCities, coveragePct = FORECAST_COVERAGE_PCT) {
+    if (coveragePct >= 100) return 0;
+    const proportional = Math.floor((totalCities * (100 - coveragePct)) / 100);
+    return Math.max(1, proportional);
+}
+
+/**
+ * Whether a cycle's alert-key set may replace the stored one. A tolerated
+ * forecast gap leaves part of the region unobserved, so the set must be merged
+ * instead of replaced, or live events resume as re-broadcasts (§8.1).
+ *
+ * @param {{ complete?: boolean, forecastFailures?: number }} [dataQuality] - Cycle quality report.
+ * @returns {boolean} True when the cycle observed every source completely.
+ */
+export function isAuthoritativeCycle(dataQuality) {
+    return dataQuality?.complete !== false && (dataQuality?.forecastFailures ?? 0) === 0;
+}
 
 /**
  * In-memory cache for the last completed regional scan snapshot.
@@ -346,6 +370,8 @@ export async function performRegionalRiskMonitoring({
         }
 
         let forecastFailures = 0;
+        let toleratedForecastGapsSeen = 0;
+        let coveragePct = 100;
         if (forecastsResult.status === 'fulfilled' && Array.isArray(forecastsResult.value)) {
             regionalForecasts = forecastsResult.value;
             const missingForecasts = Math.max(0, cities.length - regionalForecasts.length);
@@ -355,13 +381,15 @@ export async function performRegionalRiskMonitoring({
             }).length;
             forecastFailures = missingForecasts + unusableForecasts;
             if (forecastFailures > 0) {
-                const coveragePct = cities.length > 0
+                coveragePct = cities.length > 0
                     ? ((cities.length - forecastFailures) / cities.length) * 100
                     : 100;
-                if (coveragePct < FORECAST_COVERAGE_PCT) {
-                    dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities (coverage ${coveragePct.toFixed(1)}% < ${FORECAST_COVERAGE_PCT}%)`);
+                const toleratedGaps = toleratedForecastGaps(cities.length);
+                if (forecastFailures > toleratedGaps) {
+                    dataErrors.push(`INMET forecasts failed or were empty for ${forecastFailures} of ${cities.length} municipalities (coverage ${coveragePct.toFixed(1)}%, tolerated gaps ${toleratedGaps})`);
                 } else {
-                    console.warn(`[${timestamp}] ℹ️ Cobertura parcial tolerada: ${forecastFailures} de ${cities.length} municípios sem previsão (cobertura ${coveragePct.toFixed(1)}%, limite ${FORECAST_COVERAGE_PCT}%).`);
+                    toleratedForecastGapsSeen = forecastFailures;
+                    console.warn(`[${timestamp}] ℹ️ Cobertura parcial tolerada: ${forecastFailures} de ${cities.length} municípios sem previsão (cobertura ${coveragePct.toFixed(1)}%, lacunas toleradas ${toleratedGaps}).`);
                 }
             }
         } else {
@@ -382,6 +410,8 @@ export async function performRegionalRiskMonitoring({
             forecastsAvailable: forecastsResult.status === 'fulfilled' && forecastFailures === 0,
             telemetryAvailable: telemetryResult.status === 'fulfilled' && defesaCivilTelemetry.length > 0,
             forecastFailures,
+            toleratedForecastGaps: toleratedForecastGapsSeen,
+            coveragePct,
             errors: dataErrors
         };
 
@@ -550,7 +580,7 @@ export function startMonitoringService(options = {}) {
                 });
             }
             await dispatchAlerts(result.events, {
-                dataComplete: result.dataQuality?.complete !== false
+                dataComplete: isAuthoritativeCycle(result.dataQuality)
             });
         } catch (err) {
             console.error('⚠️ Falha no ciclo de monitoramento, o serviço continuará ativo:', err.message);

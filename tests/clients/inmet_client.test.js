@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { getRecentFetchLogs } from '../../src/model/log_database.js';
 
 // Keep unit tests hermetic: the INMET client persists fetch telemetry through
 // the default database path, which must never be the developer's real file.
@@ -307,6 +308,96 @@ describe('httpGet transient-failure retry', () => {
         /fetch failed/
       );
       assert.strictEqual(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('httpGet evidence and edge handling', () => {
+  it('retries a 429 because the server asks the caller to come back', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      if (calls === 1) return { ok: false, status: 429, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ afterRateLimit: true }) };
+    };
+
+    try {
+      const data = await httpGet('https://example.test/previsao/4305355', { log: false, retryDelayMs: 1 });
+      assert.deepStrictEqual(data, { afterRateLimit: true });
+      assert.strictEqual(calls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not retry a 200 whose body is not valid JSON, and keeps the status in fetch_logs', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } };
+    };
+
+    try {
+      await assert.rejects(
+        () => httpGet('https://example.test/previsao/4305355', { retryDelayMs: 1 }),
+        /Invalid JSON from/
+      );
+      assert.strictEqual(calls, 1, 'a broken body will not heal on retry');
+
+      const [lastRow] = getRecentFetchLogs({ limit: 1 });
+      assert.strictEqual(lastRow.statusCode, 200, 'the HTTP status of a parse failure must not be null');
+      assert.strictEqual(lastRow.success, 0);
+      assert.match(lastRow.errorMessage, /Unexpected token|Invalid JSON/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('wraps a non-Error throw so the operator keeps the original message', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => { throw 'boom-string'; };
+
+    try {
+      await assert.rejects(
+        () => httpGet('https://example.test/previsao/4305355', { log: false, retries: 0 }),
+        err => err instanceof Error && err.message === 'boom-string'
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('httpGet time budget', () => {
+  it('aborts a stalled attempt so the retry can run', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    let stalledSignal = null;
+
+    globalThis.fetch = async (url, options) => {
+      calls += 1;
+      if (calls > 1) return { ok: true, status: 200, json: async () => ({ recoveredAfterStall: true }) };
+      stalledSignal = options?.signal;
+      assert.ok(stalledSignal instanceof AbortSignal, 'each attempt must carry an AbortSignal');
+      return new Promise((resolve, reject) => {
+        stalledSignal.addEventListener('abort', () => reject(new Error('The operation was aborted due to timeout')));
+      });
+    };
+
+    try {
+      const data = await httpGet('https://example.test/previsao/4305355', {
+        log: false,
+        timeoutMs: 5,
+        retryDelayMs: 1
+      });
+
+      assert.deepStrictEqual(data, { recoveredAfterStall: true });
+      assert.strictEqual(calls, 2, 'a stalled socket must time out and be retried');
+      assert.strictEqual(stalledSignal.aborted, true, 'the stalled attempt must have been aborted by its budget');
     } finally {
       globalThis.fetch = originalFetch;
     }
