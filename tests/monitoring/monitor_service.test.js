@@ -888,3 +888,98 @@ describe('Monitoring data quality', () => {
     }
   });
 });
+
+describe('Forecast coverage tolerance', () => {
+  const benignTelemetry = {
+    data: {
+      tags_data: {
+        qualle_meteorologia: [{
+          codigo: 'DCRS-00032',
+          data: {
+            chuva: { acumulado: { min005: { value: 0 } } },
+            vento: { velocidade_maxima: { value: 0 } },
+            rio: { rio_nivel: { value: 1.5 }, rio_nivel_tendencia: { value: 0 } }
+          }
+        }]
+      }
+    }
+  };
+
+  // A 404 is deterministic, so httpGet does not retry it: the test stays fast
+  // while still exercising a city without a usable forecast.
+  const stubForecasts = failingCodes => {
+    globalThis.fetch = async url => {
+      const target = String(url);
+      if (target.includes('/avisos/ativos')) {
+        return { ok: true, status: 200, json: async () => [] };
+      }
+      if (target.includes('/previsao/')) {
+        const code = target.split('/').pop();
+        if (failingCodes.has(code)) {
+          return { ok: false, status: 404, json: async () => ({}) };
+        }
+        const day = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+        const key = [
+          String(day.getDate()).padStart(2, '0'),
+          String(day.getMonth() + 1).padStart(2, '0'),
+          day.getFullYear()
+        ].join('/');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ [code]: { [key]: { temp_min: 18, temp_max: 26, umidade_min: 60, vento: 5 } } })
+        };
+      }
+      return { ok: true, status: 200, json: async () => benignTelemetry };
+    };
+  };
+
+  it('keeps the cycle complete when a single municipality is missing (coverage >= 95%)', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+
+    const cities = await getSurroundingCities(100);
+    stubForecasts(new Set([cities[0].ibgeCode]));
+
+    try {
+      const scan = await performRegionalRiskMonitoring({ radiusKm: 100, alertCallback: null });
+
+      assert.strictEqual(scan.dataQuality.forecastFailures, 1, 'exactly one forecast must be missing');
+      assert.strictEqual(scan.dataQuality.complete, true, 'a 97% coverage cycle must not be flagged incomplete');
+      assert.deepStrictEqual(scan.dataQuality.errors, [], 'no source error may reach the operational alert');
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  });
+
+  it('flags the cycle incomplete when coverage drops below the limit', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalDbPath = process.env.DB_PATH;
+    process.env.DB_PATH = ':memory:';
+    Sqlite.close();
+
+    const cities = await getSurroundingCities(100);
+    stubForecasts(new Set([cities[0].ibgeCode, cities[1].ibgeCode, cities[2].ibgeCode]));
+
+    try {
+      const scan = await performRegionalRiskMonitoring({ radiusKm: 100, alertCallback: null });
+
+      assert.strictEqual(scan.dataQuality.forecastFailures, 3);
+      assert.strictEqual(scan.dataQuality.complete, false, '92% coverage must block the all-clear');
+      assert.match(
+        scan.dataQuality.errors.join(' | '),
+        /INMET forecasts failed or were empty for 3 of \d+ municipalities \(coverage \d+\.\d% < 95%\)/
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      Sqlite.close();
+      if (originalDbPath === undefined) delete process.env.DB_PATH;
+      else process.env.DB_PATH = originalDbPath;
+    }
+  });
+});

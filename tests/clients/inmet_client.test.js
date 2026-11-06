@@ -10,6 +10,7 @@ import {
   CHARQUEADAS_SURROUNDING_CITIES,
   CHARQUEADAS_SURROUNDING_CITIES_100KM,
   getSurroundingCities,
+  httpGet,
   getRegionalForecasts,
   getRegionalRiskWarnings,
   getAlertEmoji,
@@ -215,4 +216,99 @@ describe('INMET warning city matching (exact, no substring false positives)', ()
   });
 });
 
+describe('httpGet transient-failure retry', () => {
+  const restore = fn => { globalThis.fetch = fn; };
 
+  it('retries a transport failure once and returns the parsed payload', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    restore(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('fetch failed');
+      return { ok: true, status: 200, json: async () => ({ resultado: 'ok' }) };
+    });
+
+    try {
+      const data = await httpGet('https://example.test/previsao/4305355', { log: false, retryDelayMs: 1 });
+      assert.deepStrictEqual(data, { resultado: 'ok' });
+      assert.strictEqual(calls, 2, 'a transport failure must be retried exactly once by default');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not retry a deterministic 4xx response', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    restore(async () => {
+      calls += 1;
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+
+    try {
+      await assert.rejects(
+        () => httpGet('https://example.test/previsao/0000000', { log: false, retryDelayMs: 1 }),
+        /HTTP error 404/
+      );
+      assert.strictEqual(calls, 1, 'a 4xx cannot succeed on retry');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('retries a 5xx response because the server may recover', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    restore(async () => {
+      calls += 1;
+      if (calls === 1) return { ok: false, status: 503, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ recovered: true }) };
+    });
+
+    try {
+      const data = await httpGet('https://example.test/previsao/4305355', { log: false, retryDelayMs: 1 });
+      assert.deepStrictEqual(data, { recovered: true });
+      assert.strictEqual(calls, 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('throws the last error once the retry budget is exhausted', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    restore(async () => {
+      calls += 1;
+      throw new Error('fetch failed');
+    });
+
+    try {
+      await assert.rejects(
+        () => httpGet('https://example.test/previsao/4305355', { log: false, retryDelayMs: 1 }),
+        /fetch failed/
+      );
+      assert.strictEqual(calls, 2, 'default budget is one retry');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('honours retries: 0 and fails on the first attempt', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    restore(async () => {
+      calls += 1;
+      throw new Error('fetch failed');
+    });
+
+    try {
+      await assert.rejects(
+        () => httpGet('https://example.test/previsao/4305355', { log: false, retries: 0, retryDelayMs: 1 }),
+        /fetch failed/
+      );
+      assert.strictEqual(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

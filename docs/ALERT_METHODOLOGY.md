@@ -530,6 +530,19 @@ availability, forecast failure count, error strings). Rules:
 
 - An incomplete cycle can still raise alerts from whichever sources succeeded.
 - An incomplete cycle **must not** emit an "all clear" conclusion.
+- A **partial** forecast set is not incomplete once coverage stays at or above
+  `MONITOR_FORECAST_COVERAGE_PCT` (default `95`). Missing cities under that
+  limit are logged as `ℹ️ Cobertura parcial tolerada` and the cycle may still
+  conclude "no risk"; dropping below the limit restores the full
+  `INMET forecasts failed ...` error and suppresses the all-clear. Rationale:
+  one transient gap in 38 municipalities (2.6% loss) fired an operational alert
+  on 2026-11-05 and again on 2026-11-06 with no meteorological cause.
+- Forecast HTTP fetches retry transient failures before the cycle counts them:
+  `INMET_FETCH_RETRIES` extra attempts (default `1`) spaced by
+  `INMET_FETCH_RETRY_DELAY_MS` × attempt (default `600`). Only transport errors
+  and `429`/`5xx` retry — a `4xx` is deterministic and fails immediately. One
+  `fetch_logs` row is written per call, carrying the final outcome and the
+  total duration.
 - Cycle outcome and errors are persisted via `logMonitorCycle`; each
   **delivered** event is persisted via `logAlert` (§8.1 step 4).
 - Cycle and fetch durations are clamped to `MAX_DURATION_MS` (10 min) by
