@@ -10,9 +10,15 @@
 import { readFileSync } from 'node:fs';
 
 import { logFetch, logUnknownAlert } from '../model/log_database.js';
+import { readBoundedNumber } from '../helpers/env_number.js';
 
 export const DEFESA_CIVIL_GRAPHQL_URL = process.env.DEFESA_CIVIL_GRAPHQL_URL || 'https://redehidrometeorologica.defesacivil.rs.gov.br/graphql';
 export const DEFESA_CIVIL_CLIENT_NAME = 'casa-militar-defesa-civil-rs';
+
+const DEFESA_CIVIL_ENDPOINT = '/graphql?query=Tags_data';
+const DEFAULT_FETCH_TIMEOUT_MS = 20000;
+const DEFAULT_FETCH_RETRIES = 1;
+const DEFAULT_FETCH_RETRY_DELAY_MS = 1000;
 
 export const CHARQUEADAS_STATION_CODE = 'DCRS-00032';
 
@@ -92,107 +98,171 @@ export function describeWindSensorFault(vento = null) {
 export const TAGS_DATA_QUERY = readFileSync(new URL('./tags_data.graphql', import.meta.url), 'utf8');
 
 /**
+ * Waits before another fetch attempt.
+ *
+ * @param {number} ms - Delay in milliseconds.
+ * @returns {Promise<void>} Resolves once the delay elapses.
+ */
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Resolves the per-attempt timeout from an explicit option, `DEFESA_CIVIL_TIMEOUT_MS`,
+ * or the 20 s default.
+ *
+ * @param {number|undefined} timeoutMs - Explicit per-call timeout in milliseconds.
+ * @returns {number} Positive timeout in milliseconds.
+ */
+function resolveTimeoutMs(timeoutMs) {
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        return timeoutMs;
+    }
+    return readBoundedNumber(process.env.DEFESA_CIVIL_TIMEOUT_MS, DEFAULT_FETCH_TIMEOUT_MS, { min: 1000, max: 120000 });
+}
+
+/**
+ * Decides whether a failed Defesa Civil fetch attempt is worth retrying.
+ *
+ * Only transport errors (no HTTP status), timeouts, and 5xx server responses
+ * are transient. 4xx responses and GraphQL application errors such as
+ * `QUERY_NOT_ALLOWED` are deterministic and must not be retried.
+ *
+ * @param {{ statusCode: number|null, timedOut?: boolean }} failure - Failure metadata from one attempt.
+ * @returns {boolean} True when another attempt may succeed.
+ */
+function isRetryableDefesaCivilFailure({ statusCode, timedOut = false }) {
+    if (timedOut) return true;
+    if (statusCode === null || statusCode === undefined) return true;
+    return statusCode >= 500;
+}
+
+/**
  * Fetches real-time hydrometeorological telemetry from Defesa Civil RS GraphQL endpoint.
  *
  * The official query returns every station in the network. The response is
  * filtered down to the requested `stations`, so callers keep receiving only
- * the regional stations they asked for.
+ * the regional stations they asked for. Each attempt carries a per-attempt
+ * timeout (`AbortSignal.timeout`) and transient failures (transport, timeout,
+ * or 5xx) are retried once with a short backoff; every attempt is logged to
+ * `fetch_logs` with its HTTP status code when available.
  *
  * @param {Array<string>} [stations] - List of station codes (defaults to target regional stations).
  * @param {object} [options]
  * @param {boolean} [options.log=true] - Whether to record fetch metadata in SQLite.
  * @param {object} [options.db=null] - Custom SQLite instance for tests.
  * @param {boolean} [options.throwOnError=false] - Propagate transport and GraphQL errors to the coordinator.
+ * @param {number} [options.timeoutMs] - Per-attempt timeout in ms (`DEFESA_CIVIL_TIMEOUT_MS`, default 20000).
+ * @param {number} [options.retries=1] - Extra attempts after a transient failure (default 1, total <= 2).
+ * @param {number} [options.retryDelayMs=1000] - Backoff in ms between attempts (default 1000).
  * @returns {Promise<Array<object>>} List of telemetry objects per station.
  * @throws {Error} When throwOnError is true and the request or GraphQL response fails.
  */
-export async function getDefesaCivilTelemetry(stations = ['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054'], { log = true, db = null, throwOnError = false } = {}) {
-    const startTime = Date.now();
+export async function getDefesaCivilTelemetry(
+    stations = ['DCRS-00032', 'DCRS-00093', 'DCRS-00076', 'DCRS-00054'],
+    {
+        log = true,
+        db = null,
+        throwOnError = false,
+        timeoutMs = undefined,
+        retries = DEFAULT_FETCH_RETRIES,
+        retryDelayMs = DEFAULT_FETCH_RETRY_DELAY_MS
+    } = {}
+) {
     const payload = { query: TAGS_DATA_QUERY };
+    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs);
+    const attemptLimit = Math.max(0, Number(retries) || 0) + 1;
+    const effectiveRetryDelayMs = Math.max(0, Number(retryDelayMs) || 0);
 
-    try {
-        const response = await fetch(DEFESA_CIVIL_GRAPHQL_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'User-Agent': 'WeatherMonitor-Charqueadas/1.0'
-            },
-            body: JSON.stringify(payload)
-        });
+    let lastError = null;
 
-        const durationMs = Date.now() - startTime;
+    for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
+        const attemptStartTime = Date.now();
+        const signal = AbortSignal.timeout(effectiveTimeoutMs);
+        let statusCode = null;
+        let timedOut = false;
 
-        if (!response.ok) {
-            const errorMsg = `Defesa Civil GraphQL error ${response.status} when fetching telemetry`;
-            if (throwOnError) throw new Error(errorMsg);
+        try {
+            const response = await fetch(DEFESA_CIVIL_GRAPHQL_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'User-Agent': 'WeatherMonitor-Charqueadas/1.0'
+                },
+                body: JSON.stringify(payload),
+                signal
+            });
+
+            statusCode = response.status;
+
+            if (!response.ok) {
+                const error = new Error(`Defesa Civil GraphQL error ${statusCode} when fetching telemetry`);
+                error.statusCode = statusCode;
+                throw error;
+            }
+
+            const data = await response.json();
+            if (Array.isArray(data?.errors) && data.errors.length > 0) {
+                const error = new Error(`Defesa Civil GraphQL returned ${data.errors.length} error(s) when fetching telemetry`);
+                error.statusCode = statusCode;
+                throw error;
+            }
+
+            const requestedStations = new Set(stations);
+            const stationsList = (data?.data?.tags_data?.qualle_meteorologia || [])
+                .filter(station => requestedStations.has(station.codigo));
+
+            if (log) {
+                let responseSizeBytes = null;
+                try {
+                    responseSizeBytes = Buffer.byteLength(JSON.stringify(data), 'utf8');
+                } catch {}
+
+                logFetch({
+                    url: DEFESA_CIVIL_GRAPHQL_URL,
+                    endpoint: DEFESA_CIVIL_ENDPOINT,
+                    statusCode,
+                    durationMs: Date.now() - attemptStartTime,
+                    success: 1,
+                    responseSizeBytes,
+                    itemCount: stationsList.length,
+                    errorMessage: null
+                }, db);
+            }
+
+            return stationsList;
+        } catch (err) {
+            const error = err instanceof Error ? err : new Error(String(err));
+            if (statusCode === null && typeof error.statusCode === 'number') {
+                statusCode = error.statusCode;
+            }
+            timedOut = signal.aborted || error.name === 'TimeoutError' || error.name === 'AbortError';
+            lastError = error;
+
             if (log) {
                 logFetch({
                     url: DEFESA_CIVIL_GRAPHQL_URL,
-                    endpoint: '/graphql?query=Tags_data',
-                    statusCode: response.status,
-                    durationMs,
+                    endpoint: DEFESA_CIVIL_ENDPOINT,
+                    statusCode,
+                    durationMs: Date.now() - attemptStartTime,
                     success: 0,
-                    errorMessage: errorMsg
+                    errorMessage: error.message
                 }, db);
             }
-            return [];
-        }
 
-        const data = await response.json();
-        if (Array.isArray(data?.errors) && data.errors.length > 0) {
-            const errorMsg = `Defesa Civil GraphQL returned ${data.errors.length} error(s) when fetching telemetry`;
-            if (throwOnError) throw new Error(errorMsg);
-            if (log) {
-                logFetch({
-                    url: DEFESA_CIVIL_GRAPHQL_URL,
-                    endpoint: '/graphql?query=Tags_data',
-                    statusCode: response.status,
-                    durationMs,
-                    success: 0,
-                    errorMessage: errorMsg
-                }, db);
+            if (attempt >= attemptLimit || !isRetryableDefesaCivilFailure({ statusCode, timedOut })) {
+                break;
             }
-            return [];
-        }
-        const requestedStations = new Set(stations);
-        const stationsList = (data?.data?.tags_data?.qualle_meteorologia || [])
-            .filter(station => requestedStations.has(station.codigo));
 
-        if (log) {
-            let responseSizeBytes = null;
-            try {
-                responseSizeBytes = Buffer.byteLength(JSON.stringify(data), 'utf8');
-            } catch {}
-
-            logFetch({
-                url: DEFESA_CIVIL_GRAPHQL_URL,
-                endpoint: '/graphql?query=Tags_data',
-                statusCode: response.status,
-                durationMs,
-                success: 1,
-                responseSizeBytes,
-                itemCount: stationsList.length,
-                errorMessage: null
-            }, db);
+            if (effectiveRetryDelayMs > 0) {
+                await sleep(effectiveRetryDelayMs);
+            }
         }
-
-        return stationsList;
-    } catch (err) {
-        const durationMs = Date.now() - startTime;
-        if (log) {
-            logFetch({
-                url: DEFESA_CIVIL_GRAPHQL_URL,
-                endpoint: '/graphql?query=Tags_data',
-                statusCode: null,
-                durationMs,
-                success: 0,
-                errorMessage: err.message
-            }, db);
-        }
-        if (throwOnError) throw err;
-        return [];
     }
+
+    if (throwOnError) throw lastError;
+    return [];
 }
 
 /**

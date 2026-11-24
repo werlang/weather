@@ -470,11 +470,246 @@ describe('Defesa Civil RS Telemetry Client & Risk Evaluation', () => {
 
         try {
             await assert.rejects(
-                getDefesaCivilTelemetry([], { log: false, throwOnError: true }),
+                getDefesaCivilTelemetry([], { log: false, throwOnError: true, retryDelayMs: 1 }),
                 /Defesa Civil GraphQL error 503/
             );
         } finally {
             globalThis.fetch = originalFetch;
+        }
+    });
+});
+
+describe('getDefesaCivilTelemetry retry, timeout, and error logging', () => {
+    const samplePayload = {
+        data: {
+            tags_data: {
+                qualle_meteorologia: [
+                    { codigo: 'DCRS-00032', data: { chuva: { acumulado: { min005: { value: 1 } } } } }
+                ]
+            }
+        }
+    };
+
+    const listFetchLogs = db => db.find('fetch_logs', { order: 'id ASC' });
+
+    it('retries once on 504, succeeds on 200, and records the failed attempt in fetch_logs', async () => {
+        const db = getDatabase(':memory:');
+        const beforeCount = listFetchLogs(db).length;
+        const originalFetch = globalThis.fetch;
+        let calls = 0;
+
+        globalThis.fetch = async () => {
+            calls += 1;
+            if (calls === 1) {
+                return { ok: false, status: 504, json: async () => ({}) };
+            }
+            return { ok: true, status: 200, json: async () => samplePayload };
+        };
+
+        try {
+            const stations = await getDefesaCivilTelemetry(['DCRS-00032'], {
+                db,
+                throwOnError: true,
+                retryDelayMs: 1
+            });
+
+            assert.strictEqual(calls, 2);
+            assert.deepStrictEqual(stations.map(s => s.codigo), ['DCRS-00032']);
+
+            const newLogs = listFetchLogs(db).slice(beforeCount);
+            assert.strictEqual(newLogs.length, 2);
+            assert.strictEqual(newLogs[0].status_code, 504);
+            assert.strictEqual(newLogs[0].success, 0);
+            assert.strictEqual(newLogs[0].endpoint, '/graphql?query=Tags_data');
+            assert.match(newLogs[0].error_message, /504/);
+            assert.strictEqual(newLogs[1].status_code, 200);
+            assert.strictEqual(newLogs[1].success, 1);
+            assert.strictEqual(newLogs[1].item_count, 1);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it('aborts a timed-out first attempt and succeeds on the retry', async () => {
+        const db = getDatabase(':memory:');
+        const beforeCount = listFetchLogs(db).length;
+        const originalFetch = globalThis.fetch;
+        let calls = 0;
+        let firstSignal = null;
+
+        globalThis.fetch = async (url, options) => {
+            calls += 1;
+            assert.ok(options?.signal instanceof AbortSignal, 'each attempt must pass an AbortSignal');
+            if (calls === 1) {
+                firstSignal = options.signal;
+                return new Promise((resolve, reject) => {
+                    // Keep the event loop alive like an open socket until AbortSignal.timeout fires.
+                    const keepAlive = setTimeout(() => {}, 5000);
+                    firstSignal.addEventListener('abort', () => {
+                        clearTimeout(keepAlive);
+                        const err = new Error('The operation was aborted due to timeout');
+                        err.name = 'TimeoutError';
+                        reject(err);
+                    }, { once: true });
+                });
+            }
+            return { ok: true, status: 200, json: async () => samplePayload };
+        };
+
+        try {
+            const stations = await getDefesaCivilTelemetry(['DCRS-00032'], {
+                db,
+                throwOnError: true,
+                timeoutMs: 15,
+                retryDelayMs: 1
+            });
+
+            assert.strictEqual(calls, 2);
+            assert.strictEqual(firstSignal.aborted, true);
+            assert.deepStrictEqual(stations.map(s => s.codigo), ['DCRS-00032']);
+
+            const newLogs = listFetchLogs(db).slice(beforeCount);
+            assert.strictEqual(newLogs.length, 2);
+            assert.strictEqual(newLogs[0].status_code, null);
+            assert.strictEqual(newLogs[0].success, 0);
+            assert.match(newLogs[0].error_message, /timeout|abort/i);
+            assert.strictEqual(newLogs[1].status_code, 200);
+            assert.strictEqual(newLogs[1].success, 1);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it('does not retry HTTP 400 or GraphQL QUERY_NOT_ALLOWED and propagates the error with status_code logged', async () => {
+        const db = getDatabase(':memory:');
+        const originalFetch = globalThis.fetch;
+
+        // Case A: HTTP 400 response
+        let calls400 = 0;
+        const before400 = listFetchLogs(db).length;
+        globalThis.fetch = async () => {
+            calls400 += 1;
+            return {
+                ok: false,
+                status: 400,
+                json: async () => ({ errors: [{ message: 'QUERY_NOT_ALLOWED' }] })
+            };
+        };
+
+        try {
+            await assert.rejects(
+                getDefesaCivilTelemetry(['DCRS-00032'], { db, throwOnError: true, retryDelayMs: 1 }),
+                /Defesa Civil GraphQL error 400/
+            );
+            assert.strictEqual(calls400, 1, 'HTTP 400 must not be retried');
+            const logs400 = listFetchLogs(db).slice(before400);
+            assert.strictEqual(logs400.length, 1);
+            assert.strictEqual(logs400[0].status_code, 400);
+            assert.strictEqual(logs400[0].success, 0);
+
+            // Case B: HTTP 200 with GraphQL QUERY_NOT_ALLOWED error payload
+            let callsGql = 0;
+            const beforeGql = listFetchLogs(db).length;
+            globalThis.fetch = async () => {
+                callsGql += 1;
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        errors: [{ message: 'QUERY_NOT_ALLOWED', extensions: { code: 'QUERY_NOT_ALLOWED' } }]
+                    })
+                };
+            };
+
+            await assert.rejects(
+                getDefesaCivilTelemetry(['DCRS-00032'], { db, throwOnError: true, retryDelayMs: 1 }),
+                /Defesa Civil GraphQL returned 1 error/
+            );
+            assert.strictEqual(callsGql, 1, 'QUERY_NOT_ALLOWED must not be retried');
+            const logsGql = listFetchLogs(db).slice(beforeGql);
+            assert.strictEqual(logsGql.length, 1);
+            assert.strictEqual(logsGql[0].status_code, 200);
+            assert.strictEqual(logsGql[0].success, 0);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it('propagates after two failures and logs status_code when HTTP responded or null on transport failure', async () => {
+        const db = getDatabase(':memory:');
+        const originalFetch = globalThis.fetch;
+
+        // Case A: two HTTP 504 responses -> propagates and both logs carry status_code 504
+        let calls504 = 0;
+        const before504 = listFetchLogs(db).length;
+        globalThis.fetch = async () => {
+            calls504 += 1;
+            return { ok: false, status: 504, json: async () => ({}) };
+        };
+
+        try {
+            await assert.rejects(
+                getDefesaCivilTelemetry(['DCRS-00032'], { db, throwOnError: true, retryDelayMs: 1 }),
+                /Defesa Civil GraphQL error 504/
+            );
+            assert.strictEqual(calls504, 2);
+            const logs504 = listFetchLogs(db).slice(before504);
+            assert.strictEqual(logs504.length, 2);
+            assert.deepStrictEqual(logs504.map(r => r.status_code), [504, 504]);
+            assert.deepStrictEqual(logs504.map(r => r.success), [0, 0]);
+
+            // Case B: two transport failures (no HTTP response) -> propagates and logs carry null status_code
+            let callsNet = 0;
+            const beforeNet = listFetchLogs(db).length;
+            globalThis.fetch = async () => {
+                callsNet += 1;
+                throw new TypeError('fetch failed');
+            };
+
+            await assert.rejects(
+                getDefesaCivilTelemetry(['DCRS-00032'], { db, throwOnError: true, retryDelayMs: 1 }),
+                /fetch failed/
+            );
+            assert.strictEqual(callsNet, 2);
+            const logsNet = listFetchLogs(db).slice(beforeNet);
+            assert.strictEqual(logsNet.length, 2);
+            assert.deepStrictEqual(logsNet.map(r => r.status_code), [null, null]);
+            assert.deepStrictEqual(logsNet.map(r => r.success), [0, 0]);
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+    });
+
+    it('uses 20000 ms timeout by default and honours DEFESA_CIVIL_TIMEOUT_MS', async () => {
+        const originalFetch = globalThis.fetch;
+        const originalTimeout = AbortSignal.timeout;
+        const originalEnv = process.env.DEFESA_CIVIL_TIMEOUT_MS;
+        const observedTimeouts = [];
+
+        AbortSignal.timeout = (ms) => {
+            observedTimeouts.push(ms);
+            return originalTimeout.call(AbortSignal, ms);
+        };
+        globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => samplePayload });
+
+        try {
+            delete process.env.DEFESA_CIVIL_TIMEOUT_MS;
+            await getDefesaCivilTelemetry(['DCRS-00032'], { log: false });
+
+            process.env.DEFESA_CIVIL_TIMEOUT_MS = '12345';
+            await getDefesaCivilTelemetry(['DCRS-00032'], { log: false });
+
+            await getDefesaCivilTelemetry(['DCRS-00032'], { log: false, timeoutMs: 4321 });
+
+            assert.deepStrictEqual(observedTimeouts, [20000, 12345, 4321]);
+        } finally {
+            globalThis.fetch = originalFetch;
+            AbortSignal.timeout = originalTimeout;
+            if (originalEnv === undefined) {
+                delete process.env.DEFESA_CIVIL_TIMEOUT_MS;
+            } else {
+                process.env.DEFESA_CIVIL_TIMEOUT_MS = originalEnv;
+            }
         }
     });
 });
